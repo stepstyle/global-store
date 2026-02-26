@@ -33,9 +33,9 @@ type HeroSlide = {
 };
 
 const FALLBACK_HERO: HeroImageSet = {
-  s600: '/assets/hero-school-1920.webp',
-  s1200: '/assets/hero-school-1920.webp',
-  s1920: '/assets/hero-school-1920.webp',
+  s600: '/images/hero-school-19202.webp',
+  s1200: '/images/hero-school-19202.webp',
+  s1920: '/images/hero-school-19202.webp',
 };
 
 const ROTATE_MS = 6500;
