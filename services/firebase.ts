@@ -78,8 +78,18 @@ const normalizeConfig = (cfg: Partial<FirebaseWebConfig>): FirebaseWebConfig | n
 };
 
 const getEnvConfig = (): FirebaseWebConfig | null => {
- 
-  return 
+  // Vite exposes only VITE_* to the client.
+  const firebaseConfig = {
+  apiKey: "AIzaSyClkSIiIkMIXgIafRh4PwnAQTgUdg2SmpM",
+  authDomain: "antastore1-82b50.firebaseapp.com",
+  databaseURL: "https://antastore1-82b50-default-rtdb.firebaseio.com",
+  projectId: "antastore1-82b50",
+  storageBucket: "antastore1-82b50.firebasestorage.app",
+  messagingSenderId: "503316431812",
+  appId: "1:503316431812:web:89c78ebf26769e0cb45a91",
+  measurementId: "G-0451BYDEC2"
+}
+  return normalizeConfig(firebaseConfig);
 };
 
 const getLocalConfig = (): FirebaseWebConfig | null => {
