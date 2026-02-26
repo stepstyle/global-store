@@ -4,7 +4,6 @@ import { HashRouter, Routes, Route, useLocation } from 'react-router-dom';
 
 import Header from './components/Header';
 import Footer from './components/Footer';
-import ChatBot from './components/ChatBot';
 import CartDrawer from './components/CartDrawer';
 import QuickViewModal from './components/QuickViewModal';
 import Toast from './components/Toast';
@@ -556,7 +555,6 @@ const App: React.FC = () => {
             </Suspense>
           </main>
 
-          <ChatBot />
           <Footer />
         </div>
       </HashRouter>
