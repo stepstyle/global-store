@@ -1,4 +1,6 @@
 {
+  "dev": "vite",
+"build": "vite build",
   "name": "anta-store",
   "private": true,
   "version": "0.0.0",
