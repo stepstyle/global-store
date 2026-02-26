@@ -118,9 +118,7 @@ const initWithConfig = (config: FirebaseWebConfig) => {
 };
 
 const resetToMock = (reason?: string) => {
-  isFirebaseInitialized = false;
-  db = null;
-  auth = null;
+  throw new Error("Firebase is not configured in production environment");
 
   // Log only in dev to avoid noisy production logs
   if (import.meta.env.DEV) {
