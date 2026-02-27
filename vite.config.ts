@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig({
+  base: '/REPO_NAME/', // <-- اكتب اسم الريبو بالضبط
   plugins: [react()],
   resolve: {
     alias: {
