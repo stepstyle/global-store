@@ -265,8 +265,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
   const noSrc = !normalizedSrc;
 
   return (
-    <div ref={containerRef} className={`relative overflow-hidden ${containerClassName}`}>
-      {/* Placeholder */}
+<div ref={containerRef} className={`relative ${containerClassName}`}>      {/* Placeholder */}
       {!hasError && !isLoaded && (
         <div className={`absolute inset-0 ${placeholderClassName} animate-pulse`} aria-hidden="true" />
       )}
