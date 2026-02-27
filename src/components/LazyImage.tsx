@@ -86,7 +86,7 @@ const cloudinaryTransform = (url: string, w?: number, h?: number, mode?: 'limit'
   }
 };
 
-/** Picsum: محاولة تحويل لـ webp (اختياري) */
+/** Picsum: تحويل لـ webp (اختياري) */
 const picsumWebp = (url: string) => {
   try {
     if (!url.includes('picsum.photos') || url.includes('.webp')) return url;
@@ -99,6 +99,19 @@ const picsumWebp = (url: string) => {
     return url;
   } catch {
     return url;
+  }
+};
+
+/** WebP support test (client-side) */
+const detectWebPSupport = (): boolean => {
+  try {
+    if (typeof document === 'undefined') return false;
+    const canvas = document.createElement('canvas');
+    if (!canvas.getContext) return false;
+    // If browser supports webp, this will start with 'data:image/webp'
+    return canvas.toDataURL('image/webp').startsWith('data:image/webp');
+  } catch {
+    return false;
   }
 };
 
@@ -139,6 +152,12 @@ const LazyImage: React.FC<LazyImageProps> = ({
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [hasError, setHasError] = useState<boolean>(false);
 
+  // ✅ WebP support (important for mobile compatibility)
+  const [webpSupported, setWebpSupported] = useState<boolean>(false);
+  useEffect(() => {
+    setWebpSupported(detectWebPSupport());
+  }, []);
+
   // reset state on src / eager change
   useEffect(() => {
     setIsLoaded(false);
@@ -174,8 +193,12 @@ const LazyImage: React.FC<LazyImageProps> = ({
     return () => obs.disconnect();
   }, [derivedEager, rootMargin]);
 
-  // ✅ Always compute these with hooks (NO early return before hooks)
-  const finalSrc = useMemo(() => picsumWebp(normalizedSrc), [normalizedSrc]);
+  // ✅ IMPORTANT: Only convert Picsum -> webp if browser supports WebP
+  const finalSrc = useMemo(() => {
+    if (!normalizedSrc) return '';
+    if (!webpSupported) return normalizedSrc;
+    return picsumWebp(normalizedSrc);
+  }, [normalizedSrc, webpSupported]);
 
   const isCloudinary = useMemo(
     () => finalSrc.includes('res.cloudinary.com') && finalSrc.includes('/upload/'),
@@ -257,17 +280,13 @@ const LazyImage: React.FC<LazyImageProps> = ({
         </div>
       ) : inView ? (
         <img
-          // src/srcSet
           src={resolvedSrc}
           srcSet={srcSet}
           sizes={srcSet ? resolvedSizes : undefined}
           alt={alt}
-          // loading/priority
           loading={finalLoading}
           decoding={decoding}
-          // fetchPriority is not fully typed in some TS lib versions
           {...({ fetchPriority } as any)}
-          // events
           onLoad={(e) => {
             setIsLoaded(true);
             onLoad?.(e);
@@ -276,7 +295,6 @@ const LazyImage: React.FC<LazyImageProps> = ({
             setHasError(true);
             onError?.(e);
           }}
-          // styles
           className={`max-w-full block transition-opacity duration-300 ease-out ${
             isLoaded ? 'opacity-100' : 'opacity-0'
           } ${className}`}
@@ -284,7 +302,6 @@ const LazyImage: React.FC<LazyImageProps> = ({
           {...imgProps}
         />
       ) : (
-        // not in view yet -> keep layout (containerClassName should define height/aspect)
         <div className="w-full h-full" aria-hidden="true" />
       )}
     </div>

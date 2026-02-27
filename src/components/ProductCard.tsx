@@ -23,10 +23,6 @@ interface ProductCardProps {
 
 /**
  * ✅ Professional rating resolver (long-term compatible)
- * Supports:
- * - ratingAvg / ratingCount (future)
- * - avgRating / reviewCount (alt)
- * - rating / reviews (legacy/mock)
  */
 const resolveRating = (p: Product) => {
   const anyP = p as any;
@@ -68,9 +64,7 @@ const renderStars = (avg: number) => {
 };
 
 /**
- * ✅ Product image resolver (supports:
- * - product.images[] (new)
- * - product.image (legacy)
+ * ✅ Product image resolver
  */
 const resolveImage = (p: Product) => {
   const anyP = p as any;
@@ -103,11 +97,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
     return '';
   }, [product.originalPrice, product.isNew, t]);
 
-  const categoryLabel = useMemo(() => {
-    // في حال حبيت مستقبلاً تربط label بالعربي/الإنجليزي من constants
-    // حالياً نعرض القيمة كما هي لتجنّب كسر شيء
-    return String(product.category ?? '').trim();
-  }, [product.category]);
+  const categoryLabel = useMemo(() => String(product.category ?? '').trim(), [product.category]);
 
   const onClickWishlist = useCallback(
     (e: React.MouseEvent) => {
@@ -145,13 +135,8 @@ const ProductCard: React.FC<ProductCardProps> = ({
     [onAddToCart, product]
   );
 
-  const wishlistLabel = isLiked
-    ? language === 'ar'
-      ? 'إزالة من المفضلة'
-      : 'Remove from wishlist'
-    : language === 'ar'
-    ? 'إضافة للمفضلة'
-    : 'Add to wishlist';
+  const wishlistLabel =
+    isLiked ? (language === 'ar' ? 'إزالة من المفضلة' : 'Remove from wishlist') : language === 'ar' ? 'إضافة للمفضلة' : 'Add to wishlist';
 
   const quickViewLabel = language === 'ar' ? 'عرض سريع' : 'Quick view';
   const reviewsLabel = language === 'ar' ? 'عرض التقييمات' : 'Open reviews';
@@ -219,7 +204,8 @@ const ProductCard: React.FC<ProductCardProps> = ({
           src={imageSrc}
           alt={productTitle}
           containerClassName="aspect-square bg-slate-50"
-          className="w-full h-full object-cover transition-transform duration-700 md:group-hover:scale-110 mix-blend-multiply"
+          // ✅ Avoid blend-mode quirks on some mobile GPUs
+          className="w-full h-full object-cover transition-transform duration-700 md:group-hover:scale-110 md:mix-blend-multiply"
           loading={priority ? 'eager' : 'lazy'}
           fetchPriority={priority ? 'high' : 'auto'}
         />
@@ -239,7 +225,6 @@ const ProductCard: React.FC<ProductCardProps> = ({
             {categoryLabel}
           </span>
 
-          {/* Clickable Rating -> Reviews */}
           <button
             type="button"
             onClick={onClickReviews}
@@ -264,9 +249,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
               {Number(product.price ?? 0)} <span className="text-xs font-normal"></span>
             </span>
             {product.originalPrice ? (
-              <span className="text-xs text-slate-400 line-through tabular-nums">
-                {Number(product.originalPrice)}
-              </span>
+              <span className="text-xs text-slate-400 line-through tabular-nums">{Number(product.originalPrice)}</span>
             ) : null}
           </div>
 

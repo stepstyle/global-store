@@ -660,16 +660,24 @@ const ProductDetails: React.FC = () => {
             {/* Image Gallery */}
             <div className="bg-slate-50 p-4 md:p-8">
               <div className="relative">
-                <LazyImage
-                  src={heroImage}
-                  alt={productTitle}
-                  containerClassName="w-full aspect-square rounded-3xl bg-white border border-slate-200 overflow-hidden"
-                  className="w-full h-full object-contain mix-blend-multiply hover:scale-105 transition-transform duration-500"
-                  loading="eager"
-                  fetchPriority="high"
-                  decoding="async"
-                />
-
+              <LazyImage
+  src={heroImage}
+  alt={productTitle}
+  // ✅ no overflow-hidden here to prevent cropping on mobile
+  containerClassName="w-full aspect-square rounded-3xl bg-white border border-slate-200"
+  // ✅ stable on mobile + allow zoom only on md+
+  className="
+    w-full h-full object-contain
+    transition-transform duration-500
+    md:hover:scale-105
+    md:mix-blend-multiply
+  "
+  // ✅ ensures the image never exceeds viewport area visually inside square
+  style={{ maxHeight: '85vh' }}
+  loading="eager"
+  fetchPriority="high"
+  decoding="async"
+/>
                 {/* Wishlist */}
                 <div className="absolute top-4 right-4 rtl:right-auto rtl:left-4">
                   <button
