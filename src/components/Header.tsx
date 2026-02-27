@@ -254,7 +254,8 @@ const Header: React.FC = () => {
   return (
     <>
       <header className="sticky top-0 z-20 w-full bg-gradient-to-r from-primary-dark via-white/5 to-secondary-dark backdrop-blur-md border-b border-white/20 shadow-lg font-sans transition-all duration-300">
-      <div className="w-full max-w-[1500px] mx-auto grid grid-cols-[auto,1fr,auto] items-center h-20 px-6 lg:px-14 gap-3">          <Link
+      <div className="w-full max-w-[1550
+      px] mx-auto grid grid-cols-[auto,1fr,auto] items-center h-20 px-6 lg:px-14 gap-3">          <Link
             to="/"
             className="flex items-center group shrink-0 min-w-0 ps-2 sm:ps-4"
             aria-label="Home"

@@ -5,12 +5,17 @@ import { ChatMessage } from '../types';
 import { useCart } from '../App';
 
 const ChatBot: React.FC = () => {
+  const apiKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined);
+  const geminiEnabled = !!apiKey && apiKey.trim() !== "" && apiKey !== "PLACEHOLDER_API_KEY";
+
   const [isOpen, setIsOpen] = useState(false);
   const { t } = useCart();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  if (!geminiEnabled) return null;
 
   // Initialize welcome message when component mounts or language changes
   useEffect(() => {
