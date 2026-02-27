@@ -136,7 +136,13 @@ const ProductCard: React.FC<ProductCardProps> = ({
   );
 
   const wishlistLabel =
-    isLiked ? (language === 'ar' ? 'إزالة من المفضلة' : 'Remove from wishlist') : language === 'ar' ? 'إضافة للمفضلة' : 'Add to wishlist';
+    isLiked
+      ? language === 'ar'
+        ? 'إزالة من المفضلة'
+        : 'Remove from wishlist'
+      : language === 'ar'
+      ? 'إضافة للمفضلة'
+      : 'Add to wishlist';
 
   const quickViewLabel = language === 'ar' ? 'عرض سريع' : 'Quick view';
   const reviewsLabel = language === 'ar' ? 'عرض التقييمات' : 'Open reviews';
@@ -149,8 +155,9 @@ const ProductCard: React.FC<ProductCardProps> = ({
       className="
         group relative bg-white rounded-2xl overflow-hidden
         border border-slate-100 shadow-sm hover:shadow-xl
-        transition-all duration-500 transform-gpu md:hover:-translate-y-2
-        flex flex-col h-full will-change-transform
+        transition-all duration-500
+        flex flex-col h-full
+        md:transform-gpu md:will-change-transform md:hover:-translate-y-2
       "
       data-product-id={product.id}
     >
@@ -204,7 +211,6 @@ const ProductCard: React.FC<ProductCardProps> = ({
           src={imageSrc}
           alt={productTitle}
           containerClassName="aspect-square bg-slate-50"
-          // ✅ Avoid blend-mode quirks on some mobile GPUs
           className="w-full h-full object-cover transition-transform duration-700 md:group-hover:scale-110 md:mix-blend-multiply"
           loading={priority ? 'eager' : 'lazy'}
           fetchPriority={priority ? 'high' : 'auto'}
