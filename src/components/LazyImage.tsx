@@ -108,7 +108,6 @@ const detectWebPSupport = (): boolean => {
     if (typeof document === 'undefined') return false;
     const canvas = document.createElement('canvas');
     if (!canvas.getContext) return false;
-    // If browser supports webp, this will start with 'data:image/webp'
     return canvas.toDataURL('image/webp').startsWith('data:image/webp');
   } catch {
     return false;
@@ -192,6 +191,19 @@ const LazyImage: React.FC<LazyImageProps> = ({
     obs.observe(el);
     return () => obs.disconnect();
   }, [derivedEager, rootMargin]);
+
+  // ✅ HARD fallback: if IO doesn't fire on some mobile browsers, force inView after a short delay
+  useEffect(() => {
+    if (derivedEager) return;
+    if (inView) return;
+    if (!normalizedSrc) return;
+
+    const t = window.setTimeout(() => {
+      setInView(true);
+    }, 1200);
+
+    return () => window.clearTimeout(t);
+  }, [derivedEager, inView, normalizedSrc]);
 
   // ✅ IMPORTANT: Only convert Picsum -> webp if browser supports WebP
   const finalSrc = useMemo(() => {
