@@ -2,7 +2,6 @@
 import React, { useCallback, useMemo } from 'react';
 import * as ReactRouterDOM from 'react-router-dom';
 import { Star, ShoppingCart, Heart, Eye, Bell } from 'lucide-react';
-
 import { Product } from '../types';
 import { useCart } from '../App';
 import Button from './Button';
@@ -12,18 +11,16 @@ const { Link, useNavigate } = ReactRouterDOM as any;
 
 interface ProductCardProps {
   product: Product;
-
   onAddToCart: (product: Product) => void;
   onToggleWishlist: (product: Product) => void;
   onQuickView?: (product: Product) => void;
-
   isLiked: boolean;
   priority?: boolean;
 }
 
+/** ✅ Professional rating resolver (long-term compatible) */
 const resolveRating = (p: Product) => {
   const anyP = p as any;
-
   const avgRaw = anyP.ratingAvg ?? anyP.avgRating ?? p.rating ?? 0;
   const countRaw = anyP.ratingCount ?? anyP.reviewCount ?? p.reviews ?? 0;
 
@@ -41,7 +38,7 @@ const renderStars = (avg: number) => {
   const hasHalf = avg - full >= 0.5;
 
   return (
-    <div className="flex items-center gap-0.5" aria-hidden="true">
+    <div className="flex items-center gap-0.5 text-yellow-400" aria-hidden="true">
       {[0, 1, 2, 3, 4].map((i) => {
         const isFull = i < full;
         const isHalf = i === full && hasHalf;
@@ -60,6 +57,7 @@ const renderStars = (avg: number) => {
   );
 };
 
+/** ✅ Product image resolver */
 const resolveImage = (p: Product) => {
   const anyP = p as any;
   const imgs = Array.isArray(anyP.images) ? anyP.images : [];
@@ -79,8 +77,8 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
   const rating = useMemo(() => resolveRating(product), [product]);
   const imageSrc = useMemo(() => resolveImage(product), [product]);
-
   const productTitle = useMemo(() => getProductTitle(product), [getProductTitle, product]);
+
   const productLink = useMemo(() => `/product/${product.id}`, [product.id]);
 
   const isInStock = (product.stock ?? 0) > 0;
@@ -129,8 +127,13 @@ const ProductCard: React.FC<ProductCardProps> = ({
     [onAddToCart, product]
   );
 
-  const wishlistLabel =
-    isLiked ? (language === 'ar' ? 'إزالة من المفضلة' : 'Remove from wishlist') : language === 'ar' ? 'إضافة للمفضلة' : 'Add to wishlist';
+  const wishlistLabel = isLiked
+    ? language === 'ar'
+      ? 'إزالة من المفضلة'
+      : 'Remove from wishlist'
+    : language === 'ar'
+      ? 'إضافة للمفضلة'
+      : 'Add to wishlist';
 
   const quickViewLabel = language === 'ar' ? 'عرض سريع' : 'Quick view';
   const reviewsLabel = language === 'ar' ? 'عرض التقييمات' : 'Open reviews';
@@ -141,37 +144,40 @@ const ProductCard: React.FC<ProductCardProps> = ({
   return (
     <div
       className="
-        group relative bg-white rounded-2xl
-        border border-slate-100 shadow-sm
-        transition-shadow duration-300
-        hover:shadow-lg
-        flex flex-col h-full
+        group relative bg-white rounded-2xl overflow-hidden border border-slate-100
+        shadow-sm hover:shadow-xl transition-all duration-500 flex flex-col h-full
+        md:transform-gpu md:will-change-transform md:hover:-translate-y-2
       "
       data-product-id={product.id}
     >
       {/* Badge */}
       {badge ? (
         <div
-          className={`absolute top-3 left-3 rtl:left-3 rtl:right-auto ltr:right-auto ltr:left-3 z-10 text-white text-xs font-bold px-2 py-1 rounded-full shadow-md ${
-            product.originalPrice ? 'bg-red-500' : 'bg-secondary-DEFAULT'
-          }`}
+          className={`
+            absolute top-3 left-3 rtl:left-3 rtl:right-auto ltr:right-auto ltr:left-3
+            z-10 text-white text-xs font-bold px-2 py-1 rounded-full shadow-md
+            ${product.originalPrice ? 'bg-red-500 animate-pulse' : 'bg-secondary-DEFAULT'}
+          `}
         >
           {badge}
         </div>
       ) : null}
 
-      {/* Action Buttons */}
+      {/* Action Buttons Top Right */}
       <div
         className="
-          absolute top-3 right-3 rtl:right-3 rtl:left-auto ltr:left-auto ltr:right-3 z-10
-          flex flex-col gap-2
+          absolute top-3 right-3 rtl:right-3 rtl:left-auto ltr:left-auto ltr:right-3
+          z-10 flex flex-col gap-2 transition-opacity duration-300 opacity-100
+          md:opacity-0 md:group-hover:opacity-100 md:translate-x-4
+          rtl:md:-translate-x-4 ltr:md:translate-x-4 md:group-hover:translate-x-0
         "
       >
         <button
           onClick={onClickWishlist}
-          className={`p-2 rounded-full transition-colors shadow-sm ${
-            isLiked ? 'bg-red-50 text-red-500' : 'bg-white text-slate-400 hover:text-red-500'
-          }`}
+          className={`
+            p-2 rounded-full backdrop-blur-md transition-colors shadow-sm
+            ${isLiked ? 'bg-red-50 text-red-500' : 'bg-white/90 text-slate-400 hover:text-red-500'}
+          `}
           aria-label={wishlistLabel}
           type="button"
         >
@@ -181,7 +187,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
         {onQuickView ? (
           <button
             onClick={onClickQuickView}
-            className="hidden md:block p-2 rounded-full bg-white text-slate-400 hover:text-secondary-DEFAULT transition-colors shadow-sm"
+            className="hidden md:block p-2 rounded-full bg-white/90 backdrop-blur-md text-slate-400 hover:text-secondary-DEFAULT transition-colors shadow-sm"
             aria-label={quickViewLabel}
             type="button"
           >
@@ -190,23 +196,16 @@ const ProductCard: React.FC<ProductCardProps> = ({
         ) : null}
       </div>
 
-      {/* Image (✅ القص هنا فقط وليس على الكرت كله) */}
+      {/* Image */}
       <Link to={productLink} className="block relative" aria-label={productTitle}>
-        {/* ✅ Square fallback قوي حتى لو aspect-ratio تعطل على بعض WebViews */}
-        <div className="relative bg-slate-50 rounded-t-2xl overflow-hidden">
-          <div className="pt-[100%]" />
-          <div className="absolute inset-0">
-            <LazyImage
-              src={imageSrc}
-              alt={productTitle}
-              containerClassName="w-full h-full"
-              className="w-full h-full object-cover"
-              loading={priority ? 'eager' : 'lazy'}
-              fetchPriority={priority ? 'high' : 'auto'}
-            />
-          </div>
-        </div>
-
+        <LazyImage
+          src={imageSrc}
+          alt={productTitle}
+          containerClassName="aspect-square bg-slate-50"
+          className="w-full h-full object-cover transition-transform duration-700 md:group-hover:scale-110 md:mix-blend-multiply"
+          loading={priority ? 'eager' : 'lazy'}
+          fetchPriority={priority ? 'high' : 'auto'}
+        />
         <div className="absolute inset-0 bg-black/5 opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
       </Link>
 
@@ -236,7 +235,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
           </button>
         </div>
 
-        <Link to={productLink} className="block mb-2 md:hover:text-secondary-DEFAULT transition-colors">
+        <Link to={productLink} className="block mb-2 md:group-hover:text-secondary-DEFAULT transition-colors">
           <h3 className="font-bold text-slate-800 line-clamp-1 text-sm md:text-base">{productTitle}</h3>
           {product.nameEn ? <p className="text-xs text-slate-400 line-clamp-1">{product.nameEn}</p> : null}
         </Link>
@@ -244,10 +243,13 @@ const ProductCard: React.FC<ProductCardProps> = ({
         <div className="mt-auto pt-4 flex items-center justify-between border-t border-slate-50">
           <div className="flex flex-col">
             <span className="font-bold text-lg text-slate-900 tabular-nums">
-              {Number(product.price ?? 0)} <span className="text-xs font-normal"></span>
+              {Number(product.price ?? 0)}
+              <span className="text-xs font-normal"></span>
             </span>
             {product.originalPrice ? (
-              <span className="text-xs text-slate-400 line-through tabular-nums">{Number(product.originalPrice)}</span>
+              <span className="text-xs text-slate-400 line-through tabular-nums">
+                {Number(product.originalPrice)}
+              </span>
             ) : null}
           </div>
 
