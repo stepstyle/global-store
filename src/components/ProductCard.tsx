@@ -61,7 +61,18 @@ const renderStars = (avg: number) => {
 const resolveImage = (p: Product) => {
   const anyP = p as any;
   const imgs = Array.isArray(anyP.images) ? anyP.images : [];
-  return imgs[0] || p.image || '';
+  const raw = imgs[0] || p.image || '';
+
+  // ✅ NEW: normalize (extra safety)
+  if (!raw) return '';
+  const s = String(raw).trim();
+
+  // keep external
+  if (/^https?:\/\//i.test(s) || s.startsWith('data:') || s.startsWith('blob:')) return s;
+
+  // make it root-based
+  if (s.startsWith('/')) return s;
+  return `/${s.replace(/^\.?\//, '')}`;
 };
 
 const ProductCard: React.FC<ProductCardProps> = ({
