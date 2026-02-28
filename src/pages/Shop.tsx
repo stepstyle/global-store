@@ -697,67 +697,64 @@ const Shop: React.FC = () => {
           </aside>
 
           {/* Product Grid */}
-          <div className="flex-1 flex flex-col">
-            {isLoading ? (
-              <ProductSkeletonGrid count={8} />
-            ) : paginatedProducts.length > 0 ? (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
-                  {paginatedProducts.map((product: any, index: number) => (
-                    <ProductCard
-                      key={product.id}
-                      product={product}
-                      onAddToCart={addToCart}
-                      onToggleWishlist={toggleWishlist}
-                      onQuickView={openQuickView}
-                      isLiked={wishlist.has(product.id)}
-                      priority={index < 6}
-                    />
-                  ))}
-                </div>
+<div className="flex-1">
+  {isLoading ? (
+    <ProductSkeletonGrid count={8} />
+  ) : paginatedProducts.length > 0 ? (
+    <>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-12 items-stretch auto-rows-fr">
+        {paginatedProducts.map((product: any, index: number) => (
+          <ProductCard
+            key={product.id}
+            product={product}
+            onAddToCart={addToCart}
+            onToggleWishlist={toggleWishlist}
+            onQuickView={openQuickView}
+            isLiked={wishlist.has(product.id)}
+            priority={index < 6}
+          />
+        ))}
+      </div>
 
-                {/* Pagination Controls */}
-                {totalPages > 1 && (
-                  <div className="flex justify-center items-center gap-2 mt-auto">
-                    {/* ✅ Previous */}
-                    <button
-                      onClick={() => handlePageChange(currentPage - 1)}
-                      disabled={currentPage === 1}
-                      className="p-2 rounded-xl border border-slate-200 hover:bg-white hover:text-secondary-DEFAULT disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-secondary-DEFAULT"
-                      type="button"
-                      aria-label="Previous page"
-                    >
-                      <ChevronRight size={20} className="rtl:rotate-180 ltr:rotate-0" />
-                    </button>
+      {totalPages > 1 && (
+        <div className="flex justify-center items-center gap-2 mt-6">
+          <button
+            onClick={() => handlePageChange(currentPage - 1)}
+            disabled={currentPage === 1}
+            className="p-2 rounded-xl border border-slate-200 hover:bg-white hover:text-secondary-DEFAULT disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-secondary-DEFAULT"
+            type="button"
+            aria-label="Previous page"
+          >
+            <ChevronRight size={20} className="rtl:rotate-180 ltr:rotate-0" />
+          </button>
 
-                    <span className="text-sm text-slate-500 font-medium tabular-nums">
-                      {t('page') ?? 'Page'} {currentPage} {t('of') ?? 'of'} {totalPages}
-                    </span>
+          <span className="text-sm text-slate-500 font-medium tabular-nums">
+            {t('page') ?? 'Page'} {currentPage} {t('of') ?? 'of'} {totalPages}
+          </span>
 
-                    {/* ✅ Next */}
-                    <button
-                      onClick={() => handlePageChange(currentPage + 1)}
-                      disabled={currentPage === totalPages}
-                      className="p-2 rounded-xl border border-slate-200 hover:bg-white hover:text-secondary-DEFAULT disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-secondary-DEFAULT"
-                      type="button"
-                      aria-label="Next page"
-                    >
-                      <ChevronLeft size={20} className="rtl:rotate-180 ltr:rotate-0" />
-                    </button>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-20 bg-white rounded-2xl border border-dashed border-slate-200 animate-in fade-in">
-                <div className="text-6xl mb-4 grayscale opacity-50">🔍</div>
-                <h3 className="text-xl font-bold text-slate-800 mb-2">{t('noProducts') ?? 'No products'}</h3>
-                <p className="text-slate-500">{t('noProductsDesc') ?? 'Try different filters.'}</p>
-                <button onClick={clearFilters} className="mt-4 text-secondary-DEFAULT underline" type="button">
-                  {t('clearFilters') ?? 'Clear filters'}
-                </button>
-              </div>
-            )}
-          </div>
+          <button
+            onClick={() => handlePageChange(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            className="p-2 rounded-xl border border-slate-200 hover:bg-white hover:text-secondary-DEFAULT disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-secondary-DEFAULT"
+            type="button"
+            aria-label="Next page"
+          >
+            <ChevronLeft size={20} className="rtl:rotate-180 ltr:rotate-0" />
+          </button>
+        </div>
+      )}
+    </>
+  ) : (
+    <div className="flex flex-col items-center justify-center py-20 bg-white rounded-2xl border border-dashed border-slate-200 animate-in fade-in">
+      <div className="text-6xl mb-4 grayscale opacity-50">🔍</div>
+      <h3 className="text-xl font-bold text-slate-800 mb-2">{t('noProducts') ?? 'No products'}</h3>
+      <p className="text-slate-500">{t('noProductsDesc') ?? 'Try different filters.'}</p>
+      <button onClick={clearFilters} className="mt-4 text-secondary-DEFAULT underline" type="button">
+        {t('clearFilters') ?? 'Clear filters'}
+      </button>
+    </div>
+  )}
+</div>
         </div>
       </div>
     </div>
