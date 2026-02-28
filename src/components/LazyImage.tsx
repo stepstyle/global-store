@@ -1,3 +1,4 @@
+// src/components/LazyImage.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ImageOff } from 'lucide-react';
 
@@ -48,6 +49,29 @@ const isValidUrl = (u?: string) => {
   return /^https?:\/\//i.test(s) || s.startsWith('data:') || s.startsWith('blob:') || s.startsWith('/');
 };
 
+/**
+ * ✅ IMPORTANT FIX (Mobile + React Router):
+ * يحوّل أي مسار نسبي مثل "images/a.jpg" إلى "/images/a.jpg"
+ * ويحافظ على الروابط الخارجية و data/blob
+ * ويعمل encode آمن للمسار (مهم للموبايل)
+ */
+const normalizeSrc = (raw?: string | null) => {
+  if (!raw) return '';
+  const s = String(raw).trim();
+
+  // external or special
+  if (/^https?:\/\//i.test(s) || s.startsWith('data:') || s.startsWith('blob:')) {
+    return encodeURI(s);
+  }
+
+  // root-relative (good)
+  if (s.startsWith('/')) return encodeURI(s);
+
+  // relative -> make it root-relative
+  // "images/a.jpg" => "/images/a.jpg"
+  return encodeURI(`/${s.replace(/^\.?\//, '')}`);
+};
+
 /** يتحقق إن أول جزء بعد /upload/ هو Transform فعلي (Cloudinary) */
 const looksLikeCloudinaryTransform = (firstSegment: string) => {
   const s = String(firstSegment || '').trim();
@@ -85,22 +109,7 @@ const cloudinaryTransform = (url: string, w?: number, h?: number, mode?: 'limit'
     return url;
   }
 };
-const normalizeSrc = (raw?: string | null) => {
-  if (!raw) return '';
-  const s = String(raw).trim();
 
-  // external or special
-  if (/^https?:\/\//i.test(s) || s.startsWith('data:') || s.startsWith('blob:')) {
-    return encodeURI(s);
-  }
-
-  // root-relative (good)
-  if (s.startsWith('/')) return encodeURI(s);
-
-  // relative -> make it root-relative
-  // "images/a.jpg" => "/images/a.jpg"
-  return encodeURI(`/${s.replace(/^\.?\//, '')}`);
-};
 /** Picsum: تحويل لـ webp (اختياري) */
 const picsumWebp = (url: string) => {
   try {
@@ -152,14 +161,14 @@ const LazyImage: React.FC<LazyImageProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // ✅ normalize src safely
-const normalizedSrc = useMemo(() => normalizeSrc(src), [src]);
+  // ✅ normalize src safely (Mobile + nested routes)
+  const normalizedSrc = useMemo(() => normalizeSrc(src), [src]);
+
   // ✅ derived eager rule
-  const derivedEager = useMemo(() => eager || loading === 'eager' || fetchPriority === 'high', [
-    eager,
-    loading,
-    fetchPriority,
-  ]);
+  const derivedEager = useMemo(
+    () => eager || loading === 'eager' || fetchPriority === 'high',
+    [eager, loading, fetchPriority]
+  );
 
   const [inView, setInView] = useState<boolean>(derivedEager);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
@@ -279,7 +288,8 @@ const normalizedSrc = useMemo(() => normalizeSrc(src), [src]);
   const noSrc = !normalizedSrc;
 
   return (
-<div ref={containerRef} className={`relative w-full overflow-hidden ${containerClassName}`}>    {/* Placeholder */}
+    <div ref={containerRef} className={`relative w-full overflow-hidden ${containerClassName}`}>
+      {/* Placeholder */}
       {!hasError && !isLoaded && (
         <div className={`absolute inset-0 ${placeholderClassName} animate-pulse`} aria-hidden="true" />
       )}
@@ -327,7 +337,7 @@ const normalizedSrc = useMemo(() => normalizeSrc(src), [src]);
           {...imgProps}
         />
       ) : (
-        <div className="w-full h-full" aria-hidden="true" />
+        <div className="w-full h-full min-h-[1px]" aria-hidden="true" />
       )}
     </div>
   );
