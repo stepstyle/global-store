@@ -318,8 +318,8 @@ const LazyImage: React.FC<LazyImageProps> = ({
     onError?.(e);
   }}
   className={`absolute inset-0 w-full h-full block transition-opacity duration-300 ease-out ${
-    isLoaded ? 'opacity-100' : 'opacity-0'
-  } ${className}`}
+  isLoaded ? 'opacity-100' : 'opacity-0'
+} ${className}`}
   style={{ ...style }}
   {...imgProps}
 />
