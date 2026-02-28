@@ -94,8 +94,7 @@ const cloudinaryTransform = (url: string, w?: number, h?: number, mode?: 'limit'
     // إذا URL فيه transformations أصلاً لا نكرر
     if (looksLikeCloudinaryTransform(first)) return url;
 
-    const t: string[] = ['f_auto', 'q_auto:good', 'dpr_auto'];
-
+const t: string[] = ['f_jpg', 'q_auto:good', 'dpr_auto'];
     if (typeof w === 'number' && w > 0) t.push(`w_${Math.round(w)}`);
     if (typeof h === 'number' && h > 0) t.push(`h_${Math.round(h)}`);
 
