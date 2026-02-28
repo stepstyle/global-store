@@ -3,19 +3,11 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig({
-  base: '/REPO_NAME/', // <-- اكتب اسم الريبو بالضبط
+  base: '/', // ✅ مهم
   plugins: [react()],
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
+    alias: { '@': path.resolve(__dirname, './src') },
   },
-  server: {
-    port: 3000,
-    host: true,
-  },
-  build: {
-    outDir: 'dist',
-    sourcemap: false,
-  },
+  server: { port: 3000, host: true },
+  build: { outDir: 'dist', sourcemap: false },
 });
