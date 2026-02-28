@@ -9,5 +9,9 @@ export default defineConfig({
     alias: { '@': path.resolve(__dirname, './src') },
   },
   server: { port: 3000, host: true },
-  build: { outDir: 'dist', sourcemap: false },
+  build: {
+  outDir: 'dist',
+  sourcemap: false,
+  chunkSizeWarningLimit: 1000, // بدل 500 الافتراضية
+},
 });
