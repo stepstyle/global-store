@@ -302,12 +302,27 @@ const LazyImage: React.FC<LazyImageProps> = ({
         <div className="absolute inset-0 flex items-center justify-center bg-slate-50 text-slate-300">
           {showFallback ? (
             <img
-              src={String(fallbackSrc)}
-              alt={alt}
-              className="w-full h-full object-cover"
-              loading="lazy"
-              decoding="async"
-            />
+  src={resolvedSrc}
+  srcSet={srcSet}
+  sizes={srcSet ? resolvedSizes : undefined}
+  alt={alt}
+  loading={finalLoading}
+  decoding={decoding}
+  {...({ fetchPriority } as any)}
+  onLoad={(e) => {
+    setIsLoaded(true);
+    onLoad?.(e);
+  }}
+  onError={(e) => {
+    setHasError(true);
+    onError?.(e);
+  }}
+  className={`absolute inset-0 w-full h-full block transition-opacity duration-300 ease-out ${
+    isLoaded ? 'opacity-100' : 'opacity-0'
+  } ${className}`}
+  style={{ ...style }}
+  {...imgProps}
+/>
           ) : (
             <ImageOff size={24} strokeWidth={1.5} />
           )}
