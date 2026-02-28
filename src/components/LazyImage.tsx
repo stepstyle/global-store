@@ -85,7 +85,22 @@ const cloudinaryTransform = (url: string, w?: number, h?: number, mode?: 'limit'
     return url;
   }
 };
+const normalizeSrc = (raw?: string | null) => {
+  if (!raw) return '';
+  const s = String(raw).trim();
 
+  // external or special
+  if (/^https?:\/\//i.test(s) || s.startsWith('data:') || s.startsWith('blob:')) {
+    return encodeURI(s);
+  }
+
+  // root-relative (good)
+  if (s.startsWith('/')) return encodeURI(s);
+
+  // relative -> make it root-relative
+  // "images/a.jpg" => "/images/a.jpg"
+  return encodeURI(`/${s.replace(/^\.?\//, '')}`);
+};
 /** Picsum: تحويل لـ webp (اختياري) */
 const picsumWebp = (url: string) => {
   try {
@@ -138,8 +153,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   // ✅ normalize src safely
-  const normalizedSrc = useMemo(() => (src ? String(src).trim() : ''), [src]);
-
+const normalizedSrc = useMemo(() => normalizeSrc(src), [src]);
   // ✅ derived eager rule
   const derivedEager = useMemo(() => eager || loading === 'eager' || fetchPriority === 'high', [
     eager,
@@ -265,7 +279,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
   const noSrc = !normalizedSrc;
 
   return (
-<div ref={containerRef} className={`relative ${containerClassName}`}>      {/* Placeholder */}
+<div ref={containerRef} className={`relative w-full overflow-hidden ${containerClassName}`}>    {/* Placeholder */}
       {!hasError && !isLoaded && (
         <div className={`absolute inset-0 ${placeholderClassName} animate-pulse`} aria-hidden="true" />
       )}
