@@ -212,7 +212,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
         <LazyImage
           src={imageSrc}
           alt={productTitle}
-        containerClassName="w-full aspect-square bg-slate-50 min-h-[220px]"         className="w-full h-full object-contain bg-white ... transition-transform duration-700 md:group-hover:scale-110 md:mix-blend-multiply"
+        containerClassName="w-full aspect-square bg-slate-50 min-h-[1000px]"         className=" h-full object-contain bg-white ... transition-transform duration-700 md:group-hover:scale-110 md:mix-blend-multiply"
           loading={priority ? 'eager' : 'lazy'}
           fetchPriority={priority ? 'high' : 'auto'}
         />
