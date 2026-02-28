@@ -1,78 +1,35 @@
-// src/components/LazyImage.tsx
+// FILE: src/components/LazyImage.tsx
+// Changes:
+// 1) Add WebP support detection and only convert Picsum -> .webp if supported
+// 2) Avoid Cloudinary f_auto (AVIF issues) by forcing f_jpg (most compatible)
+// 3) Force <img> to fill container on iOS (width/height 100%)
+
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ImageOff } from 'lucide-react';
 
 type FetchPriority = 'high' | 'low' | 'auto';
 
 interface LazyImageProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'loading' | 'src'> {
-  /** مصدر الصورة */
   src?: string | null;
-
-  /** كلاس للـ wrapper */
   containerClassName?: string;
-
-  /** خلفية placeholder فقط */
   placeholderClassName?: string;
-
-  /** مصدر بديل لو فشل التحميل */
   fallbackSrc?: string;
-
-  /** أولوية تحميل المتصفح */
   fetchPriority?: FetchPriority;
-
-  /** إذا true: يتجاوز الـ IntersectionObserver ويحمل فوراً */
   eager?: boolean;
-
-  /** أحجام للـ srcSet (Cloudinary) */
   responsiveWidths?: number[];
-
-  /** sizes attribute للـ srcSet */
   sizes?: string;
-
-  /** Cloudinary thumb size (square) */
   cloudinarySize?: number;
-
-  /** عرض متوقع للصورة (Cloudinary) */
   expectedDisplayWidth?: number;
-
-  /** lazy | eager */
   loading?: 'lazy' | 'eager';
-
-  /** rootMargin للتحكم بسرعة تشغيل IntersectionObserver */
   rootMargin?: string;
 }
 
-/** تحقق بسيط من URL */
 const isValidUrl = (u?: string) => {
   if (!u) return false;
   const s = String(u).trim();
   return /^https?:\/\//i.test(s) || s.startsWith('data:') || s.startsWith('blob:') || s.startsWith('/');
 };
 
-/**
- * ✅ IMPORTANT FIX (Mobile + React Router):
- * يحوّل أي مسار نسبي مثل "images/a.jpg" إلى "/images/a.jpg"
- * ويحافظ على الروابط الخارجية و data/blob
- * ويعمل encode آمن للمسار (مهم للموبايل)
- */
-const normalizeSrc = (raw?: string | null) => {
-  if (!raw) return '';
-  const s = String(raw).trim();
-
-  // external or special
-  if (/^https?:\/\//i.test(s) || s.startsWith('data:') || s.startsWith('blob:')) {
-    return encodeURI(s);
-  }
-
-  // root-relative (good)
-  if (s.startsWith('/')) return encodeURI(s);
-
-  // relative -> make it root-relative
-  // "images/a.jpg" => "/images/a.jpg"
-  return encodeURI(`/${s.replace(/^\.?\//, '')}`);
-};
-
-/** يتحقق إن أول جزء بعد /upload/ هو Transform فعلي (Cloudinary) */
 const looksLikeCloudinaryTransform = (firstSegment: string) => {
   const s = String(firstSegment || '').trim();
   if (!s) return false;
@@ -80,7 +37,6 @@ const looksLikeCloudinaryTransform = (firstSegment: string) => {
   return /^(c_|w_|h_|q_|f_|dpr_|ar_|g_|b_|e_)/.test(s);
 };
 
-/** Cloudinary transformer */
 const cloudinaryTransform = (url: string, w?: number, h?: number, mode?: 'limit' | 'fill') => {
   try {
     if (!url.includes('res.cloudinary.com') || !url.includes('/upload/')) return url;
@@ -91,10 +47,11 @@ const cloudinaryTransform = (url: string, w?: number, h?: number, mode?: 'limit'
     const restParts = restRaw.split('/');
     const first = restParts[0] || '';
 
-    // إذا URL فيه transformations أصلاً لا نكرر
     if (looksLikeCloudinaryTransform(first)) return url;
 
-const t: string[] = ['f_jpg', 'q_auto:good', 'dpr_auto'];
+    // ✅ iOS-safe: avoid f_auto (can return AVIF and fail on some iPhones)
+    const t: string[] = ['f_jpg', 'q_auto:good', 'dpr_auto'];
+
     if (typeof w === 'number' && w > 0) t.push(`w_${Math.round(w)}`);
     if (typeof h === 'number' && h > 0) t.push(`h_${Math.round(h)}`);
 
@@ -109,13 +66,11 @@ const t: string[] = ['f_jpg', 'q_auto:good', 'dpr_auto'];
   }
 };
 
-/** Picsum: تحويل لـ webp (اختياري) */
 const picsumWebp = (url: string) => {
   try {
     if (!url.includes('picsum.photos') || url.includes('.webp')) return url;
     const [baseUrl, query] = url.split('?');
 
-    // إذا كان URL على شكل /400 أو /400/400
     if (/\/\d+$/.test(baseUrl) || /\/\d+\/\d+$/.test(baseUrl)) {
       return `${baseUrl}.webp${query ? `?${query}` : ''}`;
     }
@@ -125,7 +80,7 @@ const picsumWebp = (url: string) => {
   }
 };
 
-/** WebP support test (client-side) */
+// ✅ NEW: WebP support test (prevents iPhone issues on older iOS/settings)
 const detectWebPSupport = (): boolean => {
   try {
     if (typeof document === 'undefined') return false;
@@ -160,37 +115,33 @@ const LazyImage: React.FC<LazyImageProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // ✅ normalize src safely (Mobile + nested routes)
-  const normalizedSrc = useMemo(() => normalizeSrc(src), [src]);
+  const normalizedSrc = useMemo(() => (src ? String(src).trim() : ''), [src]);
 
-  // ✅ derived eager rule
-  const derivedEager = useMemo(
-    () => eager || loading === 'eager' || fetchPriority === 'high',
-    [eager, loading, fetchPriority]
-  );
+  const derivedEager = useMemo(() => eager || loading === 'eager' || fetchPriority === 'high', [
+    eager,
+    loading,
+    fetchPriority,
+  ]);
 
   const [inView, setInView] = useState<boolean>(derivedEager);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [hasError, setHasError] = useState<boolean>(false);
 
-  // ✅ WebP support (important for mobile compatibility)
-  const [webpSupported, setWebpSupported] = useState<boolean>(false);
+  // ✅ NEW: detect WebP support once
+  const [webpSupported, setWebpSupported] = useState(false);
   useEffect(() => {
     setWebpSupported(detectWebPSupport());
   }, []);
 
-  // reset state on src / eager change
   useEffect(() => {
     setIsLoaded(false);
     setHasError(false);
     setInView(derivedEager);
   }, [normalizedSrc, derivedEager]);
 
-  // IntersectionObserver (client-only)
   useEffect(() => {
     if (derivedEager) return;
 
-    // SSR guard
     if (typeof window === 'undefined' || typeof IntersectionObserver === 'undefined') {
       setInView(true);
       return;
@@ -214,20 +165,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
     return () => obs.disconnect();
   }, [derivedEager, rootMargin]);
 
-  // ✅ HARD fallback: if IO doesn't fire on some mobile browsers, force inView after a short delay
-  useEffect(() => {
-    if (derivedEager) return;
-    if (inView) return;
-    if (!normalizedSrc) return;
-
-    const t = window.setTimeout(() => {
-      setInView(true);
-    }, 1200);
-
-    return () => window.clearTimeout(t);
-  }, [derivedEager, inView, normalizedSrc]);
-
-  // ✅ IMPORTANT: Only convert Picsum -> webp if browser supports WebP
+  // ✅ Only convert Picsum -> webp if supported (fix iPhone missing images)
   const finalSrc = useMemo(() => {
     if (!normalizedSrc) return '';
     if (!webpSupported) return normalizedSrc;
@@ -264,7 +202,6 @@ const LazyImage: React.FC<LazyImageProps> = ({
 
   const resolvedSrc = useMemo(() => {
     if (!finalSrc) return '';
-
     if (!isCloudinary) return finalSrc;
 
     if (cloudinarySize && cloudinarySize > 0) {
@@ -282,18 +219,14 @@ const LazyImage: React.FC<LazyImageProps> = ({
   const showFallback = useMemo(() => hasError && isValidUrl(fallbackSrc), [hasError, fallbackSrc]);
 
   const finalLoading: 'lazy' | 'eager' = derivedEager ? 'eager' : 'lazy';
-
-  // ✅ If no src -> render placeholder safely
   const noSrc = !normalizedSrc;
 
   return (
-    <div ref={containerRef} className={`relative w-full overflow-hidden ${containerClassName}`}>
-      {/* Placeholder */}
+    <div ref={containerRef} className={`relative overflow-hidden ${containerClassName}`}>
       {!hasError && !isLoaded && (
         <div className={`absolute inset-0 ${placeholderClassName} animate-pulse`} aria-hidden="true" />
       )}
 
-      {/* No src */}
       {noSrc ? (
         <div className={`absolute inset-0 flex items-center justify-center text-slate-300 ${placeholderClassName}`}>
           <ImageOff size={24} />
@@ -302,27 +235,13 @@ const LazyImage: React.FC<LazyImageProps> = ({
         <div className="absolute inset-0 flex items-center justify-center bg-slate-50 text-slate-300">
           {showFallback ? (
             <img
-  src={resolvedSrc}
-  srcSet={srcSet}
-  sizes={srcSet ? resolvedSizes : undefined}
-  alt={alt}
-  loading={finalLoading}
-  decoding={decoding}
-  {...({ fetchPriority } as any)}
-  onLoad={(e) => {
-    setIsLoaded(true);
-    onLoad?.(e);
-  }}
-  onError={(e) => {
-    setHasError(true);
-    onError?.(e);
-  }}
-  className={`absolute inset-0 w-full h-full block transition-opacity duration-300 ease-out ${
-  isLoaded ? 'opacity-100' : 'opacity-0'
-} ${className}`}
-  style={{ ...style }}
-  {...imgProps}
-/>
+              src={String(fallbackSrc)}
+              alt={alt}
+              className="w-full h-full object-cover block"
+              style={{ width: '100%', height: '100%', display: 'block' }}
+              loading="lazy"
+              decoding="async"
+            />
           ) : (
             <ImageOff size={24} strokeWidth={1.5} />
           )}
@@ -344,14 +263,14 @@ const LazyImage: React.FC<LazyImageProps> = ({
             setHasError(true);
             onError?.(e);
           }}
-          className={`max-w-full block transition-opacity duration-300 ease-out ${
+          className={`w-full h-full block transition-opacity duration-300 ease-out ${
             isLoaded ? 'opacity-100' : 'opacity-0'
           } ${className}`}
-          style={{ maxWidth: '100%', ...style }}
+          style={{ width: '100%', height: '100%', display: 'block', ...style }}
           {...imgProps}
         />
       ) : (
-        <div className="w-full h-full min-h-[1px]" aria-hidden="true" />
+        <div className="w-full h-full" aria-hidden="true" />
       )}
     </div>
   );
