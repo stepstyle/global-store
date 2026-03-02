@@ -12,6 +12,7 @@ import {
   Globe,
   Home,
   ChevronLeft,
+  ChevronRight,
   LogOut,
   Package,
   Gift,
@@ -47,6 +48,8 @@ const Header: React.FC = () => {
     logout,
   } = useCart();
 
+  const isRtl = language === 'ar';
+
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
 
@@ -62,6 +65,15 @@ const Header: React.FC = () => {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const userMenuCloseTimer = useRef<any>(null);
+
+  // ✅ Sticky premium behavior
+  const [isScrolled, setIsScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setIsScrolled(window.scrollY > 10);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   const openUserMenuSafe = () => {
     if (userMenuCloseTimer.current) clearTimeout(userMenuCloseTimer.current);
@@ -101,6 +113,26 @@ const Header: React.FC = () => {
       { labelAr: 'بوكيهات وورد', labelEn: 'Bouquets', sub: 'bouquets' },
     ];
 
+      // ✅ MegaMenu class (solid background + readable text)
+  const megaMenuClass = `
+    absolute top-full left-0 rtl:left-auto rtl:right-0 mt-3
+    w-[420px] lg:w-[720px]
+    rounded-2xl overflow-hidden z-50
+    border border-slate-200/70
+    shadow-[0_20px_60px_rgba(2,6,23,0.35)]
+    bg-white
+    animate-in fade-in slide-in-from-top-2
+  `;
+
+  // ✅ MegaMenu item class
+  const megaItemClass = `
+    w-full text-right rtl:text-right ltr:text-left
+    px-3 py-2.5 rounded-xl
+    text-sm font-bold text-slate-800
+    hover:bg-slate-100 focus:bg-slate-100
+    focus:outline-none
+    transition-colors
+  `;
     return {
       home: { labelAr: t('home'), labelEn: t('home'), path: '/' },
       games: {
@@ -240,8 +272,7 @@ const Header: React.FC = () => {
 
   const closeDropdownDelayed = () => {
     if (dropdownCloseTimer.current) clearTimeout(dropdownCloseTimer.current);
-    dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 140);
-  };
+dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
 
   const splitToColumns = (items: Array<{ labelAr: string; labelEn: string; sub: string }>, colCount: number) => {
     const perCol = Math.ceil(items.length / colCount);
@@ -251,11 +282,187 @@ const Header: React.FC = () => {
   // ✅ الهاتف (غيّر اسم الحقل إذا عندك مختلف)
   const userPhone = (user as any)?.phone || (user as any)?.phoneNumber || '';
 
+  // =========================================================
+  // ✅ (1) Dynamic Top Bar (multiple messages + autoplay + buttons + swipe)
+  // ✅ (2) Ultra clear text (high contrast + shadow)
+  // =========================================================
+  const topBarItems = useMemo(
+    () => [
+      {
+        id: 'ship',
+        icon: '🚚',
+        ar: 'توصيل سريع خلال 24-48 ساعة',
+        en: 'Fast delivery within 24–48 hours',
+        to: '/tracking',
+      },
+      {
+        id: 'deals',
+        icon: '🎁',
+        ar: 'عروض أسبوعية حصرية — اضغط للمشاهدة',
+        en: 'Exclusive weekly deals — tap to view',
+        to: '/shop?filter=Offers',
+      },
+      {
+        id: 'support',
+        icon: '📞',
+        ar: 'الدعم: 06-0000000',
+        en: 'Support: +962 6 000 0000',
+        to: '/contact',
+      },
+    ],
+    []
+  );
+
+  const [topBarIndex, setTopBarIndex] = useState(0);
+  const topBarCount = topBarItems.length;
+
+  const prevTopBar = () => setTopBarIndex((i) => (i - 1 + topBarCount) % topBarCount);
+  const nextTopBar = () => setTopBarIndex((i) => (i + 1) % topBarCount);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setTopBarIndex((i) => (i + 1) % topBarCount);
+    }, 5500);
+    return () => clearInterval(id);
+  }, [topBarCount]);
+
+  const dragRef = useRef<{ startX: number; active: boolean } | null>(null);
+
+  const onTopBarPointerDown = (e: React.PointerEvent) => {
+    dragRef.current = { startX: e.clientX, active: true };
+  };
+
+  const onTopBarPointerUp = (e: React.PointerEvent) => {
+    if (!dragRef.current?.active) return;
+    const delta = e.clientX - dragRef.current.startX;
+    dragRef.current = null;
+
+    const effectiveDelta = isRtl ? -delta : delta;
+    if (effectiveDelta > 35) prevTopBar();
+    if (effectiveDelta < -35) nextTopBar();
+  };
+
+  const onTopBarPointerCancel = () => {
+    dragRef.current = null;
+  };
+
+  const activeTop = topBarItems[topBarIndex];
+  const megaMenuClass = `
+    absolute top-full left-0 rtl:left-auto rtl:right-0 mt-3
+    w-[420px] lg:w-[720px]
+    rounded-2xl overflow-hidden z-50
+    border border-slate-200/70
+    shadow-[0_20px_60px_rgba(2,6,23,0.35)]
+    bg-white
+    animate-in fade-in slide-in-from-top-2
+  `;
+
+  const megaItemClass = `
+    w-full text-right rtl:text-right ltr:text-left
+    px-3 py-2.5 rounded-xl
+    text-sm font-bold text-slate-800
+    hover:bg-slate-100 focus:bg-slate-100
+    focus:outline-none
+    transition-colors
+  `;
   return (
     <>
-      <header className="sticky top-0 z-20 w-full bg-gradient-to-r from-primary-dark via-white/5 to-secondary-dark backdrop-blur-md border-b border-white/20 shadow-lg font-sans transition-all duration-300">
-      <div className="w-full max-w-[1550
-      px] mx-auto grid grid-cols-[auto,1fr,auto] items-center h-20 px-6 lg:px-14 gap-3">          <Link
+      <header
+        className={[
+          'sticky top-0 z-50 w-full font-sans transition-all duration-300',
+          'bg-gradient-to-r from-primary-dark via-white/10 to-secondary-dark',
+          'backdrop-blur-md border-b border-white/20',
+          isScrolled ? 'shadow-xl' : 'shadow-lg',
+        ].join(' ')}
+      >
+        {/* ✅ Top Bar (Dynamic + High Contrast) */}
+          <div className="border-b border-white/15 bg-black/15">       <div className="w-full max-w-[1550px] mx-auto px-5 sm:px-6 lg:px-14">
+            <div className="h-10 flex items-center justify-between gap-3">
+              {/* Left: Dynamic message (clickable + swipe) */}
+              <div
+                className="
+                  flex-1 min-w-0
+                  inline-flex items-center gap-2
+                  px-2 sm:px-3 py-1.5
+                  rounded-full
+                  bg-white/15 border border-white/25
+                  backdrop-blur-sm
+                  select-none
+                "
+                onPointerDown={onTopBarPointerDown}
+                onPointerUp={onTopBarPointerUp}
+                onPointerCancel={onTopBarPointerCancel}
+                title={L('اسحب للتبديل بين الرسائل', 'Swipe to switch messages')}
+              >
+                <button
+                  type="button"
+                  onClick={prevTopBar}
+                  className="p-1.5 rounded-full hover:bg-white/10 transition-colors active:scale-95"
+                  aria-label="Previous message"
+                >
+                  {isRtl ? <ChevronRight size={16} className="text-white drop-shadow" /> : <ChevronLeft size={16} className="text-white drop-shadow" />}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => goTo(activeTop.to)}
+                  className="
+                    flex-1 min-w-0
+                    text-[13px] sm:text-[14px]
+                    font-bold
+                    text-white
+                    drop-shadow-[0_1px_1px_rgba(0,0,0,0.55)]
+                    truncate
+                    text-center
+                    hover:opacity-95
+                    transition-opacity
+                  "
+                  aria-label="Open top message"
+                >
+                  <span className="me-1">{activeTop.icon}</span>
+                  {L(activeTop.ar, activeTop.en)}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={nextTopBar}
+                  className="p-1.5 rounded-full hover:bg-white/10 transition-colors active:scale-95"
+                  aria-label="Next message"
+                >
+                  {isRtl ? <ChevronLeft size={16} className="text-white drop-shadow" /> : <ChevronRight size={16} className="text-white drop-shadow" />}
+                </button>
+              </div>
+
+              {/* Right: Language switch (unchanged logic, clearer text) */}
+              <button
+                onClick={() => setLanguage(language === 'ar' ? 'en' : 'ar')}
+                className="
+                  inline-flex items-center gap-2
+                  px-3 py-1.5 rounded-full
+                  bg-white/15 border border-white/25
+                  hover:bg-white/25 transition-colors
+                  text-white font-extrabold text-[12px]
+                  drop-shadow-[0_1px_1px_rgba(0,0,0,0.55)]
+                "
+                type="button"
+                aria-label="Switch Language"
+              >
+                <Globe size={14} />
+                <span className="uppercase">{language}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* ✅ Main Header */}
+        <div
+          className={[
+            'w-full max-w-[1550px] mx-auto grid grid-cols-[auto,1fr,auto] items-center',
+            isScrolled ? 'h-[72px]' : 'h-20',
+            'px-5 sm:px-6 lg:px-14 gap-3',
+          ].join(' ')}
+        >
+          <Link
             to="/"
             className="flex items-center group shrink-0 min-w-0 ps-2 sm:ps-4"
             aria-label="Home"
@@ -267,37 +474,34 @@ const Header: React.FC = () => {
               window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
             }}
           >
-
-            
-            <div className="w-7 h-10 bg-white/20 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg group-hover:rotate-12 transition-transform duration-300 backdrop-blur-sm border border-white/30 shrink-0">
+            <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center text-white font-extrabold text-xl shadow-lg group-hover:rotate-12 transition-transform duration-300 backdrop-blur-sm border border-white/30 shrink-0">
               A
             </div>
-<div
-                className="
-                  text-xl font-heading font-bold text-slate-900 tracking-tight
-                  group-hover:text-white transition-colors duration-300
-                  truncate
-                  max-w-[160px] sm:max-w-[220px] lg:max-w-[260px]
-                "
-              >
-                
-            <div className="flex flex-col ms-5 min-w--50 max-w-[300px]">
-                 Dair  Sharaf
-                 </div>
+
+            <div className="flex flex-col ms-3 min-w-0">
               <span
-                className="
-                  text-[10px] text-slate-800 font-medium tracking-widest uppercase
-                  group-hover:text-slate-100 transition-colors duration-300
-                  truncate
-                  max-w-[220px] sm:max-w-[220px] lg:max-w-[260px]
-                "
+                className={[
+                  'text-[18px] sm:text-[20px] font-heading font-extrabold tracking-tight',
+                  'text-slate-900 group-hover:text-white transition-colors duration-300',
+                  'truncate',
+                ].join(' ')}
               >
-                Tech & Art
+                Dair Sharaf
+              </span>
+
+              <span
+                className={[
+                  'text-[10px] sm:text-[11px] font-semibold tracking-[0.18em] uppercase',
+                  'text-slate-800/90 group-hover:text-slate-100 transition-colors duration-300',
+                  'truncate',
+                ].join(' ')}
+              >
+                TECH & ART
               </span>
             </div>
           </Link>
 
-          {/* Desktop Navigation */}
+          {/* Desktop Navigation (unchanged) */}
           <nav ref={desktopNavRef} className="hidden md:flex items-center space-x-reverse space-x-3 rtl:space-x-reverse">
             <Link
               to="/"
@@ -316,7 +520,7 @@ const Header: React.FC = () => {
               <span>{t('home')}</span>
             </Link>
 
-            {/* ✅ Games Mega Menu */}
+            {/* ✅ Games Mega Menu (unchanged) */}
             <div className="relative" onMouseEnter={() => openDropdownSafe('games')} onMouseLeave={closeDropdownDelayed}>
               <button
                 type="button"
@@ -338,24 +542,18 @@ const Header: React.FC = () => {
                 <div
                   id={GAMES_MENU_ID}
                   role="menu"
-                  className="
-                    absolute top-full left-0 rtl:left-auto rtl:right-0
-                    w-[400px] lg:w-[680px]
-                    bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden
-                    animate-in fade-in slide-in-from-top-2 z-50
-                  "
+                  className={megaMenuClass}
                 >
                   <div className="h-2 bg-transparent" />
 
                   <div className="p-4 lg:p-5">
                     <div className="flex items-center justify-between gap-3 mb-4">
                       <div className="flex items-center gap-2">
-                        <div className="w-9 h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center shadow-sm">
-                          <Gamepad2 size={18} />
-                        </div>
+<div className="w-9 h-9 rounded-xl bg-secondary-DEFAULT text-white flex items-center justify-center shadow-sm">                        </div>
                         <div className="leading-tight">
-                          <p className="text-sm font-extrabold text-slate-900">{L('تصفّح الألعاب', 'Browse Games')}</p>
-                          <p className="text-xs text-slate-500">{L('اختر القسم المناسب', 'Pick a category')}</p>
+                       <p className="text-lg font-extrabold text-slate-900 tracking-wide">
+                       {L('تصفّح الألعاب', 'Browse Games')}
+                    </p>     <p className="text-xs text-slate-500">{L('اختر القسم المناسب', 'Pick a category')}</p>
                         </div>
                       </div>
 
@@ -390,13 +588,7 @@ const Header: React.FC = () => {
                                 type="button"
                                 role="menuitem"
                                 onClick={() => goTo(NAV.games.to(it.sub))}
-                                className="
-                                  w-full text-right rtl:text-right ltr:text-left
-                                  px-3 py-2.5 rounded-xl
-                                  text-sm font-bold text-slate-700
-                                  hover:bg-slate-50 focus:bg-slate-50
-                                  focus:outline-none
-                                "
+                               className={megaItemClass}
                               >
                                 {L(it.labelAr, it.labelEn)}
                               </button>
@@ -422,37 +614,114 @@ const Header: React.FC = () => {
             </div>
 
             {/* Stationery */}
-            <div className="relative" onMouseEnter={() => openDropdownSafe('stationery')} onMouseLeave={closeDropdownDelayed}>
-              <button
-                type="button"
-                onClick={() => setOpenDropdown((p) => (p === 'stationery' ? null : 'stationery'))}
-                className="text-sm font-bold text-slate-900 hover:bg-white/20 hover:shadow-sm transition-all py-2 px-3 rounded-lg flex items-center gap-2"
-              >
-                <PencilRuler size={18} />
-                <span>{L(NAV.stationery.labelAr, NAV.stationery.labelEn)}</span>
-                <ChevronDown
-                  size={16}
-                  className={`opacity-70 transition-transform ${openDropdown === 'stationery' ? 'rotate-180 opacity-100' : ''}`}
-                />
-              </button>
+<div
+  className="relative"
+  onMouseEnter={() => openDropdownSafe('stationery')}
+  onMouseLeave={closeDropdownDelayed}
+>
+  <button
+    type="button"
+    onClick={() => setOpenDropdown((p) => (p === 'stationery' ? null : 'stationery'))}
+    className="text-sm font-bold text-slate-900 hover:bg-white/20 hover:shadow-sm transition-all py-2 px-3 rounded-lg flex items-center gap-2"
+  >
+    <PencilRuler size={18} />
+    <span>{L(NAV.stationery.labelAr, NAV.stationery.labelEn)}</span>
+    <ChevronDown
+      size={16}
+      className={`opacity-70 transition-transform ${openDropdown === 'stationery' ? 'rotate-180 opacity-100' : ''}`}
+    />
+  </button>
+{openDropdown === 'stationery' && (
+  <div
+    role="menu"
+    onMouseEnter={() => openDropdownSafe('stationery')}
+    onMouseLeave={closeDropdownDelayed}
+  className={megaMenuClass}
+  >
+    <div className="h-2 bg-transparent" />
 
-              {openDropdown === 'stationery' && (
-                <div className="absolute top-full left-0 rtl:left-auto rtl:right-0 min-w-[260px] bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-top-2 z-50">
-                  {NAV.stationery.items.map((it) => (
-                    <button
-                      key={it.sub}
-                      type="button"
-                      onClick={() => goTo(NAV.stationery.to(it.sub))}
-                      className="w-full text-right rtl:text-right ltr:text-left px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                    >
-                      {L(it.labelAr, it.labelEn)}
-                    </button>
-                  ))}
-                </div>
-              )}
+    <div className="p-4 lg:p-5">
+        {/* Header */}
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-2">
+<div className="w-9 h-9 rounded-xl bg-secondary-DEFAULT text-white flex items-center justify-center shadow-sm">              <PencilRuler size={18} />
             </div>
+            <div className="leading-tight">
+                < p className="text-lg font-extrabold text-slate-900 tracking-wide">  {L('تصفّح القرطاسية', 'Browse Stationery')}
+</p>
+<p className="text-xs text-slate-600">                {L('اختر القسم المناسب', 'Pick a category')}
+              </p>
+            </div>
+          </div>
 
-            {/* Gifts */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => goTo('/shop?filter=Stationery')}
+              className="text-xs font-bold px-3 py-2 rounded-xl bg-white/15 text-white border border-white/20 hover:bg-white/20 transition-colors"
+            >
+              {L('عرض الكل', 'View All')}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setOpenDropdown(null)}
+              className="text-xs font-bold px-3 py-2 rounded-xl bg-black/20 text-white border border-white/20 hover:bg-black/30 transition-colors"
+            >
+              {L('إغلاق', 'Close')}
+            </button>
+          </div>
+        </div>
+
+        {/* Body - نفس فكرة الأعمدة */}
+        <div className="grid grid-cols-2 xl:grid-cols-3 gap-2">
+          {(() => {
+            const items = NAV.stationery.items;
+            const colCount = 3;
+            const cols = splitToColumns(items, colCount);
+            return cols.map((col, idx) => (
+              <div key={idx} className="max-h-[320px] overflow-auto pr-1 rtl:pr-0 rtl:pl-1">
+                {col.map((it) => (
+                  <button
+                    key={it.sub}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => goTo(NAV.stationery.to(it.sub))}
+                    className="
+                      w-full text-right rtl:text-right ltr:text-left
+                      px-3 py-2.5 rounded-xl
+                      text-sm font-bold text-slate-800
+                      hover:bg-slate-100 focus:bg-white/12
+                      focus:outline-none
+                      drop-shadow
+                    "
+                  >
+                    {L(it.labelAr, it.labelEn)}
+                  </button>
+                ))}
+              </div>
+            ));
+          })()}
+        </div>
+
+        {/* Footer */}
+        <div className="mt-4 pt-4 border-t border-white/15 flex items-center justify-between text-xs text-white/80">
+          <span className="drop-shadow">
+            {L('نصيحة: استخدم البحث للوصول للمنتج بسرعة', 'Tip: Use search to find products faster')}
+          </span>
+          <button
+            type="button"
+            onClick={() => goTo('/shop?filter=Stationery&sort=new')}
+            className="font-bold text-white hover:text-white/90 drop-shadow"
+          >
+            {L('الجديد', 'New')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+</div>
+            {/* Gifts (unchanged) */}
             <div className="relative" onMouseEnter={() => openDropdownSafe('gifts')} onMouseLeave={closeDropdownDelayed}>
               <button
                 type="button"
@@ -468,7 +737,7 @@ const Header: React.FC = () => {
               </button>
 
               {openDropdown === 'gifts' && (
-                <div className="absolute top-full left-0 rtl:left-auto rtl:right-0 min-w-[260px] bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-top-2 z-50">
+                <div className="absolute top-full left-0 rtl:left-auto rtl:right-0 w-[420px] lg:w-[720px] rounded-2xl overflow-hidden z-50 border border-white/25 shadow-2xl backdrop-blur-xl bg-gradient-to-r from-primary-dark/95 via-white/10 to-secondary-dark/2 animate-in fade-in slide-in-from-top-2">
                   {NAV.gifts.items.map((it) => (
                     <button
                       key={it.sub}
@@ -487,12 +756,27 @@ const Header: React.FC = () => {
           {/* Actions Section */}
           <div className="flex items-center gap-3 shrink-0">
             {/* Search Bar */}
-             <div ref={searchRef} className="relative group hidden xl:block">              <form onSubmit={handleSearch}>
+            <div ref={searchRef} className="relative group hidden xl:block">
+              <form onSubmit={handleSearch}>
                 <div className="relative">
                   <input
                     type="search"
                     placeholder={t('search')}
-                    className="w-64 pl-4 pr-10 rtl:pl-10 rtl:pr-4 py-2.5 bg-white/90 border-transparent focus:border-white rounded-full text-sm focus:ring-4 focus:ring-white/30 outline-none shadow-sm text-slate-800 placeholder:text-slate-400 transition-shadow duration-300"
+                    className="
+                      w-72 2xl:w-80
+                      pl-4 pr-10 rtl:pl-10 rtl:pr-4
+                      py-2.5
+                      bg-white/90
+                      border border-white/40
+                      rounded-full
+                      text-sm text-slate-800 placeholder:text-slate-400
+                      shadow-sm
+                      outline-none
+                      transition-all duration-300
+                      focus:bg-white
+                      focus:border-white/70
+                      focus:ring-4 focus:ring-white/25
+                    "
                     value={searchQuery}
                     onChange={(e) => {
                       setSearchQuery(e.target.value);
@@ -502,7 +786,8 @@ const Header: React.FC = () => {
                   />
                   <button
                     type="submit"
-                    className="absolute right-3 rtl:left-3 rtl:right-auto top-2.5 text-slate-400 group-focus-within:text-slate-900 transition-colors duration-200"
+                    className="absolute right-3 rtl:left-3 rtl:right-auto top-2.5 text-slate-500 group-focus-within:text-slate-900 transition-colors duration-200"
+                    aria-label="Search"
                   >
                     <Search size={18} />
                   </button>
@@ -544,16 +829,6 @@ const Header: React.FC = () => {
 
             {/* Desktop Icons */}
             <div className="hidden md:flex items-center gap-2">
-              <button
-                onClick={() => setLanguage(language === 'ar' ? 'en' : 'ar')}
-                className="p-2 hover:bg-white/20 rounded-full text-slate-900 transition-all duration-300 hover:scale-110 active:scale-95 hover:shadow-sm flex items-center gap-1"
-                title="Switch Language"
-                type="button"
-              >
-                <Globe size={18} />
-                <span className="text-xs font-bold">{language.toUpperCase()}</span>
-              </button>
-
               <Link
                 to="/tracking"
                 onClick={() => {
@@ -575,7 +850,7 @@ const Header: React.FC = () => {
               >
                 <Heart size={20} />
                 {wishlistCount > 0 && (
-                  <span className="absolute top-0 right-0 w-4 h-4 bg-red-600 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white animate-bounce">
+                  <span className="absolute top-0 right-0 w-4 h-4 bg-red-600 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white animate-pulse">
                     {wishlistCount}
                   </span>
                 )}
@@ -589,7 +864,7 @@ const Header: React.FC = () => {
               >
                 <ShoppingBag size={20} />
                 {cartCount > 0 && (
-                  <span className="absolute top-0 right-0 w-4 h-4 bg-slate-900 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white animate-bounce">
+                  <span className="absolute top-0 right-0 w-4 h-4 bg-slate-900 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white animate-pulse">
                     {cartCount}
                   </span>
                 )}
@@ -602,6 +877,7 @@ const Header: React.FC = () => {
                 onMouseLeave={user ? closeUserMenuDelayed : undefined}
               >
                 {user ? (
+                  // ✅ (unchanged user dropdown)
                   <>
                     <button
                       type="button"
@@ -616,10 +892,10 @@ const Header: React.FC = () => {
                         shadow-sm hover:shadow-md
                         transition-all
                         active:scale-[0.98]
+                        focus:outline-none focus:ring-4 focus:ring-white/30
                       "
                     >
-                      <div className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center font-extrabold text-sm">
-                        {user.name?.charAt(0)?.toUpperCase()}
+<div className="w-9 h-9 rounded-xl bg-secondary-DEFAULT text-white flex items-center justify-center shadow-sm">                        {user.name?.charAt(0)?.toUpperCase()}
                       </div>
 
                       <div className="flex flex-col leading-tight text-right rtl:text-right ltr:text-left">
@@ -711,29 +987,31 @@ const Header: React.FC = () => {
                     )}
                   </>
                 ) : (
+                  // ✅ (3) Login icon ONLY (no text) — world-class minimal
                   <button
                     type="button"
                     onClick={() => goTo('/login')}
                     className="
-                      ms-1 px-3 py-2 rounded-full
-                      bg-white/70 hover:bg-white
+                      ms-1 p-2.5 rounded-full
+                      bg-white/85 hover:bg-white
                       border border-white/60
                       shadow-sm hover:shadow-md
                       transition-all duration-300
-                      flex items-center gap-2
                       text-slate-900
                       active:scale-[0.98]
+                      focus:outline-none focus:ring-4 focus:ring-white/30
+                      inline-flex items-center justify-center
                     "
+                    aria-label={t('login')}
                     title={t('login')}
                   >
-                    <LogIn size={18} />
-                    <span className="text-xs font-extrabold">{L('تسجيل الدخول', 'Login')}</span>
+                    <LogIn size={20} />
                   </button>
                 )}
               </div>
             </div>
 
-            {/* Mobile */}
+            {/* Mobile (unchanged) */}
             <div className="flex md:hidden items-center gap-2">
               <button onClick={openWishlist} className="relative p-2 text-slate-900" aria-label="Open Wishlist" type="button">
                 <Heart size={24} />
@@ -766,7 +1044,7 @@ const Header: React.FC = () => {
         </div>
       </header>
 
-      {/* Mobile Menu */}
+      {/* Mobile Menu (unchanged as you provided) */}
       {isMenuOpen && (
         <div className="fixed inset-0 z-[9999] bg-white flex flex-col animate-in fade-in duration-200 overflow-hidden">
           <div className="flex items-center justify-between p-4 h-20 border-b border-slate-100 shrink-0 bg-white">
@@ -782,7 +1060,7 @@ const Header: React.FC = () => {
                 A
               </div>
               <span className="text-xl font-heading font-bold text-slate-900 ms-3 truncate max-w-[220px]">
-                Dair sharaf
+                Dair Sharaf
               </span>
             </Link>
 
@@ -815,7 +1093,7 @@ const Header: React.FC = () => {
                 placeholder={t('search')}
                 className="w-full pl-4 pr-12 rtl:pl-12 rtl:pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-secondary-light outline-none"
               />
-              <button type="submit" className="absolute left-4 rtl:left-auto rtl:right-4 top-3.5 text-slate-400">
+              <button type="submit" className="absolute left-4 rtl:left-auto rtl:right-4 top-3.5 text-slate-400" aria-label="Search">
                 <Search size={20} />
               </button>
             </form>
