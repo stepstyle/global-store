@@ -11,15 +11,14 @@ type FirebaseWebConfig = {
   messagingSenderId: string;
   appId: string;
   measurementId?: string;
+  // optional legacy keys (ignored safely)
+  databaseURL?: string;
 };
 
 let app: FirebaseApp | undefined;
 let db: Firestore | null = null;
 let auth: Auth | null = null;
 
-/**
- * ✅ Keep it boolean for simple UI checks (AdminDashboard uses it)
- */
 export let isFirebaseInitialized = false;
 
 const STORAGE_KEY = 'anta_firebase_config';
@@ -48,9 +47,9 @@ const normalizeConfig = (cfg: Partial<FirebaseWebConfig>): FirebaseWebConfig | n
     messagingSenderId: cfg.messagingSenderId?.trim(),
     appId: cfg.appId?.trim(),
     measurementId: cfg.measurementId?.trim(),
+    databaseURL: cfg.databaseURL?.trim(),
   };
 
-  // Required keys
   const required: (keyof FirebaseWebConfig)[] = [
     'apiKey',
     'authDomain',
@@ -64,7 +63,7 @@ const normalizeConfig = (cfg: Partial<FirebaseWebConfig>): FirebaseWebConfig | n
     if (!isNonEmptyString(out[k])) return null;
   }
 
-  // Very small sanity checks (avoid placeholder values)
+  // simple sanity checks
   if (
     out.apiKey === 'YOUR_API_KEY_HERE' ||
     out.projectId === 'your-project-id' ||
@@ -77,19 +76,35 @@ const normalizeConfig = (cfg: Partial<FirebaseWebConfig>): FirebaseWebConfig | n
   return out as FirebaseWebConfig;
 };
 
+/**
+ * ✅ Recommended: set via Vercel/Netlify environment variables (VITE_*)
+ * For now you already hardcoded your config here — it works.
+ */
 const getEnvConfig = (): FirebaseWebConfig | null => {
-  // Vite exposes only VITE_* to the client.
-  const firebaseConfig = {
-  apiKey: "AIzaSyClkSIiIkMIXgIafRh4PwnAQTgUdg2SmpM",
-  authDomain: "antastore1-82b50.firebaseapp.com",
-  databaseURL: "https://antastore1-82b50-default-rtdb.firebaseio.com",
-  projectId: "antastore1-82b50",
-  storageBucket: "antastore1-82b50.firebasestorage.app",
-  messagingSenderId: "503316431812",
-  appId: "1:503316431812:web:89c78ebf26769e0cb45a91",
-  measurementId: "G-0451BYDEC2"
-}
-  return normalizeConfig(firebaseConfig);
+  // Option A: Use VITE_* env (production best practice)
+  // const cfg: Partial<FirebaseWebConfig> = {
+  //   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  //   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  //   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  //   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  //   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  //   appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  //   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+  // };
+
+  // Option B: Your current inline config (OK for dev/project)
+  const cfg: Partial<FirebaseWebConfig> = {
+    apiKey: 'AIzaSyClkSIiIkMIXgIafRh4PwnAQTgUdg2SmpM',
+    authDomain: 'antastore1-82b50.firebaseapp.com',
+    projectId: 'antastore1-82b50',
+    storageBucket: 'antastore1-82b50.firebasestorage.app',
+    messagingSenderId: '503316431812',
+    appId: '1:503316431812:web:89c78ebf26769e0cb45a91',
+    measurementId: 'G-0451BYDEC2',
+    databaseURL: 'https://antastore1-82b50-default-rtdb.firebaseio.com',
+  };
+
+  return normalizeConfig(cfg);
 };
 
 const getLocalConfig = (): FirebaseWebConfig | null => {
@@ -100,13 +115,10 @@ const getLocalConfig = (): FirebaseWebConfig | null => {
 };
 
 const initWithConfig = (config: FirebaseWebConfig) => {
-  // If already initialized, skip
   if (isFirebaseInitialized && db && auth) return;
 
-  // Reuse existing app if present
   app = getApps().length ? getApp() : initializeApp(config);
 
-  // Firestore (safe defaults)
   db = initializeFirestore(app, {
     ignoreUndefinedProperties: true,
   });
@@ -118,9 +130,11 @@ const initWithConfig = (config: FirebaseWebConfig) => {
 };
 
 const resetToMock = (reason?: string) => {
-  throw new Error("Firebase is not configured in production environment");
+  // ✅ do not crash the app
+  isFirebaseInitialized = false;
+  db = null;
+  auth = null;
 
-  // Log only in dev to avoid noisy production logs
   if (import.meta.env.DEV) {
     console.log(
       `ℹ️ Firebase not configured. Running in Mock Mode (LocalStorage).${reason ? ` (${reason})` : ''}`
@@ -131,19 +145,17 @@ const resetToMock = (reason?: string) => {
 /**
  * ✅ Initialize Firebase safely
  * Priority:
- * 1) LocalStorage config (Admin Settings)
- * 2) Environment config (Vercel / production)
+ * 1) LocalStorage config (Admin override)
+ * 2) Env config (recommended)
  * 3) Mock mode
  */
 export const initFirebase = () => {
-  // Keep build/SSR safe
   if (!isBrowser()) {
     resetToMock('non-browser environment');
     return;
   }
 
   try {
-    // 1) LocalStorage (Admin override)
     const localCfg = getLocalConfig();
     if (localCfg) {
       initWithConfig(localCfg);
@@ -151,7 +163,6 @@ export const initFirebase = () => {
       return;
     }
 
-    // 2) Env (recommended for production)
     const envCfg = getEnvConfig();
     if (envCfg) {
       initWithConfig(envCfg);
@@ -159,10 +170,8 @@ export const initFirebase = () => {
       return;
     }
 
-    // 3) Mock
     resetToMock('missing/invalid config');
   } catch (e) {
-    // If localStorage contains broken data, purge it
     if (import.meta.env.DEV) console.error('Failed to init Firebase', e);
     try {
       localStorage.removeItem(STORAGE_KEY);
@@ -171,21 +180,17 @@ export const initFirebase = () => {
   }
 };
 
-/**
- * ✅ Call init immediately (client-side safe)
- */
+// ✅ initialize immediately (client-side safe)
 initFirebase();
 
-/** ✅ Safer getters */
+/** ✅ Safe getters */
 export const getFirestoreDb = (): Firestore | null => db;
 export const getFirebaseAuth = (): Auth | null => auth;
-
-/** ✅ Optional helper for UI */
 export const firebaseReady = () => isFirebaseInitialized && !!db && !!auth;
 
 /**
  * ✅ Allow Admin UI to set config (stored locally per browser)
- * NOTE: This is per-device. For production, use Vercel Environment Variables.
+ * NOTE: per-device. For production, use VITE_* env.
  */
 export const setFirebaseConfig = (config: unknown) => {
   if (!isBrowser()) throw new Error('Cannot set Firebase config outside browser');
