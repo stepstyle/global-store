@@ -1,7 +1,42 @@
 // src/pages/Home.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as ReactRouterDOM from 'react-router-dom';
-import { ArrowLeft, TrendingUp, Zap, Truck, ShieldCheck, RefreshCcw, Headset, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  ArrowLeft,
+  TrendingUp,
+  Zap,
+  Truck,
+  ShieldCheck,
+  RefreshCcw,
+  Headset,
+  ChevronLeft,
+  ChevronRight,
+  Facebook,
+  Instagram,
+  MapPin,
+  MessageCircle,
+  Gamepad2,
+  PencilRuler,
+  Gift,
+  Shapes,
+  Baby,
+  Heart,
+  GraduationCap,
+  Puzzle,
+  Blocks,
+  Dices,
+  Palette,
+  PenTool,
+  Backpack,
+  NotebookPen,
+  BookOpen,
+  PartyPopper,
+  Package,
+  Sparkle,
+  Gem,
+  Shirt,
+  Sparkles,
+} from 'lucide-react';
 
 import Button from '../components/Button';
 import ProductCard from '../components/ProductCard';
@@ -40,67 +75,192 @@ const FALLBACK_HERO: HeroImageSet = {
 
 const ROTATE_MS = 6500;
 
+// ✅ Social Links
+const FB_URL = 'https://www.facebook.com/maktabatdayrsharafaleilmia/';
+const IG_URL = 'https://www.instagram.com/deirsharaf/';
+const MAPS_URL = 'https://maps.app.goo.gl/JeK1tvF4jysnLgjM9?g_st=iw';
+const WA_NUMBER = '9627XXXXXXXX'; // ← عدّل رقمك هون (بدون +)
+const WA_URL = `https://wa.me/${WA_NUMBER}`;
+
+// ✅ Stationery + Gifts
+const STATIONERY_SUBCATEGORIES = [
+  { sub: 'Pens', labelAr: 'أقلام', labelEn: 'Pens' },
+  { sub: 'Notebooks', labelAr: 'دفاتر', labelEn: 'Notebooks' },
+  { sub: 'Colors', labelAr: 'ألوان', labelEn: 'Colors' },
+  { sub: 'Bags', labelAr: 'حقائب', labelEn: 'Bags' },
+  { sub: 'School', labelAr: 'قرطاسية مدرسية', labelEn: 'School Supplies' },
+];
+
+const GIFTS_SUBCATEGORIES = [
+  { sub: 'Occasions', labelAr: 'مناسبات', labelEn: 'Occasions' },
+  { sub: 'Wrap', labelAr: 'تغليف', labelEn: 'Gift Wrap' },
+  { sub: 'Kids', labelAr: 'هدايا أطفال', labelEn: 'Kids Gifts' },
+  { sub: 'Accessories', labelAr: 'إكسسوارات', labelEn: 'Accessories' },
+  { sub: 'Premium', labelAr: 'هدايا فخمة', labelEn: 'Premium Gifts' },
+];
+
+// ✅ routes
+const stationeryTo = (sub: string) => `/shop?filter=Stationery&sub=${encodeURIComponent(sub)}`;
+const giftsTo = (sub: string) => `/shop?filter=Gifts&sub=${encodeURIComponent(sub)}`;
+
+// ✅ pick icon automatically from sub text (fallback if no image)
+const pickGameIcon = (subRaw: string) => {
+  const s = (subRaw || '').toLowerCase();
+
+  if (s.includes('boy') || s.includes('boys') || s.includes('male') || s.includes('toddler') || s.includes('baby')) return Baby;
+  if (s.includes('girl') || s.includes('girls') || s.includes('female')) return Heart;
+  if (s.includes('edu') || s.includes('learn') || s.includes('study') || s.includes('school') || s.includes('teach')) return GraduationCap;
+  if (s.includes('puzzle') || s.includes('brain') || s.includes('logic')) return Puzzle;
+  if (s.includes('build') || s.includes('lego') || s.includes('blocks') || s.includes('construction')) return Blocks;
+  if (s.includes('board') || s.includes('dice') || s.includes('cards') || s.includes('party')) return Dices;
+
+  return Gamepad2;
+};
+
+const pickStationeryIcon = (subRaw: string) => {
+  const s = (subRaw || '').toLowerCase();
+  if (s.includes('pen')) return PenTool;
+  if (s.includes('note') || s.includes('book')) return NotebookPen;
+  if (s.includes('color') || s.includes('paint')) return Palette;
+  if (s.includes('bag') || s.includes('back')) return Backpack;
+  if (s.includes('school')) return BookOpen;
+  return PencilRuler;
+};
+
+const pickGiftsIcon = (subRaw: string) => {
+  const s = (subRaw || '').toLowerCase();
+  if (s.includes('occasion') || s.includes('event')) return PartyPopper;
+  if (s.includes('wrap') || s.includes('pack')) return Package;
+  if (s.includes('kid') || s.includes('child')) return Sparkle;
+  if (s.includes('access')) return Shirt;
+  if (s.includes('premium') || s.includes('lux') || s.includes('vip')) return Gem;
+  return Gift;
+};
+
+type CardVariant = 'games' | 'stationery' | 'gifts';
+
+const normalize = (v: string) => (v || '').toLowerCase().trim();
+
+/**
+ * ✅ هنا بس تحط صورك لكل فئة (بدون أي تعديل ثاني)
+ * - المفتاح هو sub نفسه (لا تغيّره)
+ * - حط الرابط تبع الصورة
+ *
+ * مثال: "Boys": "https://....webp"
+ */
+const SUBCATEGORY_IMAGES: Record<CardVariant, Record<string, string>> = {
+  games: {
+  boys: '/images/hero-school-19202.webp',
+  girls: '/images/subs/games-girls.webp',
+  baby: '/images/subs/games-baby.webp',
+  educational: '/images/subs/games-educational.webp',
+  puzzles: '/images/subs/games-puzzles.webp',
+  blocks: '/images/subs/games-blocks.webp',
+  board: '/images/subs/games-board.webp',
+  generic: '/images/subs/games-generic.webp',
+},
+  stationery: {
+    Pens: '/images/subs/stationery-pens.webp', // غيّرها
+    Notebooks: '/images/subs/stationery-notebooks.webp', // غيّرها
+    Colors: '/images/subs/stationery-colors.webp', // غيّرها
+    Bags: '/images/subs/stationery-bags.webp', // غيّرها
+    School: '/images/subs/stationery-school.webp', // غيّرها
+  },
+  gifts: {
+    Occasions: '/images/subs/gifts-occasions.webp', // غيّرها
+    Wrap: '/images/subs/gifts-wrap.webp', // غيّرها
+    Kids: '/images/subs/gifts-kids.webp', // غيّرها
+    Accessories: '/images/subs/gifts-accessories.webp', // غيّرها
+    Premium: '/images/subs/gifts-premium.webp', // غيّرها
+  },
+};
+
+const getSubImage = (variant: CardVariant, sub: string) => {
+  const dict = SUBCATEGORY_IMAGES?.[variant] || {};
+
+  // ✅ exact match
+  if (dict[sub]) return dict[sub];
+
+  // ✅ normalized exact
+  const nSub = normalize(sub);
+  const exactNormalizedKey = Object.keys(dict).find((k) => normalize(k) === nSub);
+  if (exactNormalizedKey) return dict[exactNormalizedKey];
+
+  // ✅ SMART mapping for games (works with any sub naming)
+  if (variant === 'games') {
+    const s = nSub;
+
+    const hit = (keys: string[]) => keys.some((k) => s.includes(k));
+
+    if (hit(['boy', 'boys', 'male', 'ولادي', 'اولاد', 'أولاد'])) return dict['boys'] || '';
+    if (hit(['girl', 'girls', 'female', 'بناتي', 'بنات'])) return dict['girls'] || '';
+    if (hit(['baby', 'toddler', '0-9', '0–9', 'month', 'months', 'رضع', 'رُضّع'])) return dict['baby'] || '';
+    if (hit(['edu', 'learn', 'teach', 'school', 'تعليمي', 'تعليم'])) return dict['educational'] || '';
+    if (hit(['puzzle', 'brain', 'logic', 'ألغاز', 'لغز'])) return dict['puzzles'] || '';
+    if (hit(['build', 'lego', 'blocks', 'construction', 'تركيب', 'بناء'])) return dict['blocks'] || '';
+    if (hit(['board', 'dice', 'cards', 'party', 'جماعي', 'جماعية'])) return dict['board'] || '';
+
+    return dict['generic'] || '';
+  }
+
+  return '';
+};
 const Home: React.FC = () => {
   const { products, addToCart, toggleWishlist, wishlist, openQuickView, t, language, isLoading } = useCart() as any;
 
   const isRTL = useMemo(() => (language ?? 'ar') === 'ar', [language]);
+  const L = useCallback((ar: string, en: string) => ((language ?? 'ar') === 'ar' ? ar : en), [language]);
 
   const slides = useMemo<HeroSlide[]>(
     () => [
       {
         key: 'back-to-school',
-        badge: String((t('hero_badge') as string) ?? 'جديد الموسم: تشكيلة العودة للمدارس'),
-        title1: language === 'ar' ? 'استعد للمدرسة' : 'Get Ready for School',
-        title2: language === 'ar' ? 'بأناقة وذكاء' : 'In Style & Smart',
-        desc:
-          language === 'ar'
-            ? 'قرطاسية، حقائب، أدوات ذكية… كل ما تحتاجه العائلة والطلاب بجودة عالية.'
-            : 'Stationery, bags, smart tools… everything students and families need with great quality.',
-        ctaText: language === 'ar' ? 'تسوق القرطاسية' : 'Shop Stationery',
+        badge: String((t('hero_badge') as string) ?? L('جديد الموسم: تشكيلة العودة للمدارس', 'New season: Back to School picks')),
+        title1: L('مكتبة دير شرف', 'Dair Sharaf'),
+        title2: L('العلمية', 'Scientific Store'),
+        desc: L(
+          'قرطاسية، حقائب، أدوات ذكية… كل ما تحتاجه العائلة والطلاب بجودة عالية.',
+          'Stationery, bags, and smart essentials — everything students and families need with great quality.'
+        ),
+        ctaText: L('تسوق القرطاسية', 'Shop Stationery'),
         ctaLink: '/shop?filter=Stationery',
         image: FALLBACK_HERO,
         emoji: '🎒',
       },
       {
         key: 'toys',
-        badge: language === 'ar' ? 'الأكثر طلبًا للأطفال' : 'Most Popular for Kids',
-        title1: language === 'ar' ? 'ألعاب آمنة' : 'Safe Toys',
-        title2: language === 'ar' ? 'وتعليمية' : 'and Educational',
-        desc:
-          language === 'ar'
-            ? 'ألعاب مختارة بعناية حسب العمر لتنمية المهارات وإضافة المرح لكل طفل.'
-            : 'Carefully selected toys by age to build skills and add fun for every child.',
-        ctaText: language === 'ar' ? 'تسوق الألعاب' : 'Shop Games',
+        badge: L('الأكثر طلبًا للأطفال', 'Most Popular for Kids'),
+        title1: L('ألعاب', 'Safe Toys'),
+        title2: L('آمنة وتعليمية', 'and Educational'),
+        desc: L(
+          'ألعاب مختارة بعناية حسب العمر لتنمية المهارات وإضافة المرح لكل طفل.',
+          'Carefully selected toys by age to build skills and add fun for every child.'
+        ),
+        ctaText: L('تسوق الألعاب', 'Shop Games'),
         ctaLink: '/shop?filter=Games',
         image: FALLBACK_HERO,
         emoji: '🧸',
       },
       {
         key: 'gifts',
-        badge: language === 'ar' ? 'هدايا لكل المناسبات' : 'Gifts for Every Occasion',
-        title1: language === 'ar' ? 'هدايا مميزة' : 'Special Gifts',
-        title2: language === 'ar' ? 'تفرّح العائلة' : 'That Make Them Smile',
-        desc:
-          language === 'ar'
-            ? 'اختيارات راقية للهدايا واللوازم المكتبية والمنتجات الجميلة للمناسبات.'
-            : 'Premium picks for gifts, office supplies, and beautiful items for special moments.',
-        ctaText: language === 'ar' ? 'تسوق الهدايا' : 'Shop Offers',
-        ctaLink: '/shop?filter=Offers',
+        badge: L('هدايا لكل المناسبات', 'Gifts for Every Occasion'),
+        title1: L('هدايا', 'Special Gifts'),
+        title2: L('تليق بالمناسبات', 'for Every Moment'),
+        desc: L(
+          'اختيارات راقية للهدايا واللوازم المكتبية والمنتجات الجميلة للمناسبات.',
+          'Premium picks for gifts, office supplies, and beautiful items for special moments.'
+        ),
+        ctaText: L('تسوق الهدايا', 'Shop Gifts'),
+        ctaLink: '/shop?filter=Gifts',
         image: FALLBACK_HERO,
         emoji: '🎁',
       },
     ],
-    [t, language]
+    [t, language, L]
   );
 
   const [activeSlide, setActiveSlide] = useState<number>(0);
   const [isPaused, setIsPaused] = useState(false);
-
-  // Keep activeSlide valid if slides change
-  useEffect(() => {
-    if (activeSlide >= slides.length) setActiveSlide(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slides.length]);
 
   const goNext = useCallback(() => {
     setActiveSlide((s) => (slides.length ? (s + 1) % slides.length : 0));
@@ -110,7 +270,40 @@ const Home: React.FC = () => {
     setActiveSlide((s) => (slides.length ? (s - 1 + slides.length) % slides.length : 0));
   }, [slides.length]);
 
-  // Auto-rotate (pause on hover/focus)
+  const dragStartX = useRef<number | null>(null);
+  const dragging = useRef<boolean>(false);
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    dragging.current = true;
+    dragStartX.current = e.clientX;
+  };
+
+  const onPointerUp = (e: React.PointerEvent) => {
+    if (!dragging.current || dragStartX.current == null) return;
+    const delta = e.clientX - dragStartX.current;
+
+    dragging.current = false;
+    dragStartX.current = null;
+
+    if (Math.abs(delta) < 40) return;
+
+    if (delta < 0) {
+      isRTL ? goPrev() : goNext();
+    } else {
+      isRTL ? goNext() : goPrev();
+    }
+  };
+
+  const onPointerLeave = () => {
+    dragging.current = false;
+    dragStartX.current = null;
+  };
+
+  useEffect(() => {
+    if (activeSlide >= slides.length) setActiveSlide(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slides.length]);
+
   useEffect(() => {
     if (slides.length <= 1) return;
     if (isPaused) return;
@@ -124,7 +317,6 @@ const Home: React.FC = () => {
 
   const slide = slides[activeSlide] ?? slides[0];
 
-  // Preload next image
   useEffect(() => {
     if (!slide || slides.length <= 1) return;
     const next = slides[(activeSlide + 1) % slides.length];
@@ -135,7 +327,6 @@ const Home: React.FC = () => {
     img.src = src;
   }, [activeSlide, slides, slide]);
 
-  // Keyboard navigation (← →)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowRight') (isRTL ? goPrev() : goNext());
@@ -145,14 +336,12 @@ const Home: React.FC = () => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [goNext, goPrev, isRTL]);
 
-  // Featured products: prefer isFeatured then fallback to first 4
   const featuredProducts = useMemo(() => {
     const list = Array.isArray(products) ? products : [];
     const picked = list.filter((p: any) => !!p?.isFeatured).slice(0, 4);
     return picked.length ? picked : list.slice(0, 4);
   }, [products]);
 
-  // ✅ Better schema (no fake phone)
   const homeSchema = useMemo(
     () => ({
       '@context': 'https://schema.org',
@@ -170,8 +359,200 @@ const Home: React.FC = () => {
     [slide?.image?.s1200, slide?.desc]
   );
 
-  // ✅ Subcategories grid: exclude "all" because there's already "View all"
-  const gameSubs = useMemo(() => GAMES_SUBCATEGORIES.filter((x: any) => x.sub !== 'all'), []);
+  const trustItems = useMemo(
+    () => [
+      { Icon: Truck, labelAr: 'شحن سريع', labelEn: 'Fast Shipping' },
+      { Icon: ShieldCheck, labelAr: 'دفع آمن', labelEn: 'Secure Payment' },
+      { Icon: RefreshCcw, labelAr: 'استرجاع سهل', labelEn: 'Easy Returns' },
+      { Icon: Headset, labelAr: 'دعم سريع', labelEn: 'Quick Support' },
+    ],
+    []
+  );
+
+  // ✅ decorated lists
+  const gameSubsDecorated = useMemo(() => {
+    const list = Array.isArray(GAMES_SUBCATEGORIES) ? GAMES_SUBCATEGORIES : [];
+    return list
+      .filter((x: any) => x?.sub !== 'all')
+      .map((x: any) => {
+        const sub = String(x?.sub ?? '');
+        return {
+          ...x,
+          sub,
+          Icon: pickGameIcon(sub),
+        };
+      });
+  }, []);
+
+  const stationeryDecorated = useMemo(() => {
+    return STATIONERY_SUBCATEGORIES.map((x) => ({
+      ...x,
+      Icon: pickStationeryIcon(x.sub),
+    }));
+  }, []);
+
+  const giftsDecorated = useMemo(() => {
+    return GIFTS_SUBCATEGORIES.map((x) => ({
+      ...x,
+      Icon: pickGiftsIcon(x.sub),
+    }));
+  }, []);
+
+  // ✅ Card UI: صورة داخل الدائرة بدل الآيكون (وحلوة جدًا)
+  const SubCard: React.FC<{
+    title: string;
+    Icon: any;
+    to: string;
+    variant: CardVariant;
+    subKey: string;
+  }> = ({ title, Icon, to, variant, subKey }) => {
+    const [imgOk, setImgOk] = useState(true);
+
+    const theme = {
+      games: {
+        card: 'bg-amber-50 border-amber-100 hover:bg-amber-100/40 hover:border-amber-200 focus:ring-amber-200',
+        circle: 'bg-amber-100 border-amber-300 group-hover:bg-amber-200 group-hover:border-amber-400',
+        icon: 'text-amber-700 group-hover:text-amber-800',
+      },
+      stationery: {
+        card: 'bg-sky-50 border-sky-100 hover:bg-sky-100/40 hover:border-sky-200 focus:ring-sky-200',
+        circle: 'bg-sky-100 border-sky-300 group-hover:bg-sky-200 group-hover:border-sky-400',
+        icon: 'text-sky-700 group-hover:text-sky-800',
+      },
+      gifts: {
+        card: 'bg-violet-50 border-violet-100 hover:bg-violet-100/40 hover:border-violet-200 focus:ring-violet-200',
+        circle: 'bg-violet-100 border-violet-300 group-hover:bg-violet-200 group-hover:border-violet-400',
+        icon: 'text-violet-700 group-hover:text-violet-800',
+      },
+    }[variant];
+
+    const imgSrc = getSubImage(variant, subKey);
+
+    return (
+      <Link
+        to={to}
+        className={`
+          group
+          rounded-2xl
+          border
+          px-5 py-6 sm:px-6 sm:py-7
+          shadow-[0_1px_0_rgba(15,23,42,0.03)]
+          transition-all duration-300
+          hover:-translate-y-[2px]
+          hover:shadow-[0_14px_35px_rgba(15,23,42,0.08)]
+          focus:outline-none focus:ring-2
+          active:translate-y-0
+          ${theme.card}
+        `}
+        aria-label={title}
+      >
+        <div className="flex flex-col items-center text-center">
+          {/* ✅ الدائرة المنقّطة */}
+          <div
+  className={`
+    w-24 h-24 sm:w-28 sm:h-28 lg:w-32 lg:h-32
+    rounded-full
+    border-2 border-dashed
+    flex items-center justify-center
+    transition-all duration-300
+    ${theme.circle}
+  `}
+>
+            {/* ✅ إذا في صورة، اعرضها بشكل احترافي داخل الدائرة */}
+            {imgSrc && imgOk ? (
+              <div className="w-full h-full rounded-full overflow-hidden shadow-md">
+  <img
+    src={imgSrc}
+    alt={title}
+    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+    loading="lazy"
+    decoding="async"
+    onError={() => setImgOk(false)}
+    draggable={false}
+  />
+</div>
+            ) : (
+              <Icon
+                size={40}
+                strokeWidth={2.8}
+                className={`transition-all duration-300 group-hover:scale-[1.06] ${theme.icon}`}
+              />
+            )}
+          </div>
+
+          <h3 className="mt-4 text-sm sm:text-base font-black text-slate-900 tracking-tight">{title}</h3>
+          <p className="mt-1 text-[11px] sm:text-xs font-bold text-slate-500">{L('تصفّح المنتجات', 'Browse products')}</p>
+        </div>
+      </Link>
+    );
+  };
+
+  // ✅ Category Section (بدون صورة فوق)
+  const CategorySection: React.FC<{
+    titleAr: string;
+    titleEn: string;
+    descAr: string;
+    descEn: string;
+    viewAllTo: string;
+    Icon: any;
+    variant: CardVariant;
+    items: Array<{ sub: string; labelAr: string; labelEn: string; Icon?: any }>;
+    toFn: (sub: string) => string;
+  }> = ({ titleAr, titleEn, descAr, descEn, viewAllTo, Icon, items, toFn, variant }) => (
+    <section className="py-10 lg:py-14">
+      <div className="container mx-auto px-4 lg:px-8">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6 lg:mb-8">
+          <div className="text-center sm:text-right rtl:sm:text-right ltr:sm:text-left">
+            <div className="inline-flex items-center gap-2 mb-2">
+              <span className="inline-flex w-10 h-10 rounded-2xl bg-white border border-slate-200 shadow-sm items-center justify-center">
+                <Icon size={18} className="text-secondary-DEFAULT" />
+              </span>
+              <span className="text-xs font-bold tracking-widest uppercase text-slate-500">{L('تسوّق حسب الفئة', 'Shop by Category')}</span>
+            </div>
+
+            <h2 className="text-2xl lg:text-3xl font-heading font-extrabold text-slate-900 leading-tight">{L(titleAr, titleEn)}</h2>
+            <p className="mt-2 text-sm lg:text-base text-slate-500 max-w-xl mx-auto sm:mx-0">{L(descAr, descEn)}</p>
+          </div>
+
+          <Link
+            to={viewAllTo}
+            className="
+              inline-flex items-center justify-center gap-2
+              rounded-full px-5 py-2.5
+              bg-white border border-slate-200
+              text-slate-800 font-semibold
+              hover:border-secondary-DEFAULT hover:text-secondary-DEFAULT
+              transition
+            "
+            aria-label="View all"
+          >
+            {L('عرض الكل', 'View All')}
+            <ArrowLeft size={16} className="rtl:rotate-0 ltr:rotate-180" />
+          </Link>
+        </div>
+
+        {/* ✅ Responsive: موبايل 2 جنب بعض */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4 lg:gap-5">
+          {items.map((it, index) => {
+            const sub = String(it?.sub ?? `item-${index}`);
+            const title = L(String(it?.labelAr ?? 'قسم'), String(it?.labelEn ?? 'Category'));
+            const ItemIcon = it?.Icon ?? Shapes;
+
+            return (
+              <SubCard
+                key={`${sub}-${index}`}
+                title={title}
+                Icon={ItemIcon}
+                to={toFn(sub)}
+                variant={variant}
+                subKey={sub}
+              />
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
 
   return (
     <div className="min-h-screen">
@@ -185,6 +566,11 @@ const Home: React.FC = () => {
         onFocusCapture={() => setIsPaused(true)}
         onBlurCapture={() => setIsPaused(false)}
         aria-label="Homepage hero"
+        onPointerDown={onPointerDown}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerLeave}
+        onPointerLeave={onPointerLeave}
+        style={{ touchAction: 'pan-y' }}
       >
         {/* Background */}
         <div className="absolute top-0 right-0 w-3/4 lg:w-1/2 h-full bg-gradient-to-l from-primary-light/50 to-transparent rounded-bl-[100px] pointer-events-none" />
@@ -195,54 +581,99 @@ const Home: React.FC = () => {
           <div className="flex flex-col lg:flex-row items-center gap-12">
             {/* Text */}
             <div className="flex-1 text-center lg:text-right rtl:lg:text-right ltr:lg:text-left order-2 lg:order-1">
-              <div className="inline-flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-100 mb-6 animate-in slide-in-from-bottom-5 fade-in duration-700">
-                <span className="text-lg" aria-hidden="true">{slide?.emoji}</span>
-                <span className="text-sm font-semibold text-slate-600">{slide?.badge}</span>
+              {/* Brand */}
+              <div className="mb-6">
+                <h1 className="text-3xl sm:text-4xl lg:text-6xl font-heading font-extrabold text-slate-900 tracking-tight leading-[1.15]">
+                  {L('مكتبة دير شرف العلمية', 'Dair Sharaf Scientific Library')}
+                </h1>
+
+                <div className="mt-2 flex items-center justify-center lg:justify-start gap-3 text-slate-500">
+                  <span className="text-sm sm:text-base font-semibold">{L('منذ عام 2000', 'Since 2000')}</span>
+                  <span className="w-1 h-1 rounded-full bg-slate-300" />
+
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={FB_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="Facebook"
+                      title="Facebook"
+                      className="w-10 h-10 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-center transition hover:-translate-y-[1px] hover:shadow-md active:scale-95"
+                    >
+                      <Facebook size={18} className="text-[#1877F2]" />
+                    </a>
+
+                    <a
+                      href={IG_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="Instagram"
+                      title="Instagram"
+                      className="w-10 h-10 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-center transition hover:-translate-y-[1px] hover:shadow-md active:scale-95"
+                    >
+                      <Instagram size={18} className="text-[#E1306C]" />
+                    </a>
+
+                    <a
+                      href={WA_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="WhatsApp"
+                      title="WhatsApp"
+                      className="w-10 h-10 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-center transition hover:-translate-y-[1px] hover:shadow-md active:scale-95"
+                    >
+                      <MessageCircle size={18} className="text-[#25D366]" />
+                    </a>
+
+                    <a
+                      href={MAPS_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="Maps"
+                      title={L('الموقع على الخرائط', 'Open in Maps')}
+                      className="w-10 h-10 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-center transition hover:-translate-y-[1px] hover:shadow-md active:scale-95"
+                    >
+                      <MapPin size={18} className="text-[#EA4335]" />
+                    </a>
+                  </div>
+                </div>
               </div>
 
-              <h1 className="text-3xl sm:text-4xl lg:text-6xl font-heading font-bold text-slate-900 leading-tight mb-6 animate-in slide-in-from-bottom-5 fade-in duration-700 delay-100">
-                {slide?.title1} <br />
-                <span className="text-transparent bg-clip-text bg-gradient-to-l from-secondary-DEFAULT to-primary-DEFAULT">
-                  {slide?.title2}
+              {/* Badge */}
+              <div className="inline-flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-100 mb-5">
+                <span className="text-lg" aria-hidden="true">
+                  {slide?.emoji}
                 </span>
-              </h1>
+                <span className="text-sm font-semibold text-slate-700">{slide?.badge}</span>
+              </div>
 
-              <p className="text-base sm:text-lg text-slate-600 mb-8 max-w-lg mx-auto lg:mx-0 animate-in slide-in-from-bottom-5 fade-in duration-700 delay-200">
-                {slide?.desc}
-              </p>
+              <p className="text-base sm:text-lg text-slate-600 mb-7 max-w-xl mx-auto lg:mx-0 leading-relaxed">{slide?.desc}</p>
 
-              <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start animate-in slide-in-from-bottom-5 fade-in duration-700 delay-300">
+              {/* CTA */}
+              <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
                 <Link to={slide?.ctaLink || '/shop'} aria-label="Primary CTA">
-                  <Button size="lg" className="rounded-full w-full sm:w-auto">
+                  <Button size="lg" className="rounded-full w-full sm:w-auto px-7">
                     {slide?.ctaText}
                   </Button>
                 </Link>
 
                 <Link to="/shop?filter=Offers" aria-label="View offers">
-                  <Button variant="outline" size="lg" className="rounded-full w-full sm:w-auto">
-                    {String(t('viewOffers') ?? 'View Offers')}
+                  <Button variant="outline" size="lg" className="rounded-full w-full sm:w-auto px-7">
+                    {String(t('viewOffers') ?? L('شاهد العروض', 'View Offers'))}
                   </Button>
                 </Link>
               </div>
 
-              {/* Trust Bar */}
+              {/* Trust */}
               <div className="mt-8 grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl mx-auto lg:mx-0">
-                <div className="bg-white/80 backdrop-blur rounded-2xl border border-slate-100 p-3 flex items-center gap-2">
-                  <Truck className="text-secondary-DEFAULT" size={18} />
-                  <span className="text-xs font-bold text-slate-700">{String(t('fastShipping') ?? 'شحن سريع')}</span>
-                </div>
-                <div className="bg-white/80 backdrop-blur rounded-2xl border border-slate-100 p-3 flex items-center gap-2">
-                  <ShieldCheck className="text-secondary-DEFAULT" size={18} />
-                  <span className="text-xs font-bold text-slate-700">{String(t('securePayment') ?? 'دفع آمن')}</span>
-                </div>
-                <div className="bg-white/80 backdrop-blur rounded-2xl border border-slate-100 p-3 flex items-center gap-2">
-                  <RefreshCcw className="text-secondary-DEFAULT" size={18} />
-                  <span className="text-xs font-bold text-slate-700">{String(t('easyReturns') ?? 'استرجاع سهل')}</span>
-                </div>
-                <div className="bg-white/80 backdrop-blur rounded-2xl border border-slate-100 p-3 flex items-center gap-2">
-                  <Headset className="text-secondary-DEFAULT" size={18} />
-                  <span className="text-xs font-bold text-slate-700">{String(t('support') ?? 'دعم سريع')}</span>
-                </div>
+                {trustItems.map(({ Icon, labelAr, labelEn }, idx) => (
+                  <div key={idx} className="bg-white rounded-2xl border border-slate-200 px-3 py-2 flex items-center gap-2 shadow-sm">
+                    <div className="w-9 h-9 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center">
+                      <Icon className="text-slate-700" size={18} />
+                    </div>
+                    <span className="text-sm font-semibold text-slate-800 whitespace-nowrap">{L(labelAr, labelEn)}</span>
+                  </div>
+                ))}
               </div>
 
               {/* Dots + Arrows */}
@@ -250,11 +681,11 @@ const Home: React.FC = () => {
                 <div className="mt-6 flex items-center justify-center lg:justify-start gap-3">
                   <button
                     type="button"
-                    onClick={goPrev}
+                    onClick={() => (isRTL ? goNext() : goPrev())}
                     className="p-2 rounded-full bg-white border border-slate-200 hover:border-secondary-DEFAULT hover:text-secondary-DEFAULT transition focus:outline-none focus:ring-2 focus:ring-secondary-DEFAULT"
                     aria-label="Previous slide"
                   >
-                    <ChevronRight size={18} className="rtl:rotate-180 ltr:rotate-0" />
+                    <ChevronRight size={18} />
                   </button>
 
                   <div className="flex items-center gap-2">
@@ -263,9 +694,7 @@ const Home: React.FC = () => {
                         key={s.key}
                         onClick={() => setActiveSlide(i)}
                         aria-label={`Slide ${i + 1}`}
-                        className={`h-2 rounded-full transition-all ${
-                          i === activeSlide ? 'w-8 bg-secondary-DEFAULT' : 'w-2 bg-slate-300 hover:bg-slate-400'
-                        }`}
+                        className={`h-2 rounded-full transition-all ${i === activeSlide ? 'w-8 bg-secondary-DEFAULT' : 'w-2 bg-slate-300 hover:bg-slate-400'}`}
                         type="button"
                       />
                     ))}
@@ -273,14 +702,16 @@ const Home: React.FC = () => {
 
                   <button
                     type="button"
-                    onClick={goNext}
+                    onClick={() => (isRTL ? goPrev() : goNext())}
                     className="p-2 rounded-full bg-white border border-slate-200 hover:border-secondary-DEFAULT hover:text-secondary-DEFAULT transition focus:outline-none focus:ring-2 focus:ring-secondary-DEFAULT"
                     aria-label="Next slide"
                   >
-                    <ChevronLeft size={18} className="rtl:rotate-180 ltr:rotate-0" />
+                    <ChevronLeft size={18} />
                   </button>
                 </div>
               )}
+
+              {slides.length > 1 && <p className="mt-3 text-xs text-slate-400 font-semibold">{L('اسحب يمين/يسار لتغيير العرض', 'Drag left/right to change')}</p>}
             </div>
 
             {/* Image */}
@@ -300,16 +731,16 @@ const Home: React.FC = () => {
                     loading="eager"
                     decoding="async"
                     fetchPriority="high"
+                    draggable={false}
                   />
                 </div>
 
-                {/* Floating Badge */}
                 <div className="absolute -bottom-6 -right-2 lg:-right-6 bg-white p-3 lg:p-4 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3 scale-90 lg:scale-100">
                   <div className="bg-green-100 p-2 rounded-full text-green-600">
                     <TrendingUp size={24} />
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500 font-bold">{String(t('topSales') ?? 'Top Sales')}</p>
+                    <p className="text-xs text-slate-500 font-bold">{String(t('topSales') ?? L('مبيعات عالية', 'Top Sales'))}</p>
                     <p className="font-bold text-slate-900">+10k</p>
                   </div>
                 </div>
@@ -321,65 +752,59 @@ const Home: React.FC = () => {
         </div>
       </section>
 
-      {/* Games Subcategories */}
-      <section className="py-12 lg:py-20 bg-white">
-        <div className="container mx-auto px-4 lg:px-8">
-          <div className="flex flex-col sm:flex-row justify-between items-end mb-12 gap-4">
-            <div className="text-center sm:text-right rtl:sm:text-right ltr:sm:text-left w-full sm:w-auto">
-              <h2 className="text-2xl lg:text-3xl font-heading font-bold text-slate-900 mb-2">
-                {String(t('shopByCategory') ?? 'Shop by Category')}
-              </h2>
-              <p className="text-slate-500">{String(t('categoryDesc') ?? '')}</p>
-            </div>
+      {/* ✅ Shop by Category */}
+      <div className="bg-slate-50">
+        <CategorySection
+          titleAr="تسوّق الألعاب حسب الفئة"
+          titleEn="Shop Games by Category"
+          descAr="اختر النوع المناسب بسرعة (ولادي / بناتي / تعليمي...)"
+          descEn="Pick the right type (boys / girls / educational...)"
+          viewAllTo="/shop?filter=Games"
+          Icon={Gamepad2}
+          variant="games"
+          items={gameSubsDecorated as any}
+          toFn={(sub: string) => gamesTo(sub)}
+        />
 
-            <Link
-              to={gamesTo('all')}
-              className="text-secondary-DEFAULT font-semibold flex items-center gap-1 hover:gap-2 transition-all self-center sm:self-auto"
-              aria-label="View all games"
-            >
-              {String(t('viewAll') ?? 'View All')}{' '}
-              <ArrowLeft size={16} className="rtl:rotate-0 ltr:rotate-180" />
-            </Link>
-          </div>
+        <CategorySection
+          titleAr="تسوّق القرطاسية حسب القسم"
+          titleEn="Shop Stationery by Section"
+          descAr="كل مستلزمات المدرسة والمكتب بشكل مرتب"
+          descEn="Neatly organized school & office essentials"
+          viewAllTo="/shop?filter=Stationery"
+          Icon={PencilRuler}
+          variant="stationery"
+          items={stationeryDecorated as any}
+          toFn={(sub: string) => stationeryTo(sub)}
+        />
 
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 lg:gap-4">
-            {gameSubs.map((it: any) => (
-              <Link
-                key={it.sub}
-                to={gamesTo(it.sub)}
-                className="group bg-slate-50 p-4 lg:p-6 rounded-2xl flex flex-col items-center justify-center hover:bg-secondary-light/10 border border-transparent hover:border-secondary-DEFAULT transition-all duration-300"
-                aria-label={`Games subcategory ${language === 'ar' ? it.labelAr : it.labelEn}`}
-              >
-                <span className="text-3xl lg:text-4xl mb-3 lg:mb-4 group-hover:scale-110 transition-transform duration-300" aria-hidden="true">
-                  🎮
-                </span>
-                <h3 className="font-bold text-sm lg:text-base text-slate-700 group-hover:text-secondary-DEFAULT text-center">
-                  {language === 'ar' ? it.labelAr : it.labelEn}
-                </h3>
-              </Link>
-            ))}
-          </div>
+        <CategorySection
+          titleAr="تسوّق الهدايا حسب النوع"
+          titleEn="Shop Gifts by Type"
+          descAr="هدايا مرتبة لكل المناسبات"
+          descEn="Curated gifts for every occasion"
+          viewAllTo="/shop?filter=Gifts"
+          Icon={Gift}
+          variant="gifts"
+          items={giftsDecorated as any}
+          toFn={(sub: string) => giftsTo(sub)}
+        />
+
+        <div className="container mx-auto px-4 lg:px-8 pb-6">
+          <div className="h-px bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
         </div>
-      </section>
+      </div>
 
       {/* Featured Products */}
-      <section className="py-12 lg:py-20 bg-slate-50">
+      <section className="py-12 lg:py-20 bg-white">
         <div className="container mx-auto px-4 lg:px-8">
           <div className="flex items-end justify-between gap-4 mb-10 lg:mb-16">
             <div className="text-center sm:text-right rtl:sm:text-right ltr:sm:text-left w-full sm:w-auto">
-              <span className="text-secondary-DEFAULT font-bold tracking-widest text-xs uppercase mb-2 block">
-                {String(t('ourPicks') ?? 'Our Picks')}
-              </span>
-              <h2 className="text-2xl lg:text-3xl font-heading font-bold text-slate-900">
-                {String(t('featuredProducts') ?? 'Featured Products')}
-              </h2>
+              <span className="text-secondary-DEFAULT font-bold tracking-widest text-xs uppercase mb-2 block">{String(t('ourPicks') ?? 'Our Picks')}</span>
+              <h2 className="text-2xl lg:text-3xl font-heading font-bold text-slate-900">{String(t('featuredProducts') ?? 'Featured Products')}</h2>
             </div>
 
-            <Link
-              to="/shop"
-              className="text-secondary-DEFAULT font-semibold flex items-center gap-1 hover:gap-2 transition-all"
-              aria-label="View all products"
-            >
+            <Link to="/shop" className="text-secondary-DEFAULT font-semibold flex items-center gap-1 hover:gap-2 transition-all" aria-label="View all products">
               {String(t('viewAll') ?? 'View All')}{' '}
               <ArrowLeft size={16} className="rtl:rotate-0 ltr:rotate-180" />
             </Link>
@@ -413,16 +838,13 @@ const Home: React.FC = () => {
 
             <div className="relative z-10 max-w-xl mb-8 md:mb-0">
               <div className="flex items-center justify-center md:justify-start gap-2 text-white font-bold mb-4">
-                <Zap fill="currentColor" /> {String(t('specialOffer') ?? 'Special Offer')}
+                <Sparkles size={18} /> {String(t('specialOffer') ?? 'Special Offer')}
               </div>
               <h2 className="text-3xl lg:text-4xl font-bold mb-4 text-white">{String(t('offerTitle') ?? '')}</h2>
               <p className="text-white/85 mb-8 font-medium">{String(t('offerDesc') ?? '')}</p>
 
               <Link to="/shop?filter=Offers" aria-label="Browse offers">
-                <Button
-                  variant="primary"
-                  className="bg-white text-slate-900 hover:bg-slate-100 border-none shadow-xl w-full sm:w-auto"
-                >
+                <Button variant="primary" className="bg-white text-slate-900 hover:bg-slate-100 border-none shadow-xl w-full sm:w-auto">
                   {String(t('browseCourses') ?? 'Browse')}
                 </Button>
               </Link>
@@ -430,7 +852,7 @@ const Home: React.FC = () => {
 
             <div className="relative z-10">
               <div className="w-48 h-32 lg:w-64 lg:h-40 bg-white/20 backdrop-blur-md rounded-2xl border border-white/30 flex items-center justify-center rotate-6 shadow-2xl">
-                <span className="text-6xl" aria-hidden="true">🎓</span>
+                <Zap fill="currentColor" />
               </div>
             </div>
           </div>
