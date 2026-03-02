@@ -1,11 +1,15 @@
 import React, { useMemo, useState } from 'react';
 import { Facebook, Eye, EyeOff, Mail, Lock, User as UserIcon } from 'lucide-react';
-import Button from '../components/Button';
 import * as ReactRouterDOM from 'react-router-dom';
+
+import Button from '../components/Button';
+import SEO from '../components/SEO';
 import { useCart } from '../App';
 import { db } from '../services/storage';
 import { User } from '../types';
-import SEO from '../components/SEO';
+
+import { sendResetEmail } from '../services/passwordReset';
+import { signInWithGoogle } from '../services/authProviders';
 
 const { useNavigate } = ReactRouterDOM as any;
 
@@ -24,15 +28,8 @@ const Login: React.FC = () => {
 
   const [formData, setFormData] = useState({ name: '', email: '', password: '' });
 
-  const title = useMemo(
-    () => (isLoginMode ? t('login') : t('createAccount')),
-    [isLoginMode, t]
-  );
-
-  const desc = useMemo(
-    () => (isLoginMode ? t('loginDesc') : t('registerDesc')),
-    [isLoginMode, t]
-  );
+  const title = useMemo(() => (isLoginMode ? t('login') : t('createAccount')), [isLoginMode, t]);
+  const desc = useMemo(() => (isLoginMode ? t('loginDesc') : t('registerDesc')), [isLoginMode, t]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -43,11 +40,15 @@ const Login: React.FC = () => {
     const code = error?.code;
 
     if (code === 'auth/email-already-in-use') return t('emailInUse') ?? 'Email is already registered.';
-    if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password')
+    if (
+      code === 'auth/invalid-credential' ||
+      code === 'auth/user-not-found' ||
+      code === 'auth/wrong-password'
+    ) {
       return t('invalidCredentials') ?? 'Invalid email or password.';
+    }
     if (code === 'auth/weak-password') return t('weakPassword') ?? 'Password should be at least 6 characters.';
 
-    // fallback (لا تعرض رسالة تقنية طويلة)
     return t('genericError') ?? 'An error occurred. Please try again.';
   };
 
@@ -99,7 +100,7 @@ const Login: React.FC = () => {
           email: formData.email,
           password: formData.password,
           role: 'customer',
-          orders: []
+          orders: [],
         };
 
         const createdUser = await db.users.register(newUser);
@@ -114,9 +115,72 @@ const Login: React.FC = () => {
     }
   };
 
-  const handleForgotPassword = () => {
-    // Placeholder محترم بدل # (توصله لاحقًا بـ Firebase resetPassword)
-    showToast(t('forgotPasswordHint') ?? 'Please contact support or use password reset (coming soon).', 'info');
+  // ✅ Forgot password (real email via Firebase)
+  const handleForgotPassword = async () => {
+    const email = safeText(formData.email);
+
+    if (!email || !isValidEmail(email)) {
+      showToast(t('invalidEmail') ?? 'Please enter a valid email address first.', 'error');
+      return;
+    }
+
+    if (isLoading) return;
+    setIsLoading(true);
+
+    try {
+      await sendResetEmail(email);
+      showToast(
+        language === 'ar'
+          ? 'تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني ✅'
+          : 'Password reset link sent to your email ✅',
+        'success'
+      );
+    } catch (error: any) {
+      const code = error?.code;
+
+      if (code === 'auth/user-not-found') {
+        showToast(language === 'ar' ? 'هذا البريد غير مسجّل لدينا.' : 'This email is not registered.', 'error');
+        return;
+      }
+
+      showToast(
+        language === 'ar'
+          ? 'صار خطأ أثناء إرسال الإيميل. جرّب مرة ثانية.'
+          : 'Failed to send reset email. Please try again.',
+        'error'
+      );
+      console.error('reset error:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // ✅ Google login (real)
+  const handleGoogleLogin = async () => {
+    if (isLoading) return;
+    setIsLoading(true);
+
+    try {
+      const u = await signInWithGoogle();
+
+      const user: User = {
+        id: u.uid,
+        name: u.displayName || (language === 'ar' ? 'مستخدم جوجل' : 'Google User'),
+        email: u.email || '',
+        password: '',
+        role: 'customer',
+        orders: [],
+      };
+
+      login(user);
+      showToast(t('loginSuccess') ?? 'Logged in successfully.', 'success');
+      navigate('/');
+    } catch (err: any) {
+      console.error('google login error:', err);
+      showToast(err?.message || (t('genericError') ?? 'An error occurred.'), 'error');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -126,7 +190,9 @@ const Login: React.FC = () => {
       <div className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden flex flex-col border border-slate-100">
         <div className="w-full p-8 md:p-10">
           <div className="text-center mb-8">
-            <h2 className="text-2xl font-heading font-bold text-slate-900 mb-2">{isLoginMode ? t('welcomeBack') : t('createAccount')}</h2>
+            <h2 className="text-2xl font-heading font-bold text-slate-900 mb-2">
+              {isLoginMode ? t('welcomeBack') : t('createAccount')}
+            </h2>
             <p className="text-slate-500 text-sm">{desc}</p>
           </div>
 
@@ -245,10 +311,11 @@ const Login: React.FC = () => {
             </div>
           </div>
 
-          {/* Social Buttons (UI ready) */}
+          {/* Social Buttons */}
           <div className="grid grid-cols-2 gap-4">
             <button
               type="button"
+              onClick={handleGoogleLogin}
               className="flex items-center justify-center gap-2 py-2.5 border border-slate-200 rounded-2xl hover:bg-slate-50 transition-colors text-sm font-bold text-slate-700"
               disabled={isLoading}
             >
