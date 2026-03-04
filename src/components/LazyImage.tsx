@@ -1,8 +1,10 @@
 // FILE: src/components/LazyImage.tsx
-// Changes:
-// 1) Add WebP support detection and only convert Picsum -> .webp if supported
-// 2) Avoid Cloudinary f_auto (AVIF issues) by forcing f_jpg (most compatible)
-// 3) Force <img> to fill container on iOS (width/height 100%)
+// World-Class upgrades:
+// 1) ✅ Cache WebP support globally (detect once, reuse everywhere)
+// 2) ✅ Optional CLS guard via width/height/aspectRatio props (keeps layout stable)
+// 3) ✅ Optional one-time preconnect for image CDNs (helps first image / LCP)
+// 4) ✅ Keep Cloudinary iOS-safe (avoid f_auto AVIF issues) + stable transforms
+// 5) ✅ Keep behavior: Lazy + placeholder + fallback exactly as before
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ImageOff } from 'lucide-react';
@@ -11,9 +13,15 @@ type FetchPriority = 'high' | 'low' | 'auto';
 
 interface LazyImageProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'loading' | 'src'> {
   src?: string | null;
+
+  // container / placeholder
   containerClassName?: string;
   placeholderClassName?: string;
+
+  // fallback
   fallbackSrc?: string;
+
+  // perf
   fetchPriority?: FetchPriority;
   eager?: boolean;
   responsiveWidths?: number[];
@@ -22,8 +30,17 @@ interface LazyImageProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>,
   expectedDisplayWidth?: number;
   loading?: 'lazy' | 'eager';
   rootMargin?: string;
+
+  // ✅ NEW (optional) CLS guard
+  // استخدمها لما تكون الصورة معروفة الأبعاد (مثل كروت المنتجات)
+  widthHint?: number;
+  heightHint?: number;
+  aspectRatioHint?: string; // مثال: "1 / 1" أو "3 / 2"
 }
 
+// ---------------------------
+// ✅ Helpers
+// ---------------------------
 const isValidUrl = (u?: string) => {
   if (!u) return false;
   const s = String(u).trim();
@@ -47,9 +64,14 @@ const cloudinaryTransform = (url: string, w?: number, h?: number, mode?: 'limit'
     const restParts = restRaw.split('/');
     const first = restParts[0] || '';
 
+    // إذا فيه transformations مسبقاً، لا نلمس الرابط
     if (looksLikeCloudinaryTransform(first)) return url;
 
-    // ✅ iOS-safe: avoid f_auto (can return AVIF and fail on some iPhones)
+    /**
+     * ✅ iOS-safe:
+     * - نتجنب f_auto لأنه قد يرجع AVIF ويخرب على أجهزة/إعدادات معينة
+     * - نستخدم f_jpg كخيار متوافق جداً
+     */
     const t: string[] = ['f_jpg', 'q_auto:good', 'dpr_auto'];
 
     if (typeof w === 'number' && w > 0) t.push(`w_${Math.round(w)}`);
@@ -80,15 +102,61 @@ const picsumWebp = (url: string) => {
   }
 };
 
-// ✅ NEW: WebP support test (prevents iPhone issues on older iOS/settings)
+// ---------------------------
+// ✅ WebP support (cached globally)
+// ---------------------------
+let WEBP_SUPPORT_CACHE: boolean | null = null;
+
 const detectWebPSupport = (): boolean => {
+  // ✅ SSR safety
+  if (typeof document === 'undefined') return false;
+
+  // ✅ reuse cached value
+  if (WEBP_SUPPORT_CACHE !== null) return WEBP_SUPPORT_CACHE;
+
   try {
-    if (typeof document === 'undefined') return false;
     const canvas = document.createElement('canvas');
-    if (!canvas.getContext) return false;
-    return canvas.toDataURL('image/webp').startsWith('data:image/webp');
+    if (!canvas.getContext) {
+      WEBP_SUPPORT_CACHE = false;
+      return WEBP_SUPPORT_CACHE;
+    }
+    WEBP_SUPPORT_CACHE = canvas.toDataURL('image/webp').startsWith('data:image/webp');
+    return WEBP_SUPPORT_CACHE;
   } catch {
-    return false;
+    WEBP_SUPPORT_CACHE = false;
+    return WEBP_SUPPORT_CACHE;
+  }
+};
+
+// ---------------------------
+// ✅ Optional: one-time preconnect to speed up first image
+// ---------------------------
+const PRECONNECT_DONE = new Set<string>();
+
+const preconnectOnce = (origin: string) => {
+  try {
+    if (typeof document === 'undefined') return;
+    if (!origin) return;
+    if (PRECONNECT_DONE.has(origin)) return;
+
+    const link = document.createElement('link');
+    link.rel = 'preconnect';
+    link.href = origin;
+    link.crossOrigin = 'anonymous';
+    document.head.appendChild(link);
+
+    PRECONNECT_DONE.add(origin);
+  } catch {
+    // ignore
+  }
+};
+
+const getOrigin = (url: string) => {
+  try {
+    if (!/^https?:\/\//i.test(url)) return '';
+    return new URL(url).origin;
+  } catch {
+    return '';
   }
 };
 
@@ -111,12 +179,16 @@ const LazyImage: React.FC<LazyImageProps> = ({
   onLoad,
   onError,
   decoding = 'async',
+  widthHint,
+  heightHint,
+  aspectRatioHint,
   ...imgProps
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const normalizedSrc = useMemo(() => (src ? String(src).trim() : ''), [src]);
 
+  // ✅ derived eager: إذا الصورة مهمة (LCP) نعرضها مباشرة
   const derivedEager = useMemo(() => eager || loading === 'eager' || fetchPriority === 'high', [
     eager,
     loading,
@@ -127,18 +199,20 @@ const LazyImage: React.FC<LazyImageProps> = ({
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [hasError, setHasError] = useState<boolean>(false);
 
-  // ✅ NEW: detect WebP support once
+  // ✅ webp supported (cached globally)
   const [webpSupported, setWebpSupported] = useState(false);
   useEffect(() => {
     setWebpSupported(detectWebPSupport());
   }, []);
 
+  // ✅ reset when src/eager changes
   useEffect(() => {
     setIsLoaded(false);
     setHasError(false);
     setInView(derivedEager);
   }, [normalizedSrc, derivedEager]);
 
+  // ✅ IntersectionObserver only when needed
   useEffect(() => {
     if (derivedEager) return;
 
@@ -165,7 +239,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
     return () => obs.disconnect();
   }, [derivedEager, rootMargin]);
 
-  // ✅ Only convert Picsum -> webp if supported (fix iPhone missing images)
+  // ✅ Only convert Picsum -> webp if supported
   const finalSrc = useMemo(() => {
     if (!normalizedSrc) return '';
     if (!webpSupported) return normalizedSrc;
@@ -176,6 +250,13 @@ const LazyImage: React.FC<LazyImageProps> = ({
     () => finalSrc.includes('res.cloudinary.com') && finalSrc.includes('/upload/'),
     [finalSrc]
   );
+
+  // ✅ Optional: preconnect once for LCP images
+  useEffect(() => {
+    if (!derivedEager) return;
+    const origin = getOrigin(finalSrc);
+    if (origin) preconnectOnce(origin);
+  }, [derivedEager, finalSrc]);
 
   const resolvedSizes = useMemo(() => {
     if (!isCloudinary) return undefined;
@@ -221,8 +302,22 @@ const LazyImage: React.FC<LazyImageProps> = ({
   const finalLoading: 'lazy' | 'eager' = derivedEager ? 'eager' : 'lazy';
   const noSrc = !normalizedSrc;
 
+  // ✅ CLS guard style (اختياري)
+  const clsStyle = useMemo<React.CSSProperties>(() => {
+    const s: React.CSSProperties = {};
+    if (typeof widthHint === 'number' && widthHint > 0) s.width = widthHint;
+    if (typeof heightHint === 'number' && heightHint > 0) s.height = heightHint;
+    if (aspectRatioHint) (s as any).aspectRatio = aspectRatioHint;
+    return s;
+  }, [widthHint, heightHint, aspectRatioHint]);
+
   return (
-    <div ref={containerRef} className={`relative overflow-hidden ${containerClassName}`}>
+    <div
+      ref={containerRef}
+      className={`relative overflow-hidden ${containerClassName}`}
+      // ✅ يحافظ على مساحة ثابتة قبل تحميل الصورة (لو مرّرت aspectRatioHint / widthHint / heightHint)
+      style={{ ...clsStyle }}
+    >
       {!hasError && !isLoaded && (
         <div className={`absolute inset-0 ${placeholderClassName} animate-pulse`} aria-hidden="true" />
       )}
@@ -254,6 +349,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
           alt={alt}
           loading={finalLoading}
           decoding={decoding}
+          // fetchPriority ليس ضمن typings في React أحياناً
           {...({ fetchPriority } as any)}
           onLoad={(e) => {
             setIsLoaded(true);
@@ -266,6 +362,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
           className={`w-full h-full block transition-opacity duration-300 ease-out ${
             isLoaded ? 'opacity-100' : 'opacity-0'
           } ${className}`}
+          // ✅ iOS fill container: width/height/display block
           style={{ width: '100%', height: '100%', display: 'block', ...style }}
           {...imgProps}
         />
