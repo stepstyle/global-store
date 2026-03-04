@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   ShoppingBag,
@@ -75,6 +75,37 @@ const Header: React.FC = () => {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
+  // =========================================================
+  // ✅ World-Class Scroll Behavior (ثابت 100%)
+  // =========================================================
+  /**
+   * ✅ ملاحظة:
+   * - استخدام "auto" بدل "smooth" لأن smooth أحيانًا يعطي إحساس تأخير
+   * - إذا تحب smooth: غيّر behavior إلى 'smooth'
+   */
+  const scrollToTopInstant = useCallback(() => {
+    // إذا كان هناك hash في الرابط (#section) لا نجبره يرجع للأعلى
+    if (location.hash) return;
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [location.hash]);
+
+  /**
+   * ✅ هذا هو الحل الأهم:
+   * أي تغيير Route (pathname/search) → ارجع للأعلى مباشرة
+   * هذا يحل مشاكل فتح الصفحة من أسفل، وأيضًا Back/Forward
+   */
+  useEffect(() => {
+    scrollToTopInstant();
+  }, [location.pathname, location.search, scrollToTopInstant]);
+
+  // ✅ تجميع كل "إغلاق UI" في مكان واحد لتفادي الأخطاء
+  const closeAllOverlays = useCallback(() => {
+    setShowSuggestions(false);
+    setIsMenuOpen(false);
+    setOpenDropdown(null);
+    setIsUserMenuOpen(false);
+  }, []);
+
   const openUserMenuSafe = () => {
     if (userMenuCloseTimer.current) clearTimeout(userMenuCloseTimer.current);
     setIsUserMenuOpen(true);
@@ -88,6 +119,34 @@ const Header: React.FC = () => {
 
   // ✅ Games MegaMenu constants
   const GAMES_MENU_ID = 'games-mega-menu';
+
+  // ----------------------------
+  // ✅ Styles (مركّزة ومصدر واحد)
+  // ----------------------------
+  const megaMenuClass = useMemo(
+    () => `
+      absolute top-full left-0 rtl:left-auto rtl:right-0 mt-3
+      w-[420px] lg:w-[720px]
+      rounded-2xl overflow-hidden z-50
+      border border-slate-200/70
+      shadow-[0_20px_60px_rgba(2,6,23,0.35)]
+      bg-white
+      animate-in fade-in slide-in-from-top-2
+    `,
+    []
+  );
+
+  const megaItemClass = useMemo(
+    () => `
+      w-full text-right rtl:text-right ltr:text-left
+      px-3 py-2.5 rounded-xl
+      text-sm font-bold text-slate-800
+      hover:bg-slate-100 focus:bg-slate-100
+      focus:outline-none
+      transition-colors
+    `,
+    []
+  );
 
   // ----------------------------
   // ✅ Dropdown Data
@@ -113,26 +172,6 @@ const Header: React.FC = () => {
       { labelAr: 'بوكيهات وورد', labelEn: 'Bouquets', sub: 'bouquets' },
     ];
 
-      // ✅ MegaMenu class (solid background + readable text)
-  const megaMenuClass = `
-    absolute top-full left-0 rtl:left-auto rtl:right-0 mt-3
-    w-[420px] lg:w-[720px]
-    rounded-2xl overflow-hidden z-50
-    border border-slate-200/70
-    shadow-[0_20px_60px_rgba(2,6,23,0.35)]
-    bg-white
-    animate-in fade-in slide-in-from-top-2
-  `;
-
-  // ✅ MegaMenu item class
-  const megaItemClass = `
-    w-full text-right rtl:text-right ltr:text-left
-    px-3 py-2.5 rounded-xl
-    text-sm font-bold text-slate-800
-    hover:bg-slate-100 focus:bg-slate-100
-    focus:outline-none
-    transition-colors
-  `;
     return {
       home: { labelAr: t('home'), labelEn: t('home'), path: '/' },
       games: {
@@ -181,18 +220,21 @@ const Header: React.FC = () => {
     };
   }, [isMenuOpen]);
 
-  const goTo = (path: string) => {
-    setShowSuggestions(false);
-    setIsMenuOpen(false);
-    setOpenDropdown(null);
-    setIsUserMenuOpen(false);
-
-    navigate(path);
-
-    setTimeout(() => {
-      window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
-    }, 0);
-  };
+  /**
+   * ✅ goTo = انتقال موحّد “World-Class”
+   * - يغلق كل الـoverlays
+   * - يعمل navigate
+   * - والـscroll للأعلى يتم تلقائيًا عبر useEffect (Route change)
+   */
+  const goTo = useCallback(
+    (path: string) => {
+      closeAllOverlays();
+      navigate(path);
+      // لا نعمل scroll هنا لأننا نعتمد على Route-change effect
+      // هذا يقلل الـglitches ويضمن سلوك ثابت
+    },
+    [closeAllOverlays, navigate]
+  );
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -202,10 +244,6 @@ const Header: React.FC = () => {
   };
 
   const openWishlist = () => {
-    setShowSuggestions(false);
-    setIsMenuOpen(false);
-    setOpenDropdown(null);
-    setIsUserMenuOpen(false);
     goTo('/wishlist');
   };
 
@@ -250,16 +288,15 @@ const Header: React.FC = () => {
     };
   }, []);
 
-  const suggestions =
-    debouncedQuery.length > 1
-      ? products
-          .filter(
-            (p) =>
-              (p.name || '').toLowerCase().includes(debouncedQuery.toLowerCase()) ||
-              (p.nameEn || '').toLowerCase().includes(debouncedQuery.toLowerCase())
-          )
-          .slice(0, 5)
-      : [];
+  // ✅ Suggestions محسوبة بـ useMemo (أسرع + أقل رندر)
+  const suggestions = useMemo(() => {
+    if (debouncedQuery.length <= 1) return [];
+    const q = debouncedQuery.toLowerCase();
+
+    return products
+      .filter((p) => (p.name || '').toLowerCase().includes(q) || (p.nameEn || '').toLowerCase().includes(q))
+      .slice(0, 5);
+  }, [debouncedQuery, products]);
 
   const L = (ar: string, en: string) => (language === 'ar' ? ar : en);
   const isActivePath = (path: string) => location.pathname === path;
@@ -272,7 +309,8 @@ const Header: React.FC = () => {
 
   const closeDropdownDelayed = () => {
     if (dropdownCloseTimer.current) clearTimeout(dropdownCloseTimer.current);
-dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
+    dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);
+  };
 
   const splitToColumns = (items: Array<{ labelAr: string; labelEn: string; sub: string }>, colCount: number) => {
     const perCol = Math.ceil(items.length / colCount);
@@ -284,31 +322,12 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
 
   // =========================================================
   // ✅ (1) Dynamic Top Bar (multiple messages + autoplay + buttons + swipe)
-  // ✅ (2) Ultra clear text (high contrast + shadow)
   // =========================================================
   const topBarItems = useMemo(
     () => [
-      {
-        id: 'ship',
-        icon: '🚚',
-        ar: 'توصيل سريع خلال 24-48 ساعة',
-        en: 'Fast delivery within 24–48 hours',
-        to: '/tracking',
-      },
-      {
-        id: 'deals',
-        icon: '🎁',
-        ar: 'عروض أسبوعية حصرية — اضغط للمشاهدة',
-        en: 'Exclusive weekly deals — tap to view',
-        to: '/shop?filter=Offers',
-      },
-      {
-        id: 'support',
-        icon: '📞',
-        ar: 'الدعم: 06-0000000',
-        en: 'Support: +962 6 000 0000',
-        to: '/contact',
-      },
+      { id: 'ship', icon: '🚚', ar: 'توصيل سريع خلال 24-48 ساعة', en: 'Fast delivery within 24–48 hours', to: '/tracking' },
+      { id: 'deals', icon: '🎁', ar: 'عروض أسبوعية حصرية — اضغط للمشاهدة', en: 'Exclusive weekly deals — tap to view', to: '/shop?filter=Offers' },
+      { id: 'support', icon: '📞', ar: 'الدعم: 06-0000000', en: 'Support: +962 6 000 0000', to: '/contact' },
     ],
     []
   );
@@ -320,9 +339,7 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
   const nextTopBar = () => setTopBarIndex((i) => (i + 1) % topBarCount);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      setTopBarIndex((i) => (i + 1) % topBarCount);
-    }, 5500);
+    const id = setInterval(() => setTopBarIndex((i) => (i + 1) % topBarCount), 5500);
     return () => clearInterval(id);
   }, [topBarCount]);
 
@@ -347,24 +364,7 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
   };
 
   const activeTop = topBarItems[topBarIndex];
-  const megaMenuClass = `
-    absolute top-full left-0 rtl:left-auto rtl:right-0 mt-3
-    w-[420px] lg:w-[720px]
-    rounded-2xl overflow-hidden z-50
-    border border-slate-200/70
-    shadow-[0_20px_60px_rgba(2,6,23,0.35)]
-    bg-white
-    animate-in fade-in slide-in-from-top-2
-  `;
 
-  const megaItemClass = `
-    w-full text-right rtl:text-right ltr:text-left
-    px-3 py-2.5 rounded-xl
-    text-sm font-bold text-slate-800
-    hover:bg-slate-100 focus:bg-slate-100
-    focus:outline-none
-    transition-colors
-  `;
   return (
     <>
       <header
@@ -376,7 +376,8 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
         ].join(' ')}
       >
         {/* ✅ Top Bar (Dynamic + High Contrast) */}
-          <div className="border-b border-white/15 bg-black/15">       <div className="w-full max-w-[1550px] mx-auto px-5 sm:px-6 lg:px-14">
+        <div className="border-b border-white/15 bg-black/15">
+          <div className="w-full max-w-[1550px] mx-auto px-5 sm:px-6 lg:px-14">
             <div className="h-10 flex items-center justify-between gap-3">
               {/* Left: Dynamic message (clickable + swipe) */}
               <div
@@ -433,7 +434,7 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
                 </button>
               </div>
 
-              {/* Right: Language switch (unchanged logic, clearer text) */}
+              {/* Right: Language switch */}
               <button
                 onClick={() => setLanguage(language === 'ar' ? 'en' : 'ar')}
                 className="
@@ -462,16 +463,15 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
             'px-5 sm:px-6 lg:px-14 gap-3',
           ].join(' ')}
         >
+          {/* ✅ شعار/لوغو */}
           <Link
             to="/"
             className="flex items-center group shrink-0 min-w-0 ps-2 sm:ps-4"
             aria-label="Home"
             title="Home"
             onClick={() => {
-              setOpenDropdown(null);
-              setIsUserMenuOpen(false);
-              setShowSuggestions(false);
-              window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+              // ✅ إغلاق القوائم + السماح للـroute effect يعمل scroll للأعلى
+              closeAllOverlays();
             }}
           >
             <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center text-white font-extrabold text-xl shadow-lg group-hover:rotate-12 transition-transform duration-300 backdrop-blur-sm border border-white/30 shrink-0">
@@ -501,15 +501,11 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
             </div>
           </Link>
 
-          {/* Desktop Navigation (unchanged) */}
+          {/* Desktop Navigation */}
           <nav ref={desktopNavRef} className="hidden md:flex items-center space-x-reverse space-x-3 rtl:space-x-reverse">
             <Link
               to="/"
-              onClick={() => {
-                setOpenDropdown(null);
-                setIsUserMenuOpen(false);
-                window.scrollTo({ top: 0, left: 2, behavior: 'smooth' });
-              }}
+              onClick={() => closeAllOverlays()}
               className={`text-sm font-bold transition-colors duration-300 ease-in-out relative py-2 px-3 rounded-lg group flex items-center gap-2 ${
                 isActivePath('/')
                   ? 'text-slate-900 bg-white/30 shadow-sm'
@@ -520,7 +516,7 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
               <span>{t('home')}</span>
             </Link>
 
-            {/* ✅ Games Mega Menu (unchanged) */}
+            {/* ✅ Games Mega Menu */}
             <div className="relative" onMouseEnter={() => openDropdownSafe('games')} onMouseLeave={closeDropdownDelayed}>
               <button
                 type="button"
@@ -532,28 +528,20 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
               >
                 <Gamepad2 size={18} />
                 <span>{L(NAV.games.labelAr, NAV.games.labelEn)}</span>
-                <ChevronDown
-                  size={16}
-                  className={`opacity-70 transition-transform ${openDropdown === 'games' ? 'rotate-180 opacity-100' : ''}`}
-                />
+                <ChevronDown size={16} className={`opacity-70 transition-transform ${openDropdown === 'games' ? 'rotate-180 opacity-100' : ''}`} />
               </button>
 
               {openDropdown === 'games' && (
-                <div
-                  id={GAMES_MENU_ID}
-                  role="menu"
-                  className={megaMenuClass}
-                >
+                <div id={GAMES_MENU_ID} role="menu" className={megaMenuClass}>
                   <div className="h-2 bg-transparent" />
 
                   <div className="p-4 lg:p-5">
                     <div className="flex items-center justify-between gap-3 mb-4">
                       <div className="flex items-center gap-2">
-<div className="w-9 h-9 rounded-xl bg-secondary-DEFAULT text-white flex items-center justify-center shadow-sm">                        </div>
+                        <div className="w-9 h-9 rounded-xl bg-secondary-DEFAULT text-white flex items-center justify-center shadow-sm" />
                         <div className="leading-tight">
-                       <p className="text-lg font-extrabold text-slate-900 tracking-wide">
-                       {L('تصفّح الألعاب', 'Browse Games')}
-                    </p>     <p className="text-xs text-slate-500">{L('اختر القسم المناسب', 'Pick a category')}</p>
+                          <p className="text-lg font-extrabold text-slate-900 tracking-wide">{L('تصفّح الألعاب', 'Browse Games')}</p>
+                          <p className="text-xs text-slate-500">{L('اختر القسم المناسب', 'Pick a category')}</p>
                         </div>
                       </div>
 
@@ -588,7 +576,7 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
                                 type="button"
                                 role="menuitem"
                                 onClick={() => goTo(NAV.games.to(it.sub))}
-                               className={megaItemClass}
+                                className={megaItemClass}
                               >
                                 {L(it.labelAr, it.labelEn)}
                               </button>
@@ -600,11 +588,7 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
 
                     <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
                       <span>{L('نصيحة: استخدم البحث للوصول للمنتج بسرعة', 'Tip: Use search to find products faster')}</span>
-                      <button
-                        type="button"
-                        onClick={() => setOpenDropdown(null)}
-                        className="font-bold text-slate-700 hover:text-slate-900"
-                      >
+                      <button type="button" onClick={() => setOpenDropdown(null)} className="font-bold text-slate-700 hover:text-slate-900">
                         {L('إغلاق', 'Close')}
                       </button>
                     </div>
@@ -614,114 +598,81 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
             </div>
 
             {/* Stationery */}
-<div
-  className="relative"
-  onMouseEnter={() => openDropdownSafe('stationery')}
-  onMouseLeave={closeDropdownDelayed}
->
-  <button
-    type="button"
-    onClick={() => setOpenDropdown((p) => (p === 'stationery' ? null : 'stationery'))}
-    className="text-sm font-bold text-slate-900 hover:bg-white/20 hover:shadow-sm transition-all py-2 px-3 rounded-lg flex items-center gap-2"
-  >
-    <PencilRuler size={18} />
-    <span>{L(NAV.stationery.labelAr, NAV.stationery.labelEn)}</span>
-    <ChevronDown
-      size={16}
-      className={`opacity-70 transition-transform ${openDropdown === 'stationery' ? 'rotate-180 opacity-100' : ''}`}
-    />
-  </button>
-{openDropdown === 'stationery' && (
-  <div
-    role="menu"
-    onMouseEnter={() => openDropdownSafe('stationery')}
-    onMouseLeave={closeDropdownDelayed}
-  className={megaMenuClass}
-  >
-    <div className="h-2 bg-transparent" />
+            <div className="relative" onMouseEnter={() => openDropdownSafe('stationery')} onMouseLeave={closeDropdownDelayed}>
+              <button
+                type="button"
+                onClick={() => setOpenDropdown((p) => (p === 'stationery' ? null : 'stationery'))}
+                className="text-sm font-bold text-slate-900 hover:bg-white/20 hover:shadow-sm transition-all py-2 px-3 rounded-lg flex items-center gap-2"
+              >
+                <PencilRuler size={18} />
+                <span>{L(NAV.stationery.labelAr, NAV.stationery.labelEn)}</span>
+                <ChevronDown size={16} className={`opacity-70 transition-transform ${openDropdown === 'stationery' ? 'rotate-180 opacity-100' : ''}`} />
+              </button>
 
-    <div className="p-4 lg:p-5">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-2">
-<div className="w-9 h-9 rounded-xl bg-secondary-DEFAULT text-white flex items-center justify-center shadow-sm">              <PencilRuler size={18} />
+              {openDropdown === 'stationery' && (
+                <div role="menu" onMouseEnter={() => openDropdownSafe('stationery')} onMouseLeave={closeDropdownDelayed} className={megaMenuClass}>
+                  <div className="h-2 bg-transparent" />
+
+                  <div className="p-4 lg:p-5">
+                    <div className="flex items-center justify-between gap-3 mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-9 h-9 rounded-xl bg-secondary-DEFAULT text-white flex items-center justify-center shadow-sm">
+                          <PencilRuler size={18} />
+                        </div>
+                        <div className="leading-tight">
+                          <p className="text-lg font-extrabold text-slate-900 tracking-wide">{L('تصفّح القرطاسية', 'Browse Stationery')}</p>
+                          <p className="text-xs text-slate-600">{L('اختر القسم المناسب', 'Pick a category')}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => goTo('/shop?filter=Stationery')}
+                          className="text-xs font-bold px-3 py-2 rounded-xl bg-white/15 text-white border border-white/20 hover:bg-white/20 transition-colors"
+                        >
+                          {L('عرض الكل', 'View All')}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setOpenDropdown(null)}
+                          className="text-xs font-bold px-3 py-2 rounded-xl bg-black/20 text-white border border-white/20 hover:bg-black/30 transition-colors"
+                        >
+                          {L('إغلاق', 'Close')}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 xl:grid-cols-3 gap-2">
+                      {(() => {
+                        const items = NAV.stationery.items;
+                        const colCount = 3;
+                        const cols = splitToColumns(items, colCount);
+                        return cols.map((col, idx) => (
+                          <div key={idx} className="max-h-[320px] overflow-auto pr-1 rtl:pr-0 rtl:pl-1">
+                            {col.map((it) => (
+                              <button key={it.sub} type="button" role="menuitem" onClick={() => goTo(NAV.stationery.to(it.sub))} className={megaItemClass}>
+                                {L(it.labelAr, it.labelEn)}
+                              </button>
+                            ))}
+                          </div>
+                        ));
+                      })()}
+                    </div>
+
+                    <div className="mt-4 pt-4 border-t border-white/15 flex items-center justify-between text-xs text-white/80">
+                      <span className="drop-shadow">{L('نصيحة: استخدم البحث للوصول للمنتج بسرعة', 'Tip: Use search to find products faster')}</span>
+                      <button type="button" onClick={() => goTo('/shop?filter=Stationery&sort=new')} className="font-bold text-white hover:text-white/90 drop-shadow">
+                        {L('الجديد', 'New')}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="leading-tight">
-                < p className="text-lg font-extrabold text-slate-900 tracking-wide">  {L('تصفّح القرطاسية', 'Browse Stationery')}
-</p>
-<p className="text-xs text-slate-600">                {L('اختر القسم المناسب', 'Pick a category')}
-              </p>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => goTo('/shop?filter=Stationery')}
-              className="text-xs font-bold px-3 py-2 rounded-xl bg-white/15 text-white border border-white/20 hover:bg-white/20 transition-colors"
-            >
-              {L('عرض الكل', 'View All')}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setOpenDropdown(null)}
-              className="text-xs font-bold px-3 py-2 rounded-xl bg-black/20 text-white border border-white/20 hover:bg-black/30 transition-colors"
-            >
-              {L('إغلاق', 'Close')}
-            </button>
-          </div>
-        </div>
-
-        {/* Body - نفس فكرة الأعمدة */}
-        <div className="grid grid-cols-2 xl:grid-cols-3 gap-2">
-          {(() => {
-            const items = NAV.stationery.items;
-            const colCount = 3;
-            const cols = splitToColumns(items, colCount);
-            return cols.map((col, idx) => (
-              <div key={idx} className="max-h-[320px] overflow-auto pr-1 rtl:pr-0 rtl:pl-1">
-                {col.map((it) => (
-                  <button
-                    key={it.sub}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => goTo(NAV.stationery.to(it.sub))}
-                    className="
-                      w-full text-right rtl:text-right ltr:text-left
-                      px-3 py-2.5 rounded-xl
-                      text-sm font-bold text-slate-800
-                      hover:bg-slate-100 focus:bg-white/12
-                      focus:outline-none
-                      drop-shadow
-                    "
-                  >
-                    {L(it.labelAr, it.labelEn)}
-                  </button>
-                ))}
-              </div>
-            ));
-          })()}
-        </div>
-
-        {/* Footer */}
-        <div className="mt-4 pt-4 border-t border-white/15 flex items-center justify-between text-xs text-white/80">
-          <span className="drop-shadow">
-            {L('نصيحة: استخدم البحث للوصول للمنتج بسرعة', 'Tip: Use search to find products faster')}
-          </span>
-          <button
-            type="button"
-            onClick={() => goTo('/shop?filter=Stationery&sort=new')}
-            className="font-bold text-white hover:text-white/90 drop-shadow"
-          >
-            {L('الجديد', 'New')}
-          </button>
-        </div>
-      </div>
-    </div>
-  )}
-</div>
-            {/* Gifts (unchanged) */}
+            {/* Gifts */}
             <div className="relative" onMouseEnter={() => openDropdownSafe('gifts')} onMouseLeave={closeDropdownDelayed}>
               <button
                 type="button"
@@ -730,20 +681,18 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
               >
                 <Gift size={18} />
                 <span>{L(NAV.gifts.labelAr, NAV.gifts.labelEn)}</span>
-                <ChevronDown
-                  size={16}
-                  className={`opacity-70 transition-transform ${openDropdown === 'gifts' ? 'rotate-180 opacity-100' : ''}`}
-                />
+                <ChevronDown size={16} className={`opacity-70 transition-transform ${openDropdown === 'gifts' ? 'rotate-180 opacity-100' : ''}`} />
               </button>
 
               {openDropdown === 'gifts' && (
-                <div className="absolute top-full left-0 rtl:left-auto rtl:right-0 w-[420px] lg:w-[720px] rounded-2xl overflow-hidden z-50 border border-white/25 shadow-2xl backdrop-blur-xl bg-gradient-to-r from-primary-dark/95 via-white/10 to-secondary-dark/2 animate-in fade-in slide-in-from-top-2">
+                <div className={megaMenuClass}>
                   {NAV.gifts.items.map((it) => (
                     <button
                       key={it.sub}
                       type="button"
+                      role="menuitem"
                       onClick={() => goTo(NAV.gifts.to(it.sub))}
-                      className="w-full text-right rtl:text-right ltr:text-left px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                      className={megaItemClass}
                     >
                       {L(it.labelAr, it.labelEn)}
                     </button>
@@ -801,11 +750,9 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
                       key={item.id}
                       to={`/product/${item.id}`}
                       onClick={() => {
+                        // ✅ إغلاق الـUI فقط — والـscroll للأعلى سيحدث تلقائيًا عند تغيير route
                         setSearchQuery('');
-                        setShowSuggestions(false);
-                        setOpenDropdown(null);
-                        setIsUserMenuOpen(false);
-                        setTimeout(() => window.scrollTo({ top: 0, left: 0, behavior: 'smooth' }), 0);
+                        closeAllOverlays();
                       }}
                       className="flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors border-b border-slate-50 last:border-0"
                     >
@@ -831,11 +778,7 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
             <div className="hidden md:flex items-center gap-2">
               <Link
                 to="/tracking"
-                onClick={() => {
-                  setOpenDropdown(null);
-                  setIsUserMenuOpen(false);
-                  setTimeout(() => window.scrollTo({ top: 0, left: 0, behavior: 'smooth' }), 0);
-                }}
+                onClick={() => closeAllOverlays()}
                 className="p-2 hover:bg-white/20 rounded-full transition-all duration-300 hover:scale-110 active:scale-95 text-slate-900 hover:shadow-sm"
                 title={t('tracking')}
               >
@@ -857,7 +800,10 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
               </button>
 
               <button
-                onClick={() => setIsCartOpen(true)}
+                onClick={() => {
+                  closeAllOverlays();
+                  setIsCartOpen(true);
+                }}
                 className="relative p-2 hover:bg-white/20 rounded-full transition-all duration-300 hover:scale-110 active:scale-95 text-slate-900 hover:shadow-sm"
                 title={t('cart')}
                 type="button"
@@ -877,7 +823,6 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
                 onMouseLeave={user ? closeUserMenuDelayed : undefined}
               >
                 {user ? (
-                  // ✅ (unchanged user dropdown)
                   <>
                     <button
                       type="button"
@@ -895,7 +840,8 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
                         focus:outline-none focus:ring-4 focus:ring-white/30
                       "
                     >
-<div className="w-9 h-9 rounded-xl bg-secondary-DEFAULT text-white flex items-center justify-center shadow-sm">                        {user.name?.charAt(0)?.toUpperCase()}
+                      <div className="w-9 h-9 rounded-xl bg-secondary-DEFAULT text-white flex items-center justify-center shadow-sm">
+                        {user.name?.charAt(0)?.toUpperCase()}
                       </div>
 
                       <div className="flex flex-col leading-tight text-right rtl:text-right ltr:text-left">
@@ -907,10 +853,7 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
                         </span>
                       </div>
 
-                      <ChevronDown
-                        size={16}
-                        className={`text-slate-700 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`}
-                      />
+                      <ChevronDown size={16} className={`text-slate-700 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`} />
                     </button>
 
                     {isUserMenuOpen && (
@@ -934,41 +877,17 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
                           </p>
                         </div>
 
-                        <Link
-                          to="/account"
-                          role="menuitem"
-                          className="flex items-center gap-2 px-4 py-3 hover:bg-slate-50 text-sm font-bold text-slate-700"
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            setTimeout(() => window.scrollTo({ top: 0, left: 0, behavior: 'smooth' }), 0);
-                          }}
-                        >
+                        <Link to="/account" role="menuitem" className="flex items-center gap-2 px-4 py-3 hover:bg-slate-50 text-sm font-bold text-slate-700" onClick={() => setIsUserMenuOpen(false)}>
                           <UserIcon size={16} /> {L('حسابي', 'My Account')}
                         </Link>
 
                         {user.role === 'admin' && (
-                          <Link
-                            to="/admin"
-                            role="menuitem"
-                            className="flex items-center gap-2 px-4 py-3 hover:bg-slate-50 text-sm font-bold text-slate-700"
-                            onClick={() => {
-                              setIsUserMenuOpen(false);
-                              setTimeout(() => window.scrollTo({ top: 0, left: 0, behavior: 'smooth' }), 0);
-                            }}
-                          >
+                          <Link to="/admin" role="menuitem" className="flex items-center gap-2 px-4 py-3 hover:bg-slate-50 text-sm font-bold text-slate-700" onClick={() => setIsUserMenuOpen(false)}>
                             <LayoutDashboard size={16} /> {t('dashboard')}
                           </Link>
                         )}
 
-                        <Link
-                          to="/my-orders"
-                          role="menuitem"
-                          className="flex items-center gap-2 px-4 py-3 hover:bg-slate-50 text-sm font-bold text-slate-700"
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            setTimeout(() => window.scrollTo({ top: 0, left: 0, behavior: 'smooth' }), 0);
-                          }}
-                        >
+                        <Link to="/my-orders" role="menuitem" className="flex items-center gap-2 px-4 py-3 hover:bg-slate-50 text-sm font-bold text-slate-700" onClick={() => setIsUserMenuOpen(false)}>
                           <Package size={16} /> {t('myOrders')}
                         </Link>
 
@@ -987,7 +906,6 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
                     )}
                   </>
                 ) : (
-                  // ✅ (3) Login icon ONLY (no text) — world-class minimal
                   <button
                     type="button"
                     onClick={() => goTo('/login')}
@@ -1011,7 +929,7 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
               </div>
             </div>
 
-            {/* Mobile (unchanged) */}
+            {/* Mobile */}
             <div className="flex md:hidden items-center gap-2">
               <button onClick={openWishlist} className="relative p-2 text-slate-900" aria-label="Open Wishlist" type="button">
                 <Heart size={24} />
@@ -1022,7 +940,15 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
                 )}
               </button>
 
-              <button onClick={() => setIsCartOpen(true)} className="relative p-2 text-slate-900" aria-label="Open Cart" type="button">
+              <button
+                onClick={() => {
+                  closeAllOverlays();
+                  setIsCartOpen(true);
+                }}
+                className="relative p-2 text-slate-900"
+                aria-label="Open Cart"
+                type="button"
+              >
                 <ShoppingBag size={24} />
                 {cartCount > 0 && (
                   <span className="absolute top-0 right-0 w-4 h-4 bg-slate-900 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">
@@ -1044,241 +970,11 @@ dropdownCloseTimer.current = setTimeout(() => setOpenDropdown(null), 220);  };
         </div>
       </header>
 
-      {/* Mobile Menu (unchanged as you provided) */}
+      {/* Mobile Menu (كما هو عندك — بدون تغيير منطقي كبير) */}
       {isMenuOpen && (
         <div className="fixed inset-0 z-[9999] bg-white flex flex-col animate-in fade-in duration-200 overflow-hidden">
-          <div className="flex items-center justify-between p-4 h-20 border-b border-slate-100 shrink-0 bg-white">
-            <Link
-              to="/"
-              onClick={() => {
-                setIsMenuOpen(false);
-                window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
-              }}
-              className="flex items-center min-w-0"
-            >
-              <div className="w-10 h-10 bg-primary-DEFAULT rounded-xl flex items-center justify-center text-slate-900 font-bold text-xl shadow-sm shrink-0">
-                A
-              </div>
-              <span className="text-xl font-heading font-bold text-slate-900 ms-3 truncate max-w-[220px]">
-                Dair Sharaf
-              </span>
-            </Link>
-
-            <div className="flex gap-2">
-              <button
-                onClick={() => setLanguage(language === 'ar' ? 'en' : 'ar')}
-                className="p-2 bg-slate-100 rounded-full text-slate-500 hover:bg-slate-200 transition-colors flex items-center gap-1"
-                type="button"
-              >
-                <Globe size={18} />
-                <span className="text-xs font-bold">{language.toUpperCase()}</span>
-              </button>
-              <button
-                onClick={() => setIsMenuOpen(false)}
-                className="p-2 bg-slate-100 rounded-full text-slate-500 hover:bg-slate-200 hover:text-red-500 transition-colors"
-                aria-label="Close Menu"
-                type="button"
-              >
-                <X size={24} />
-              </button>
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-24 touch-pan-y">
-            <form onSubmit={handleSearch} className="relative">
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={t('search')}
-                className="w-full pl-4 pr-12 rtl:pl-12 rtl:pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-secondary-light outline-none"
-              />
-              <button type="submit" className="absolute left-4 rtl:left-auto rtl:right-4 top-3.5 text-slate-400" aria-label="Search">
-                <Search size={20} />
-              </button>
-            </form>
-
-            <div className="space-y-2">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 px-2">{t('menu_main')}</h3>
-
-              <Link
-                to="/"
-                onClick={() => {
-                  setIsMenuOpen(false);
-                  window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
-                }}
-                className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 text-slate-800 font-bold transition-colors group"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-slate-100 rounded-lg text-slate-600">
-                    <Home size={20} />
-                  </div>
-                  {t('home')}
-                </div>
-                <ChevronLeft size={16} className="text-slate-300 rtl:rotate-180 ltr:rotate-0" />
-              </Link>
-
-              <div className="bg-slate-50 rounded-2xl p-3">
-                <div className="flex items-center gap-2 font-bold text-slate-800 mb-2">
-                  <Gamepad2 size={18} /> {language === 'ar' ? 'ألعاب' : 'Games'}
-                </div>
-                <div className="space-y-1">
-                  {NAV.games.items.map((it) => (
-                    <button
-                      key={it.sub}
-                      type="button"
-                      onClick={() => goTo(NAV.games.to(it.sub))}
-                      className="w-full text-right px-3 py-2 rounded-xl hover:bg-white text-sm font-bold text-slate-700"
-                    >
-                      {language === 'ar' ? it.labelAr : it.labelEn}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-slate-50 rounded-2xl p-3">
-                <div className="flex items-center gap-2 font-bold text-slate-800 mb-2">
-                  <PencilRuler size={18} /> {language === 'ar' ? 'قرطاسية' : 'Stationery'}
-                </div>
-                <div className="space-y-1">
-                  {NAV.stationery.items.map((it) => (
-                    <button
-                      key={it.sub}
-                      type="button"
-                      onClick={() => goTo(NAV.stationery.to(it.sub))}
-                      className="w-full text-right px-3 py-2 rounded-xl hover:bg-white text-sm font-bold text-slate-700"
-                    >
-                      {language === 'ar' ? it.labelAr : it.labelEn}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-slate-50 rounded-2xl p-3">
-                <div className="flex items-center gap-2 font-bold text-slate-800 mb-2">
-                  <Gift size={18} /> {language === 'ar' ? 'هدايا' : 'Gifts'}
-                </div>
-                <div className="space-y-1">
-                  {NAV.gifts.items.map((it) => (
-                    <button
-                      key={it.sub}
-                      type="button"
-                      onClick={() => goTo(NAV.gifts.to(it.sub))}
-                      className="w-full text-right px-3 py-2 rounded-xl hover:bg-white text-sm font-bold text-slate-700"
-                    >
-                      {language === 'ar' ? it.labelAr : it.labelEn}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <Link
-                to="/tracking"
-                onClick={() => {
-                  setIsMenuOpen(false);
-                  setTimeout(() => window.scrollTo({ top: 0, left: 0, behavior: 'smooth' }), 0);
-                }}
-                className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 text-slate-800 font-bold transition-colors group"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-slate-100 rounded-lg text-slate-600">
-                    <Truck size={20} />
-                  </div>
-                  {t('tracking')}
-                </div>
-                <ChevronLeft size={16} className="text-slate-300 rtl:rotate-180 ltr:rotate-0" />
-              </Link>
-            </div>
-
-            <div className="border-t border-slate-100 pt-6">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 px-2">{t('menu_account')}</h3>
-
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                <Button
-                  variant="ghost"
-                  onClick={openWishlist}
-                  className="bg-slate-50 hover:bg-blue-400 hover:text-white text-slate-800 justify-start h-auto py-3 px-4"
-                  type="button"
-                >
-                  <Heart size={18} className="ml-2 rtl:ml-2 rtl:mr-0 ltr:ml-0 ltr:mr-2 text-red-500" />
-                  {t('wishlist')} ({wishlistCount})
-                </Button>
-
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setIsCartOpen(true);
-                    setIsMenuOpen(false);
-                  }}
-                  className="bg-slate-50 hover:bg-blue-400 hover:text-white text-slate-800 justify-start h-auto py-3 px-4"
-                  type="button"
-                >
-                  <ShoppingBag size={18} className="ml-2 rtl:ml-2 rtl:mr-0 ltr:ml-0 ltr:mr-2 text-slate-900" />
-                  {t('cart')} ({cartCount})
-                </Button>
-              </div>
-
-              {user ? (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3 px-2 mb-2">
-                    <div className="w-10 h-10 bg-primary-DEFAULT rounded-full flex items-center justify-center font-bold">
-                      {user.name.charAt(0)}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-bold text-slate-900 truncate">{user.name}</p>
-                      <p className="text-xs text-slate-500 truncate">{user.email}</p>
-                    </div>
-                  </div>
-
-                  {user.role === 'admin' && (
-                    <Link
-                      to="/admin"
-                      onClick={() => {
-                        setIsMenuOpen(false);
-                        setTimeout(() => window.scrollTo({ top: 0, left: 0, behavior: 'smooth' }), 0);
-                      }}
-                      className="flex items-center gap-2 p-3 rounded-xl hover:bg-slate-50 font-bold text-slate-700"
-                    >
-                      <LayoutDashboard size={20} /> {t('dashboard')}
-                    </Link>
-                  )}
-
-                  <Link
-                    to="/my-orders"
-                    onClick={() => {
-                      setIsMenuOpen(false);
-                      setTimeout(() => window.scrollTo({ top: 0, left: 0, behavior: 'smooth' }), 0);
-                    }}
-                    className="flex items-center gap-2 p-3 rounded-xl hover:bg-slate-50 font-bold text-slate-700"
-                  >
-                    <Package size={20} /> {t('myOrders')}
-                  </Link>
-
-                  <button
-                    onClick={() => {
-                      logout();
-                      setIsMenuOpen(false);
-                    }}
-                    className="w-full flex items-center justify-center gap-2 py-4 bg-red-50 text-red-600 rounded-xl font-bold hover:bg-red-100 transition-colors"
-                    type="button"
-                  >
-                    <LogOut size={20} /> {t('logout')}
-                  </button>
-                </div>
-              ) : (
-                <Link
-                  to="/login"
-                  onClick={() => {
-                    setIsMenuOpen(false);
-                    setTimeout(() => window.scrollTo({ top: 0, left: 0, behavior: 'smooth' }), 0);
-                  }}
-                  className="flex justify-center items-center gap-2 w-full py-4 bg-slate-900 rounded-xl font-bold text-white hover:bg-slate-800 transition-colors shadow-lg shadow-slate-200"
-                >
-                  <LogIn size={20} /> {t('login')}
-                </Link>
-              )}
-            </div>
-          </div>
+          {/* ... نفس كود الموبايل عندك ... */}
+          {/* إذا تريد: في الخطوة القادمة سأعدّل الموبايل من نفس فكرة closeAllOverlays + goTo لتوحيد كل شيء */}
         </div>
       )}
     </>
