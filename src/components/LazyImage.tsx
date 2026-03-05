@@ -1,11 +1,4 @@
-// FILE: src/components/LazyImage.tsx
-// World-Class upgrades:
-// 1) ✅ Cache WebP support globally (detect once, reuse everywhere)
-// 2) ✅ Optional CLS guard via width/height/aspectRatio props (keeps layout stable)
-// 3) ✅ Optional one-time preconnect for image CDNs (helps first image / LCP)
-// 4) ✅ Keep Cloudinary iOS-safe (avoid f_auto AVIF issues) + stable transforms
-// 5) ✅ Keep behavior: Lazy + placeholder + fallback exactly as before
-
+// src/components/LazyImage.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ImageOff } from 'lucide-react';
 
@@ -31,8 +24,7 @@ interface LazyImageProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>,
   loading?: 'lazy' | 'eager';
   rootMargin?: string;
 
-  // ✅ NEW (optional) CLS guard
-  // استخدمها لما تكون الصورة معروفة الأبعاد (مثل كروت المنتجات)
+  // ✅ CLS guard (اختياري)
   widthHint?: number;
   heightHint?: number;
   aspectRatioHint?: string; // مثال: "1 / 1" أو "3 / 2"
@@ -71,6 +63,7 @@ const cloudinaryTransform = (url: string, w?: number, h?: number, mode?: 'limit'
      * ✅ iOS-safe:
      * - نتجنب f_auto لأنه قد يرجع AVIF ويخرب على أجهزة/إعدادات معينة
      * - نستخدم f_jpg كخيار متوافق جداً
+     * - q_auto:good + dpr_auto لذكاء الجودة
      */
     const t: string[] = ['f_jpg', 'q_auto:good', 'dpr_auto'];
 
@@ -108,10 +101,7 @@ const picsumWebp = (url: string) => {
 let WEBP_SUPPORT_CACHE: boolean | null = null;
 
 const detectWebPSupport = (): boolean => {
-  // ✅ SSR safety
   if (typeof document === 'undefined') return false;
-
-  // ✅ reuse cached value
   if (WEBP_SUPPORT_CACHE !== null) return WEBP_SUPPORT_CACHE;
 
   try {
@@ -129,7 +119,7 @@ const detectWebPSupport = (): boolean => {
 };
 
 // ---------------------------
-// ✅ Optional: one-time preconnect to speed up first image
+// ✅ One-time preconnect/dns-prefetch (speeds up first image / LCP)
 // ---------------------------
 const PRECONNECT_DONE = new Set<string>();
 
@@ -139,6 +129,13 @@ const preconnectOnce = (origin: string) => {
     if (!origin) return;
     if (PRECONNECT_DONE.has(origin)) return;
 
+    // dns-prefetch
+    const dns = document.createElement('link');
+    dns.rel = 'dns-prefetch';
+    dns.href = origin;
+    document.head.appendChild(dns);
+
+    // preconnect
     const link = document.createElement('link');
     link.rel = 'preconnect';
     link.href = origin;
@@ -170,12 +167,12 @@ const LazyImage: React.FC<LazyImageProps> = ({
   fetchPriority = 'auto',
   style,
   eager = false,
-  responsiveWidths = [320, 480, 640, 800, 1000, 1200, 1600, 2000],
+  responsiveWidths = [240, 320, 480, 640, 800, 1000, 1200, 1600, 2000],
   sizes,
   cloudinarySize,
   expectedDisplayWidth,
   loading = 'lazy',
-  rootMargin = '600px',
+  rootMargin = '700px',
   onLoad,
   onError,
   decoding = 'async',
@@ -251,15 +248,17 @@ const LazyImage: React.FC<LazyImageProps> = ({
     [finalSrc]
   );
 
-  // ✅ Optional: preconnect once for LCP images
+  // ✅ preconnect for LCP/eager images (only once)
   useEffect(() => {
-    if (!derivedEager) return;
+    if (!finalSrc) return;
+    // نعمل preconnect دائماً للصورة الأولى (حتى لو مش eager) لأنك حكيت أول فتح بطيء
+    // لكنه still one-time + safe
     const origin = getOrigin(finalSrc);
     if (origin) preconnectOnce(origin);
-  }, [derivedEager, finalSrc]);
+  }, [finalSrc]);
 
   const resolvedSizes = useMemo(() => {
-    if (!isCloudinary) return undefined;
+    if (!isCloudinary) return sizes;
     if (sizes) return sizes;
 
     if (expectedDisplayWidth && expectedDisplayWidth > 0) {
@@ -267,6 +266,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
       return `(max-width: 768px) ${mobile}px, ${expectedDisplayWidth}px`;
     }
 
+    // default: responsive
     return '(max-width: 768px) 90vw, 900px';
   }, [isCloudinary, sizes, expectedDisplayWidth]);
 
@@ -290,7 +290,8 @@ const LazyImage: React.FC<LazyImageProps> = ({
     }
 
     if (expectedDisplayWidth && expectedDisplayWidth > 0) {
-      const cap = Math.max(800, Math.min(expectedDisplayWidth * 2, 2200));
+      // cap at 2x display width for quality (LCP friendly)
+      const cap = Math.max(700, Math.min(expectedDisplayWidth * 2, 2200));
       return cloudinaryTransform(finalSrc, cap, undefined, 'limit');
     }
 
@@ -315,7 +316,6 @@ const LazyImage: React.FC<LazyImageProps> = ({
     <div
       ref={containerRef}
       className={`relative overflow-hidden ${containerClassName}`}
-      // ✅ يحافظ على مساحة ثابتة قبل تحميل الصورة (لو مرّرت aspectRatioHint / widthHint / heightHint)
       style={{ ...clsStyle }}
     >
       {!hasError && !isLoaded && (
@@ -349,7 +349,6 @@ const LazyImage: React.FC<LazyImageProps> = ({
           alt={alt}
           loading={finalLoading}
           decoding={decoding}
-          // fetchPriority ليس ضمن typings في React أحياناً
           {...({ fetchPriority } as any)}
           onLoad={(e) => {
             setIsLoaded(true);
@@ -362,7 +361,6 @@ const LazyImage: React.FC<LazyImageProps> = ({
           className={`w-full h-full block transition-opacity duration-300 ease-out ${
             isLoaded ? 'opacity-100' : 'opacity-0'
           } ${className}`}
-          // ✅ iOS fill container: width/height/display block
           style={{ width: '100%', height: '100%', display: 'block', ...style }}
           {...imgProps}
         />
