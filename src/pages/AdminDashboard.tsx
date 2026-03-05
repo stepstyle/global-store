@@ -575,13 +575,15 @@ const AdminDashboard: React.FC = () => {
   const lowStockCount = products.filter((p: any) => p.stock > 0 && p.stock < 10).length;
   const outOfStockCount = products.filter((p: any) => p.stock === 0).length;
 
+  // ✅ UPDATED: Cloudinary optimized thumbnail (no forced JPG)
   const toThumb = (url?: string) => {
-    if (!url) return url;
-    if (url.includes('res.cloudinary.com') && url.includes('/upload/')) {
-      return url.replace('/upload/', '/upload/w_80,h_80,c_fill,f_auto,q_auto/');
-    }
-    return url;
-  };
+  // ✅ لا نضيف أي Transform هنا
+  // LazyImage.tsx عندك مسؤول عن:
+  // - cloudinarySize (thumb)
+  // - srcSet (responsiveWidths)
+  // - iOS-safe format (f_jpg) + q_auto + dpr_auto
+  return url || '';
+};
 
   const fromIdx = Math.min((page - 1) * PAGE_SIZE + 1, filteredProducts.length || 0);
   const toIdx = Math.min(page * PAGE_SIZE, filteredProducts.length || 0);
@@ -856,7 +858,6 @@ const AdminDashboard: React.FC = () => {
                           alt={p.nameEn || p.name}
                           className="w-10 h-10 rounded-md object-cover border border-slate-200"
                           containerClassName="w-10 h-10 rounded-md shrink-0"
-                          cloudinarySize={80}
                         />
                       </td>
 
@@ -955,7 +956,8 @@ const AdminDashboard: React.FC = () => {
 
                         <td className="px-4 py-3">
                           <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${statusBadge(order.status)}`}>
-                       {t(order.status ?? '') ?? safeText(order.status) ?? '—'}                         </span>
+                            {t(order.status ?? '') ?? safeText(order.status) ?? '—'}
+                          </span>
                         </td>
 
                         <td className="px-4 py-3 text-slate-600 text-xs">
@@ -1133,11 +1135,7 @@ const AdminDashboard: React.FC = () => {
 
             <div className="p-5 bg-slate-50">
               {receiptModal.url ? (
-                <img
-                  src={receiptModal.url}
-                  alt="CliQ receipt"
-                  className="w-full max-h-[70vh] object-contain rounded-2xl bg-white border border-slate-100"
-                />
+                <img src={receiptModal.url} alt="CliQ receipt" className="w-full max-h-[70vh] object-contain rounded-2xl bg-white border border-slate-100" />
               ) : (
                 <div className="text-center text-slate-500 py-10">لا يوجد صورة إيصال.</div>
               )}
