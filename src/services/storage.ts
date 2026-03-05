@@ -13,6 +13,10 @@ import {
   query,
   where,
   getDoc,
+  orderBy,
+  limit,
+  startAfter,
+  DocumentSnapshot,
 } from 'firebase/firestore';
 
 import {
@@ -68,6 +72,58 @@ const cleanForFirestore = <T,>(value: T): T => {
   return value;
 };
 
+// ==============================
+// ✅ Search Helpers (Prefix Search)
+// ==============================
+
+/** end range helper for prefix query */
+const prefixEnd = (s: string) => s + '\uf8ff';
+
+/**
+ * normalize for index:
+ * - lower case
+ * - remove symbols
+ * - normalize spaces
+ */
+export const normalizeIndex = (s: string) =>
+  String(s || '')
+    .toLowerCase()
+    // keep letters+numbers from any language + spaces
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * Ensure required fields exist on product:
+ * - nameIndex: `${name} ${nameEn}` normalized
+ * - createdAt: ms timestamp (number)
+ * - ratingAvg: default 0 (if your UI uses it)
+ */
+const ensureProductSearchFields = (p: Product): Product => {
+  const anyP: any = p as any;
+
+  const name = String(anyP?.name ?? '').trim();
+  const nameEn = String(anyP?.nameEn ?? '').trim();
+
+  const nameIndex = normalizeIndex(`${name} ${nameEn}`);
+  const createdAt =
+    typeof anyP?.createdAt === 'number' && Number.isFinite(anyP.createdAt)
+      ? anyP.createdAt
+      : Date.now();
+
+  const ratingAvg =
+    Number.isFinite(Number(anyP?.ratingAvg))
+      ? Number(anyP.ratingAvg)
+      : 0;
+
+  return {
+    ...(p as any),
+    nameIndex,
+    createdAt,
+    ratingAvg,
+  } as Product;
+};
+
 /**
  * ✅ Local fallback only (when Firebase isn't available)
  */
@@ -93,6 +149,28 @@ const initLocalData = () => {
 
 initLocalData();
 
+// ==============================
+// ✅ Types for listing products
+// ==============================
+
+export type ProductListSort = 'newest' | 'price-asc' | 'price-desc' | 'rating';
+
+export type ProductListArgs = {
+  q?: string;
+  category?: string;
+  subcategory?: string;
+  priceMax?: number;
+  minRating?: number;
+  sort?: ProductListSort;
+  pageSize?: number;
+  cursor?: DocumentSnapshot | null;
+};
+
+export type ProductListResult = {
+  items: Product[];
+  nextCursor: DocumentSnapshot | null;
+};
+
 /**
  * ✅ DB Service
  * - Firebase ON: Firestore
@@ -100,12 +178,15 @@ initLocalData();
  */
 export const db = {
   products: {
+    /**
+     * ⚠️ getAll: keep it for admin/tools only.
+     * For Storefront (Shop) use list() to avoid loading 1000 products at once.
+     */
     getAll: async (): Promise<Product[]> => {
       if (firebaseReady()) {
         try {
           const snapshot = await getDocs(collection(firestore, 'products'));
           if (snapshot.empty) return [];
-          // ✅ safer merge order (data then id)
           return snapshot.docs.map((d) => ({ ...(d.data() as any), id: d.id } as Product));
         } catch (e) {
           console.error(e);
@@ -116,6 +197,111 @@ export const db = {
       return new Promise((resolve) => {
         setTimeout(() => resolve(JSON.parse(localStorage.getItem(KEYS.PRODUCTS) || '[]')), 300);
       });
+    },
+
+    /**
+     * ✅ World-Class: list products with:
+     * - Prefix search on nameIndex
+     * - Filters (category/subcategory/priceMax/minRating)
+     * - Sorting (newest/price/rating)
+     * - Cursor pagination (startAfter)
+     *
+     * NOTE:
+     * Firestore may require composite indexes for some combinations.
+     */
+    list: async (args: ProductListArgs): Promise<ProductListResult> => {
+      const {
+        q = '',
+        category = '',
+        subcategory = '',
+        priceMax,
+        minRating,
+        sort = 'newest',
+        pageSize = 20,
+        cursor = null,
+      } = args || {};
+
+      // Local fallback: simple filter in memory (dev only)
+      if (!firebaseReady()) {
+        const all = JSON.parse(localStorage.getItem(KEYS.PRODUCTS) || '[]') as any[];
+        const qNorm = normalizeIndex(q);
+
+        let result = all;
+
+        if (qNorm) {
+          result = result.filter((p) => {
+            const idx = normalizeIndex(`${p?.name ?? ''} ${p?.nameEn ?? ''}`);
+            return idx.startsWith(qNorm);
+          });
+        }
+
+        if (category) result = result.filter((p) => String(p?.category) === String(category));
+        if (subcategory) result = result.filter((p) => String(p?.subcategory) === String(subcategory));
+
+        if (typeof priceMax === 'number' && Number.isFinite(priceMax)) {
+          result = result.filter((p) => Number(p?.price || 0) <= priceMax);
+        }
+
+        if (typeof minRating === 'number' && minRating > 0) {
+          result = result.filter((p) => Number(p?.ratingAvg || 0) >= minRating);
+        }
+
+        // sorting
+        const sorted = [...result];
+        if (sort === 'price-asc') sorted.sort((a, b) => Number(a?.price || 0) - Number(b?.price || 0));
+        else if (sort === 'price-desc') sorted.sort((a, b) => Number(b?.price || 0) - Number(a?.price || 0));
+        else if (sort === 'rating') sorted.sort((a, b) => Number(b?.ratingAvg || 0) - Number(a?.ratingAvg || 0));
+        else sorted.sort((a, b) => Number(b?.createdAt || 0) - Number(a?.createdAt || 0));
+
+        return { items: sorted.slice(0, pageSize), nextCursor: null };
+      }
+
+      const colRef = collection(firestore, 'products');
+
+      const qNorm = normalizeIndex(q);
+      const constraints: any[] = [];
+
+      // Filters
+      if (category) constraints.push(where('category', '==', category));
+      if (subcategory) constraints.push(where('subcategory', '==', subcategory));
+
+      if (typeof priceMax === 'number' && Number.isFinite(priceMax)) {
+        constraints.push(where('price', '<=', priceMax));
+      }
+
+      if (typeof minRating === 'number' && minRating > 0) {
+        constraints.push(where('ratingAvg', '>=', minRating));
+      }
+
+      // Search or Sort
+      if (qNorm) {
+        // Prefix range on nameIndex
+        constraints.push(where('nameIndex', '>=', qNorm));
+        constraints.push(where('nameIndex', '<=', prefixEnd(qNorm)));
+        constraints.push(orderBy('nameIndex', 'asc'));
+      } else {
+        if (sort === 'price-asc') constraints.push(orderBy('price', 'asc'));
+        else if (sort === 'price-desc') constraints.push(orderBy('price', 'desc'));
+        else if (sort === 'rating') constraints.push(orderBy('ratingAvg', 'desc'));
+        else constraints.push(orderBy('createdAt', 'desc')); // newest
+      }
+
+      constraints.push(limit(Math.max(1, Math.min(60, Math.floor(pageSize)))));
+
+      let qRef = query(colRef, ...constraints);
+      if (cursor) {
+        qRef = query(colRef, ...constraints, startAfter(cursor));
+      }
+
+      const snap = await getDocs(qRef);
+
+      const items = snap.docs.map((d) => ({ ...(d.data() as any), id: d.id } as Product));
+      const nextCursor =
+        snap.docs.length === Math.max(1, Math.min(60, Math.floor(pageSize)))
+          ? snap.docs[snap.docs.length - 1]
+          : null;
+
+      return { items, nextCursor };
     },
 
     getById: async (id: string): Promise<Product | undefined> => {
@@ -152,15 +338,18 @@ export const db = {
     add: async (newProducts: Product[]): Promise<Product[]> => {
       if (firebaseReady()) {
         for (const p of newProducts) {
+          // ✅ ensure search fields exist
+          const enriched = ensureProductSearchFields(p);
+
           // ✅ clean undefined before save
-          const safeProduct = cleanForFirestore(p);
-          await setDoc(doc(firestore, 'products', p.id), safeProduct as any);
+          const safeProduct = cleanForFirestore(enriched);
+          await setDoc(doc(firestore, 'products', (enriched as any).id), safeProduct as any);
         }
-        return newProducts;
+        return newProducts.map(ensureProductSearchFields);
       }
 
       const products = JSON.parse(localStorage.getItem(KEYS.PRODUCTS) || '[]');
-      const updated = [...products, ...newProducts];
+      const updated = [...products, ...newProducts.map(ensureProductSearchFields)];
       localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(updated));
       return updated;
     },
@@ -179,15 +368,18 @@ export const db = {
 
     update: async (updatedProduct: Product): Promise<Product[]> => {
       if (firebaseReady()) {
-        const safeProduct = cleanForFirestore(updatedProduct);
-        await setDoc(doc(firestore, 'products', updatedProduct.id), safeProduct as any, { merge: true });
+        // ✅ keep search fields consistent on update too
+        const enriched = ensureProductSearchFields(updatedProduct);
+        const safeProduct = cleanForFirestore(enriched);
+
+        await setDoc(doc(firestore, 'products', (enriched as any).id), safeProduct as any, { merge: true });
         return db.products.getAll();
       }
 
       const products = JSON.parse(localStorage.getItem(KEYS.PRODUCTS) || '[]');
       const index = products.findIndex((p: Product) => p.id === updatedProduct.id);
       if (index !== -1) {
-        products[index] = updatedProduct;
+        products[index] = ensureProductSearchFields(updatedProduct);
         localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(products));
       }
       return products;
