@@ -31,9 +31,27 @@ const isValidUrl = (u?: string) => {
   return /^https?:\/\//i.test(s);
 };
 
-const normalizeImageUrl = (u?: string) => {
-  const s = String(u ?? '').trim();
-  return isValidUrl(s) ? s : '';
+/**
+ * ✅ Make absolute URL from:
+ * - absolute: keep it
+ * - root-relative "/images/x": convert to "https://origin/images/x"
+ * - others: return empty (avoid broken OG images)
+ */
+const toAbsoluteUrl = (u?: string) => {
+  try {
+    const s = String(u ?? '').trim();
+    if (!s) return '';
+    if (isValidUrl(s)) return s;
+
+    // root relative
+    if (typeof window !== 'undefined' && s.startsWith('/')) {
+      return new URL(s, window.location.origin).toString();
+    }
+
+    return '';
+  } catch {
+    return '';
+  }
 };
 
 const clampText = (v: string, max = 300) => {
@@ -84,12 +102,38 @@ const removeLink = (rel: string) => {
 };
 
 /**
+ * ✅ HashRouter canonical builder
+ * مثال:
+ * - window.location.href = https://site.com/#/shop?filter=Games
+ * - canonical => https://site.com/shop?filter=Games
+ */
+const canonicalFromHashRouter = () => {
+  try {
+    if (typeof window === 'undefined') return '';
+
+    const { origin, hash, pathname, search } = window.location;
+
+    // لو ما في hash-router أصلاً، استعمل المسار العادي
+    if (!hash || !hash.startsWith('#/')) {
+      return new URL(pathname + search, origin).toString();
+    }
+
+    // hash content without "#"
+    const hashContent = hash.slice(1); // "/shop?filter=Games"
+    // نحوله إلى URL "حقيقي"
+    return new URL(hashContent, origin).toString();
+  } catch {
+    return '';
+  }
+};
+
+/**
  * ✅ Company-grade SEO component
  * - SSR-safe (guards document/window)
  * - Robust meta/link creation & cleanup
- * - Correct robots behavior (+ cleanup of stale tags)
- * - Product OG tags added only when valid
- * - JSON-LD injection only when indexable
+ * - Correct canonical for HashRouter
+ * - Absolute OG image support
+ * - JSON-LD injection supports multiple schemas + cleanup
  */
 const SEO: React.FC<SEOProps> = ({
   title,
@@ -110,8 +154,8 @@ const SEO: React.FC<SEOProps> = ({
   const defaultDesc = useMemo(
     () =>
       language === 'ar'
-        ? 'متجرك الأول لكل ما هو حديث وتقني. نوفر لك أفضل المستلزمات القرطاسية، التعليمية، والفنية بأسلوب عصري.'
-        : 'Your #1 store for modern stationery and art supplies in Jordan.',
+        ? 'متجر شامل للقرطاسية والألعاب والهدايا في الأردن — تجربة تسوّق سريعة وآمنة.'
+        : 'A fast, secure store for stationery, toys, and gifts in Jordan.',
     [language]
   );
 
@@ -123,9 +167,23 @@ const SEO: React.FC<SEOProps> = ({
 
   const metaDesc = useMemo(() => clampText(description || defaultDesc, 320), [description, defaultDesc]);
 
+  /**
+   * ✅ OG image must be absolute
+   * - لو مرّرت /images/... نحولها لـ absolute
+   * - لو ما مرّرت image: نستخدم fallback من موقعك (غيّره لصورة شعار/غلاف رسمي)
+   */
   const metaImage = useMemo(() => {
-    const u = normalizeImageUrl(image);
-    return u || 'https://picsum.photos/1200/630?random=default';
+    // 1) from props
+    const abs = toAbsoluteUrl(image);
+    if (abs) return abs;
+
+    // 2) fallback "رسمي" من موقعك (غيّره إذا عندك ملف ثابت)
+    if (typeof window !== 'undefined') {
+      return new URL('/images/og-default.webp', window.location.origin).toString();
+    }
+
+    // SSR fallback
+    return '';
   }, [image]);
 
   const resolvedCurrency = useMemo(() => (currency ? String(currency).trim() : 'JOD'), [currency]);
@@ -135,11 +193,15 @@ const SEO: React.FC<SEOProps> = ({
   const canonical = useMemo(() => {
     if (typeof window === 'undefined') return '';
 
-    const fallback = window.location.href;
-    const candidate = canonicalUrl ? String(canonicalUrl).trim() : fallback;
+    // ✅ 1) لو أعطيت canonicalUrl صريح: استخدمه إذا صالح، وإلا تجاهله
+    if (canonicalUrl) {
+      const candidate = String(canonicalUrl).trim();
+      if (isValidUrl(candidate)) return candidate;
+    }
 
-    // If invalid, use fallback (still should be valid in browsers)
-    return isValidUrl(candidate) ? candidate : fallback;
+    // ✅ 2) auto from HashRouter (أفضل من window.location.href)
+    const auto = canonicalFromHashRouter();
+    return isValidUrl(auto) ? auto : '';
   }, [canonicalUrl]);
 
   const isValidPrice = useMemo(
@@ -154,27 +216,28 @@ const SEO: React.FC<SEOProps> = ({
     // Title
     if (fullTitle) document.title = fullTitle;
 
-    // HTML attrs
+    // HTML attrs (مهم للـ accessibility و SEO)
     document.documentElement.lang = language;
     document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr';
 
-    // Canonical
+    // Canonical: إذا noIndex ممكن تتركه موجود (مفيد للمشاركة)، لكن أنا بخليه موجود طالما عندنا قيمة صحيحة
     if (canonical) setOrCreateLink('canonical', canonical);
     else removeLink('canonical');
 
     // Standard meta
+    // ملاحظة: viewport غالبًا الأفضل يكون في public/index.html (ثابت)، لكن إبقاءه هنا لا يضر
     setOrCreateMeta('viewport', 'width=device-width, initial-scale=1.0');
     setOrCreateMeta('theme-color', '#f9e032');
     setOrCreateMeta('referrer', 'strict-origin-when-cross-origin');
 
-    // Description should exist even on noindex pages (good for sharing + previews)
+    // Description
     setOrCreateMeta('description', metaDesc);
 
-    // Keywords (optional; remove when not provided or noindex)
+    // Keywords (اختياري)
     if (keywords && !noIndex) setOrCreateMeta('keywords', String(keywords).trim());
     else removeMeta('keywords');
 
-    // Robots (and clean up stale variations)
+    // Robots (تنظيف من قيم قديمة)
     if (noIndex) {
       setOrCreateMeta('robots', 'noindex, nofollow');
       setOrCreateMeta('googlebot', 'noindex, nofollow');
@@ -185,12 +248,14 @@ const SEO: React.FC<SEOProps> = ({
       removeMeta('bingbot');
     }
 
-    // Open Graph (we still set for social sharing even if noindex)
+    // Open Graph
     setOrCreateMeta('og:site_name', siteName, 'property');
     setOrCreateMeta('og:title', fullTitle, 'property');
     setOrCreateMeta('og:description', metaDesc, 'property');
     setOrCreateMeta('og:type', type, 'property');
-    setOrCreateMeta('og:image', metaImage, 'property');
+    if (metaImage) setOrCreateMeta('og:image', metaImage, 'property');
+    else removeMeta('og:image', 'property');
+
     setOrCreateMeta('og:locale', ogLocale, 'property');
     if (canonical) setOrCreateMeta('og:url', canonical, 'property');
     else removeMeta('og:url', 'property');
@@ -208,27 +273,36 @@ const SEO: React.FC<SEOProps> = ({
     setOrCreateMeta('twitter:card', 'summary_large_image');
     setOrCreateMeta('twitter:title', fullTitle);
     setOrCreateMeta('twitter:description', metaDesc);
-    setOrCreateMeta('twitter:image', metaImage);
+    if (metaImage) setOrCreateMeta('twitter:image', metaImage);
+    else removeMeta('twitter:image');
 
+    // twitter handle (اختياري)
     if (twitterHandle) setOrCreateMeta('twitter:site', twitterHandle.trim());
     else removeMeta('twitter:site');
 
-    // JSON-LD Schema (ONLY when indexable to avoid accidental indexing hints)
-    const existing = document.getElementById('seo-schema');
-    if (existing) existing.remove();
+    // ✅ JSON-LD Schema
+    // نزيل أي سكربتات قديمة أنشأها هذا المكوّن فقط
+    const existing = Array.from(document.querySelectorAll('script[data-seo-schema="1"]'));
+    existing.forEach((n) => n.remove());
 
+    // نحقن schema فقط إذا الصفحة indexable
     if (schema && !noIndex) {
-      const script = document.createElement('script');
-      script.id = 'seo-schema';
-      script.type = 'application/ld+json';
+      const payload = Array.isArray(schema) ? schema : [schema];
 
-      // Safer stringify (avoid crashes on circular refs)
-      try {
-        script.text = JSON.stringify(schema);
-        document.head.appendChild(script);
-      } catch {
-        // If schema cannot be stringified, don't inject broken JSON-LD
-      }
+      payload.forEach((obj, idx) => {
+        try {
+          const script = document.createElement('script');
+          script.type = 'application/ld+json';
+          script.setAttribute('data-seo-schema', '1');
+          script.setAttribute('data-seo-schema-idx', String(idx));
+
+          // ✅ safer stringify
+          script.text = JSON.stringify(obj);
+          document.head.appendChild(script);
+        } catch {
+          // ignore broken schema
+        }
+      });
     }
   }, [
     fullTitle,
