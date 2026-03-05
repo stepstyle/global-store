@@ -1,12 +1,12 @@
 // src/pages/Shop.tsx
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useDeferredValue } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Filter, SlidersHorizontal, ChevronLeft, ChevronRight, Star, X, Tag } from 'lucide-react';
 
 import ProductCard from '../components/ProductCard';
 import { CATEGORIES } from '../constants';
 import { useCart } from '../App';
-import { Category, SortOption } from '../types';
+import { Category, SortOption, Product } from '../types';
 import { ProductSkeletonGrid } from '../components/Skeleton';
 import SEO from '../components/SEO';
 
@@ -112,20 +112,108 @@ const getIdTimestamp = (id: unknown): number => {
 
 const getSubValue = (p: any) => String((p?.subcategory ?? p?.subCategory ?? '') as any).trim();
 
-// ✅ Cache all sub options once (avoid expensive flatten per render)
+// ✅ Cache all sub options once
 const ALL_SUB_OPTIONS: SubOption[] = Object.values(CATEGORY_SUBCATEGORIES).flatMap((v) => (v || []) as SubOption[]);
+
+// ✅ Debounce hook
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(t);
+  }, [value, delayMs]);
+  return debounced;
+}
+
+// ✅ Stable isMobile
+function useIsMobile(breakpoint = 640) {
+  const [isMobile, setIsMobile] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia(`(max-width: ${breakpoint}px)`).matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+
+    if ((mql as any).addEventListener) (mql as any).addEventListener('change', onChange);
+    else (mql as any).addListener(onChange);
+
+    setIsMobile(mql.matches);
+
+    return () => {
+      if ((mql as any).removeEventListener) (mql as any).removeEventListener('change', onChange);
+      else (mql as any).removeListener(onChange);
+    };
+  }, [breakpoint]);
+
+  return isMobile;
+}
+
+/**
+ * ✅ Prefix + Contains Search (World-Class)
+ * - prefix: أسرع وإحساسه طبيعي (مثال: "دف" يطلع "دفتر")
+ * - contains: أدق لعبارات كاملة
+ *
+ * Strategy:
+ * - query length <= 2 => prefix-only
+ * - length 3..5 => prefix OR contains
+ * - length >= 6 => contains primary + prefix fallback
+ */
+const makePrefixes = (text: string, maxLen = 8) => {
+  const out: string[] = [];
+  const t = safeLower(text).replace(/\s+/g, ' ').trim();
+  if (!t) return out;
+
+  // prefixes للكلمات
+  const parts = t.split(' ').filter(Boolean);
+  for (const w of parts) {
+    const ww = w.trim();
+    if (!ww) continue;
+    for (let i = 1; i <= Math.min(maxLen, ww.length); i += 1) {
+      out.push(ww.slice(0, i));
+    }
+  }
+  return Array.from(new Set(out));
+};
 
 const Shop: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { products, addToCart, toggleWishlist, wishlist, openQuickView, t, language, isLoading } = useCart() as any;
 
   const isRTL = useMemo(() => (language ?? 'ar') === 'ar', [language]);
+  const isMobile = useIsMobile(640);
 
   // ✅ Any change in query params -> scroll to top
   const spKey = useMemo(() => searchParams.toString(), [searchParams]);
   useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }, [spKey]);
+
+  // ✅ add-to-cart wrapper that supports qty
+  const handleAddToCart = useCallback(
+    (product: Product, qty: number = 1) => {
+      const stock = Math.max(0, Number((product as any)?.stock ?? 0));
+      if (stock <= 0) return;
+
+      const safeQty = Math.max(1, Math.floor(Number(qty) || 1));
+      const finalQty = Math.min(safeQty, stock);
+
+      const fnAny = addToCart as any;
+      try {
+        if (typeof fnAny === 'function' && fnAny.length >= 2) {
+          fnAny(product, finalQty);
+          return;
+        }
+      } catch {
+        // fallback below
+      }
+
+      for (let i = 0; i < finalQty; i += 1) addToCart(product);
+    },
+    [addToCart]
+  );
 
   // State
   const [selectedCategory, setSelectedCategory] = useState<Category | 'All'>('All');
@@ -144,7 +232,7 @@ const Shop: React.FC = () => {
     return isValidCategory(aliased) ? (aliased as Category) : null;
   };
 
-  // ✅ Initialize from URL (filter + sub + page) + treat sub=all as "no sub filter"
+  // ✅ Initialize from URL
   useEffect(() => {
     const rawCat = searchParams.get('filter');
     const cat = normalizeCategoryFromUrl(rawCat);
@@ -159,7 +247,6 @@ const Shop: React.FC = () => {
     setSelectedSubCategory(sub);
     setCurrentPage(Number.isFinite(pageNum) && pageNum > 0 ? Math.floor(pageNum) : 1);
 
-    // ✅ Clean URL if "sub=all" exists (prevents it from being considered invalid and removed later)
     if (rawSub === 'all') {
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev);
@@ -188,7 +275,7 @@ const Shop: React.FC = () => {
     };
   }, [isFilterOpen]);
 
-  // ✅ Subcategory options based on selected category
+  // ✅ Subcategory options
   const subCategoryOptions: SubOption[] = useMemo(() => {
     if (selectedCategory === 'All') return [];
     return (CATEGORY_SUBCATEGORIES[selectedCategory] || []) as SubOption[];
@@ -208,7 +295,7 @@ const Shop: React.FC = () => {
     [subCategoryOptions, language]
   );
 
-  // ✅ If category changes and sub not allowed -> clear sub and clean URL
+  // ✅ If category changes and sub not allowed -> clear sub
   useEffect(() => {
     if (selectedCategory === 'All') return;
 
@@ -251,29 +338,92 @@ const Shop: React.FC = () => {
     return String(t('categoryDesc') ?? '');
   }, [searchParams, selectedCategory, selectedSubCategory, t, getSubLabel]);
 
-  // Filtering + Sorting
-  const filteredProducts = useMemo(() => {
-    const list = Array.isArray(products) ? products : [];
-    let result = [...list];
+  // ✅ Search input: debounce + defer
+  const rawSearch = safeLower(searchParams.get('search'));
+  const debouncedSearch = useDebouncedValue(rawSearch, 180);
+  const deferredSearch = useDeferredValue(debouncedSearch);
 
-    // 1) Search Query
-    const searchQuery = safeLower(searchParams.get('search'));
-    if (searchQuery) {
+  /**
+   * ✅ World-Class Search Index:
+   * - fullText (contains)
+   * - prefixes (prefix search)
+   */
+  const searchIndex = useMemo(() => {
+    const list = Array.isArray(products) ? (products as any[]) : [];
+    const map = new Map<
+      string,
+      {
+        full: string; // contains
+        prefixes: Set<string>; // prefix
+      }
+    >();
+
+    for (const p of list) {
+      const id = String(p?.id ?? '');
+      if (!id) continue;
+
+      const name = safeLower(p?.name);
+      const nameEn = safeLower(p?.nameEn);
+      const cat = safeLower(p?.category);
+      const brand = safeLower(p?.brand);
+      const sub = safeLower(p?.subcategory ?? p?.subCategory ?? '');
+
+      const full = `${name} ${nameEn} ${cat} ${brand} ${sub}`.replace(/\s+/g, ' ').trim();
+      const prefixes = new Set<string>([
+        ...makePrefixes(name),
+        ...makePrefixes(nameEn),
+        ...makePrefixes(brand),
+        ...makePrefixes(cat),
+        ...makePrefixes(sub),
+      ]);
+
+      map.set(id, { full, prefixes });
+    }
+
+    return map;
+  }, [products]);
+
+  // Filtering + Sorting (optimized)
+  const filteredProducts = useMemo(() => {
+    const list = Array.isArray(products) ? (products as any[]) : [];
+    let result = list;
+
+    // 1) Search (Prefix + Contains)
+    if (deferredSearch) {
+      const q = deferredSearch;
+      const qLen = q.length;
+
+      const usePrefixOnly = qLen <= 2;
+      const useBoth = qLen >= 3 && qLen <= 5;
+
       result = result.filter((p) => {
-        const name = safeLower((p as any)?.name);
-        const nameEn = safeLower((p as any)?.nameEn);
-        return name.includes(searchQuery) || nameEn.includes(searchQuery);
+        const id = String(p?.id ?? '');
+        const entry = searchIndex.get(id);
+        if (!entry) return false;
+
+        // prefix
+        const prefixHit = entry.prefixes.has(q);
+
+        if (usePrefixOnly) return prefixHit;
+
+        // contains
+        const containsHit = entry.full.includes(q);
+
+        if (useBoth) return prefixHit || containsHit;
+
+        // long query: contains primary + prefix fallback
+        return containsHit || prefixHit;
       });
     }
 
     // 2) Category
     if (selectedCategory !== 'All') {
-      result = result.filter((p: any) => p?.category === selectedCategory);
+      result = result.filter((p) => p?.category === selectedCategory);
     }
 
     // 2.1) SubCategory (slug)
     if (selectedSubCategory) {
-      result = result.filter((p: any) => getSubValue(p) === selectedSubCategory);
+      result = result.filter((p) => getSubValue(p) === selectedSubCategory);
     }
 
     // 3) Price
@@ -282,30 +432,32 @@ const Shop: React.FC = () => {
     const from = Math.min(minP, maxP);
     const to = Math.max(minP, maxP);
 
-    result = result.filter((p: any) => {
+    result = result.filter((p) => {
       const price = parsePrice(p);
       return price >= from && price <= to;
     });
 
     // 4) Rating
     if (minRating > 0) {
-      result = result.filter((p: any) => parseRating(p) >= minRating);
+      result = result.filter((p) => parseRating(p) >= minRating);
     }
 
     // 5) Sorting
+    const sorted = [...result];
+
     switch (sortBy) {
       case 'price-asc':
-        result.sort((a: any, b: any) => parsePrice(a) - parsePrice(b));
+        sorted.sort((a, b) => parsePrice(a) - parsePrice(b));
         break;
       case 'price-desc':
-        result.sort((a: any, b: any) => parsePrice(b) - parsePrice(a));
+        sorted.sort((a, b) => parsePrice(b) - parsePrice(a));
         break;
       case 'rating':
-        result.sort((a: any, b: any) => parseRating(b) - parseRating(a));
+        sorted.sort((a, b) => parseRating(b) - parseRating(a));
         break;
       case 'newest':
       default:
-        result.sort((a: any, b: any) => {
+        sorted.sort((a, b) => {
           const aNew = !!a?.isNew;
           const bNew = !!b?.isNew;
           if (aNew && !bNew) return -1;
@@ -315,13 +467,12 @@ const Shop: React.FC = () => {
         break;
     }
 
-    return result;
-  }, [products, selectedCategory, selectedSubCategory, priceRange, minRating, sortBy, searchParams]);
+    return sorted;
+  }, [products, deferredSearch, searchIndex, selectedCategory, selectedSubCategory, priceRange, minRating, sortBy]);
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / ITEMS_PER_PAGE));
 
-  // ✅ Keep currentPage always valid after filters change
   useEffect(() => {
     setCurrentPage((p) => clamp(p, 1, totalPages));
   }, [totalPages]);
@@ -355,8 +506,6 @@ const Shop: React.FC = () => {
     setMinRating(0);
     setSortBy('newest');
     setCurrentPage(1);
-
-    // ✅ Clear URL params in a consistent way
     setSearchParams(() => new URLSearchParams());
   };
 
@@ -461,18 +610,16 @@ const Shop: React.FC = () => {
       <div className="container mx-auto px-4 lg:px-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
-          <div>
+          <div className="w-full md:w-auto">
             <h1 className="text-3xl font-heading font-bold text-slate-900">{t('shop') ?? 'Shop'}</h1>
 
             <p className="text-slate-500 mt-1">
               {filteredProducts.length} {t('productsAvailable') ?? 'products'}
-
               {searchParams.get('search') && (
                 <span className="text-secondary-DEFAULT font-bold mx-1">
                   {t('searchResults') ?? 'Search'}: "{searchParams.get('search')}"
                 </span>
               )}
-
               {selectedSubCategory && <span className="text-secondary-DEFAULT font-bold mx-1">• {selectedSubLabel}</span>}
             </p>
 
@@ -497,7 +644,7 @@ const Shop: React.FC = () => {
             )}
           </div>
 
-          <div className="flex flex-wrap gap-4 items-center">
+          <div className="flex flex-wrap gap-4 items-center w-full md:w-auto justify-end">
             {hasActiveFilters && (
               <button onClick={clearFilters} className="text-red-500 text-sm font-bold flex items-center gap-1 hover:underline" type="button">
                 <X size={16} /> {t('clearAll') ?? 'Clear'}
@@ -574,11 +721,7 @@ const Shop: React.FC = () => {
                     onChange={() => handleCategoryChange('All')}
                     className="text-secondary-DEFAULT focus:ring-secondary-DEFAULT accent-secondary-DEFAULT"
                   />
-                  <span
-                    className={`transition-colors text-sm group-hover:text-secondary-DEFAULT ${
-                      selectedCategory === 'All' ? 'text-secondary-DEFAULT font-semibold' : 'text-slate-600'
-                    }`}
-                  >
+                  <span className={`transition-colors text-sm group-hover:text-secondary-DEFAULT ${selectedCategory === 'All' ? 'text-secondary-DEFAULT font-semibold' : 'text-slate-600'}`}>
                     {t('all') ?? 'All'}
                   </span>
                 </label>
@@ -592,11 +735,7 @@ const Shop: React.FC = () => {
                       onChange={() => handleCategoryChange(cat.id)}
                       className="text-secondary-DEFAULT focus:ring-secondary-DEFAULT accent-secondary-DEFAULT"
                     />
-                    <span
-                      className={`transition-colors text-sm group-hover:text-secondary-DEFAULT ${
-                        selectedCategory === cat.id ? 'text-secondary-DEFAULT font-semibold' : 'text-slate-600'
-                      }`}
-                    >
+                    <span className={`transition-colors text-sm group-hover:text-secondary-DEFAULT ${selectedCategory === cat.id ? 'text-secondary-DEFAULT font-semibold' : 'text-slate-600'}`}>
                       {language === 'ar' ? cat.label : cat.labelEn}
                     </span>
                   </label>
@@ -679,12 +818,7 @@ const Shop: React.FC = () => {
 
                       <div className="flex text-yellow-400" aria-hidden="true">
                         {[...Array(5)].map((_, i) => (
-                          <Star
-                            key={i}
-                            size={14}
-                            fill={i < star ? 'currentColor' : 'none'}
-                            className={i < star ? '' : 'text-slate-200'}
-                          />
+                          <Star key={i} size={14} fill={i < star ? 'currentColor' : 'none'} className={i < star ? '' : 'text-slate-200'} />
                         ))}
                       </div>
 
@@ -693,68 +827,83 @@ const Shop: React.FC = () => {
                   ))}
                 </div>
               </div>
+
+              {/* Mobile apply button */}
+              {isFilterOpen && (
+                <button
+                  type="button"
+                  onClick={() => setIsFilterOpen(false)}
+                  className="md:hidden mt-6 w-full py-3 rounded-2xl bg-secondary-DEFAULT text-white font-extrabold shadow-md"
+                >
+                  {language === 'ar' ? 'تطبيق' : 'Apply'}
+                </button>
+              )}
             </div>
           </aside>
 
           {/* Product Grid */}
-<div className="flex-1">
-  {isLoading ? (
-    <ProductSkeletonGrid count={8} />
-  ) : paginatedProducts.length > 0 ? (
-    <>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-12 items-stretch auto-rows-fr">
-        {paginatedProducts.map((product: any, index: number) => (
-          <ProductCard
-            key={product.id}
-            product={product}
-            onAddToCart={addToCart}
-            onToggleWishlist={toggleWishlist}
-            onQuickView={openQuickView}
-            isLiked={wishlist.has(product.id)}
-            priority={index < 6}
-          />
-        ))}
-      </div>
+          <div className="flex-1">
+            {isLoading ? (
+              <ProductSkeletonGrid count={8} />
+            ) : paginatedProducts.length > 0 ? (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-12 items-stretch auto-rows-fr">
+                  {paginatedProducts.map((product: any, index: number) => (
+                    <ProductCard
+                      key={product.id}
+                      product={product}
+                      onAddToCart={handleAddToCart}
+                      onToggleWishlist={toggleWishlist}
+                      onQuickView={openQuickView}
+                      isLiked={wishlist.has(product.id)}
+                      priority={index < (isMobile ? 3 : 6)}
+                    />
+                  ))}
+                </div>
 
-      {totalPages > 1 && (
-        <div className="flex justify-center items-center gap-2 mt-6">
-          <button
-            onClick={() => handlePageChange(currentPage - 1)}
-            disabled={currentPage === 1}
-            className="p-2 rounded-xl border border-slate-200 hover:bg-white hover:text-secondary-DEFAULT disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-secondary-DEFAULT"
-            type="button"
-            aria-label="Previous page"
-          >
-            <ChevronRight size={20} className="rtl:rotate-180 ltr:rotate-0" />
-          </button>
+                {totalPages > 1 && (
+                  <div className="flex justify-center items-center gap-2 mt-6">
+                    <button
+                      onClick={() => handlePageChange(currentPage - 1)}
+                      disabled={currentPage === 1}
+                      className="p-2 rounded-xl border border-slate-200 hover:bg-white hover:text-secondary-DEFAULT disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-secondary-DEFAULT"
+                      type="button"
+                      aria-label="Previous page"
+                    >
+                      <ChevronRight size={20} className="rtl:rotate-180 ltr:rotate-0" />
+                    </button>
 
-          <span className="text-sm text-slate-500 font-medium tabular-nums">
-            {t('page') ?? 'Page'} {currentPage} {t('of') ?? 'of'} {totalPages}
-          </span>
+                    <span className="text-sm text-slate-500 font-medium tabular-nums">
+                      {t('page') ?? 'Page'} {currentPage} {t('of') ?? 'of'} {totalPages}
+                    </span>
 
-          <button
-            onClick={() => handlePageChange(currentPage + 1)}
-            disabled={currentPage === totalPages}
-            className="p-2 rounded-xl border border-slate-200 hover:bg-white hover:text-secondary-DEFAULT disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-secondary-DEFAULT"
-            type="button"
-            aria-label="Next page"
-          >
-            <ChevronLeft size={20} className="rtl:rotate-180 ltr:rotate-0" />
-          </button>
-        </div>
-      )}
-    </>
-  ) : (
-    <div className="flex flex-col items-center justify-center py-20 bg-white rounded-2xl border border-dashed border-slate-200 animate-in fade-in">
-      <div className="text-6xl mb-4 grayscale opacity-50">🔍</div>
-      <h3 className="text-xl font-bold text-slate-800 mb-2">{t('noProducts') ?? 'No products'}</h3>
-      <p className="text-slate-500">{t('noProductsDesc') ?? 'Try different filters.'}</p>
-      <button onClick={clearFilters} className="mt-4 text-secondary-DEFAULT underline" type="button">
-        {t('clearFilters') ?? 'Clear filters'}
-      </button>
-    </div>
-  )}
-</div>
+                    <button
+                      onClick={() => handlePageChange(currentPage + 1)}
+                      disabled={currentPage === totalPages}
+                      className="p-2 rounded-xl border border-slate-200 hover:bg-white hover:text-secondary-DEFAULT disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-secondary-DEFAULT"
+                      type="button"
+                      aria-label="Next page"
+                    >
+                      <ChevronLeft size={20} className="rtl:rotate-180 ltr:rotate-0" />
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-20 bg-white rounded-2xl border border-dashed border-slate-200 animate-in fade-in">
+                <div className="text-6xl mb-4 grayscale opacity-50">🔍</div>
+                <h3 className="text-xl font-bold text-slate-800 mb-2">{t('noProducts') ?? 'No products'}</h3>
+                <p className="text-slate-500 text-center px-3">
+                  {language === 'ar'
+                    ? 'جرّب تغيير البحث أو إزالة بعض الفلاتر.'
+                    : 'Try changing your search or clearing some filters.'}
+                </p>
+                <button onClick={clearFilters} className="mt-4 text-secondary-DEFAULT underline font-bold" type="button">
+                  {t('clearFilters') ?? 'Clear filters'}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
