@@ -1,5 +1,5 @@
 // src/App.tsx
-import React, { useState, createContext, useContext, Suspense, useEffect, useCallback } from 'react';
+import React, { useState, createContext, useContext, Suspense, useEffect, useCallback, useMemo } from 'react';
 import { HashRouter, Routes, Route, useLocation } from 'react-router-dom';
 
 import Header from './components/Header';
@@ -41,10 +41,32 @@ const ORDER_NOTE_MAX_CHARS = 600;
 const NOTE_SAVE_DEBOUNCE_MS = 350;
 
 const sanitizeOrderNote = (value: string) => {
-  // ملاحظة: React يحمي من XSS في العرض النصي افتراضياً،
-  // لكن نضع حدود واضحة ونقص الزائد لتجنب تضخيم التخزين.
   const v = String(value ?? '');
   return v.length > ORDER_NOTE_MAX_CHARS ? v.slice(0, ORDER_NOTE_MAX_CHARS) : v;
+};
+
+// ✅ Firebase readiness (supports boolean OR function export safely)
+const firebaseReady = (): boolean => {
+  try {
+    return typeof isFirebaseInitialized === 'function'
+      ? !!(isFirebaseInitialized as any)()
+      : !!isFirebaseInitialized;
+  } catch {
+    return false;
+  }
+};
+
+// =========================================================
+// ✅ WORLD-CLASS: Scroll Restoration مركزي وثابت
+// =========================================================
+const ScrollToTop: React.FC = () => {
+  const location = useLocation();
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [location.pathname, location.search]);
+
+  return null;
 };
 
 // Context Definitions
@@ -85,7 +107,7 @@ interface CartContextType {
   login: (u: User) => void;
   logout: () => void;
 
-  // ✅ NEW: Order Note (رسمي)
+  // ✅ Order Note (رسمي)
   orderNote: string;
   setOrderNote: (note: string) => void;
   clearOrderNote: () => void;
@@ -107,7 +129,7 @@ const AnalyticsTracker = () => {
 
   useEffect(() => {
     trackPageView(location.pathname + location.search);
-  }, [location]);
+  }, [location.pathname, location.search]);
 
   return null;
 };
@@ -133,7 +155,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // ✅ NEW: Order Note (رسمي) - تحميل أولي من localStorage
+  // ✅ Order Note (رسمي)
   const [orderNote, setOrderNoteState] = useState<string>(() => {
     try {
       return sanitizeOrderNote(localStorage.getItem(ORDER_NOTE_KEY) || '');
@@ -211,8 +233,8 @@ const App: React.FC = () => {
       }
     }
 
-    // Handle Auth State Persistence
-    if (isFirebaseInitialized && auth) {
+    // ✅ Auth persistence (Firebase)
+    if (firebaseReady() && auth) {
       const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
         if (!firebaseUser) {
           setUser(null);
@@ -275,7 +297,7 @@ const App: React.FC = () => {
     document.documentElement.lang = language;
   }, [language]);
 
-  // ✅ NEW: ضبط orderNote عبر Context (مع sanitize)
+  // Order note setters
   const setOrderNote = useCallback((note: string) => {
     setOrderNoteState(sanitizeOrderNote(note));
   }, []);
@@ -289,7 +311,7 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // ✅ NEW: حفظ orderNote في localStorage بشكل Debounced (أداء أفضل)
+  // Save order note debounced
   useEffect(() => {
     const timer = window.setTimeout(() => {
       try {
@@ -302,7 +324,7 @@ const App: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, [orderNote]);
 
-  // ✅ تحديث كمية منتج في السلة (Fix عالمي + stock check)
+  // Update cart item qty with stock check
   const updateCartItemQuantity = useCallback(
     async (productId: string, nextQty: number) => {
       const qty = Math.max(1, Math.min(99, Math.round(Number(nextQty) || 1)));
@@ -310,13 +332,11 @@ const App: React.FC = () => {
       const currentProduct = await db.products.getById(productId);
       const availableStock = currentProduct ? Number((currentProduct as any).stock || 0) : 0;
 
-      // إذا المنتج غير موجود أو مخزونه صفر
       if (availableStock <= 0) {
         showToast(t('outOfStock'), 'error');
         return;
       }
 
-      // لا تتجاوز المخزون
       if (qty > availableStock) {
         showToast(`${t('outOfStock')} (Max: ${availableStock})`, 'error');
         return;
@@ -418,8 +438,7 @@ const App: React.FC = () => {
 
   const clearCart = useCallback(() => {
     setCart([]);
-    // ✅ اختياري ومناسب بعد نجاح الطلب: تفريغ ملاحظة الطلب مع السلة
-    // إذا بدك تظل الملاحظة حتى لو السلة فاضية، احذف السطر التالي:
+    // اختياري: تفريغ الملاحظة مع السلة
     setOrderNoteState('');
   }, []);
 
@@ -455,19 +474,35 @@ const App: React.FC = () => {
     setUser(u);
   }, []);
 
-  const logout = useCallback(() => {
-    db.users.logout();
+  const logout = useCallback(async () => {
+    try {
+      await db.users.logout();
+    } catch {
+      // ignore
+    }
     setUser(null);
 
-    // ✅ أمان/خصوصية: لا نترك بيانات طلب سابقة بعد تسجيل الخروج
+    // ✅ أمان/خصوصية
     clearOrderNote();
 
     showToast(t('logout'), 'info');
     window.location.hash = '/';
   }, [showToast, t, clearOrderNote]);
 
-  const cartCount = cart.reduce((acc, item) => acc + Number(item.quantity || 0), 0);
-  const wishlistCount = wishlist.size;
+  const cartCount = useMemo(() => cart.reduce((acc, item) => acc + Number(item.quantity || 0), 0), [cart]);
+  const wishlistCount = useMemo(() => wishlist.size, [wishlist]);
+
+  // ✅ Toast placement responsive (Mobile: center bottom)
+  const toastContainerClass = useMemo(() => {
+    return [
+      'fixed z-[100] flex flex-col gap-2 pointer-events-none',
+      'bottom-6',
+      // mobile center
+      'left-1/2 -translate-x-1/2',
+      // desktop right
+      'sm:left-auto sm:translate-x-0 sm:right-6',
+    ].join(' ');
+  }, []);
 
   return (
     <CartContext.Provider
@@ -504,7 +539,6 @@ const App: React.FC = () => {
         login,
         logout,
 
-        // ✅ NEW: Order Note (رسمي)
         orderNote,
         setOrderNote,
         clearOrderNote,
@@ -513,12 +547,11 @@ const App: React.FC = () => {
       }}
     >
       <HashRouter>
+        <ScrollToTop />
         <AnalyticsTracker />
 
         <div
-          className={`flex flex-col min-h-screen font-sans bg-slate-50 text-slate-900 ${
-            language === 'ar' ? 'font-ar' : 'font-en'
-          }`}
+          className={`flex flex-col min-h-screen font-sans bg-slate-50 text-slate-900 ${language === 'ar' ? 'font-ar' : 'font-en'}`}
           dir={language === 'ar' ? 'rtl' : 'ltr'}
         >
           <Header />
@@ -529,7 +562,7 @@ const App: React.FC = () => {
           <CookieBanner />
 
           {/* Toast Container */}
-          <div className="fixed bottom-6 right-6 z-[100] flex flex-col gap-2 pointer-events-none">
+          <div className={toastContainerClass}>
             {toasts.map((toast) => (
               <div key={toast.id} className="pointer-events-auto">
                 <Toast toast={toast} onClose={removeToast} />
