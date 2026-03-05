@@ -1,10 +1,9 @@
-import React, { useMemo, useState } from 'react';
+// src/pages/Checkout.tsx
+import React, { useEffect, useMemo, useState } from 'react';
 import { useCart } from '../App';
 import Button from '../components/Button';
-import { SHIPPING_METHODS } from '../constants';
 import {
   CheckCircle,
-  CreditCard,
   Truck,
   MapPin,
   Shield,
@@ -12,7 +11,10 @@ import {
   Smartphone,
   Upload,
   Image as ImageIcon,
-  ShoppingBag
+  ShoppingBag,
+  Mail,
+  Phone,
+  CalendarClock,
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
 import { db } from '../services/storage';
@@ -22,7 +24,8 @@ import LazyImage from '../components/LazyImage';
 
 const { useNavigate } = ReactRouterDOM as any;
 
-type PaymentMethod = 'card' | 'paypal' | 'cod' | 'cliq';
+// ✅ فقط CliQ أو COD (تم حذف الفيزا)
+type PaymentMethod = 'cod' | 'cliq';
 
 const safeTrim = (s: any) => String(s ?? '').trim();
 
@@ -31,7 +34,10 @@ const clampQty = (n: any) => {
   return Math.max(1, Math.min(99, x));
 };
 
-// ✅ Jordan governorates (slug ثابت + عرض حسب اللغة)
+// ✅ الأردن فقط للشحن
+const JO_COUNTRY = { code: 'JO', nameAr: 'الأردن', nameEn: 'Jordan' };
+
+// ✅ محافظات الأردن
 const JO_GOVS: Array<{ slug: string; ar: string; en: string }> = [
   { slug: 'amman', ar: 'عمّان', en: 'Amman' },
   { slug: 'zarqa', ar: 'الزرقاء', en: 'Zarqa' },
@@ -44,8 +50,72 @@ const JO_GOVS: Array<{ slug: string; ar: string; en: string }> = [
   { slug: 'karak', ar: 'الكرك', en: 'Karak' },
   { slug: 'tafilah', ar: 'الطفيلة', en: 'Tafilah' },
   { slug: 'maan', ar: 'معان', en: "Ma'an" },
-  { slug: 'aqaba', ar: 'العقبة', en: 'Aqaba' }
+  { slug: 'aqaba', ar: 'العقبة', en: 'Aqaba' },
 ];
+
+// ✅ Phone dial codes (قائمة مختصرة + ممكن توسّعها لاحقاً)
+type DialOption = { code: string; dial: string; flag: string; nameAr: string; nameEn: string };
+const DIAL_OPTIONS: DialOption[] = [
+  { code: 'JO', dial: '+962', flag: '🇯🇴', nameAr: 'الأردن', nameEn: 'Jordan' },
+  { code: 'PS', dial: '+970', flag: '🇵🇸', nameAr: 'فلسطين', nameEn: 'Palestine' },
+  { code: 'AE', dial: '+971', flag: '🇦🇪', nameAr: 'الإمارات', nameEn: 'UAE' },
+  { code: 'SA', dial: '+966', flag: '🇸🇦', nameAr: 'السعودية', nameEn: 'Saudi Arabia' },
+  { code: 'EG', dial: '+20', flag: '🇪🇬', nameAr: 'مصر', nameEn: 'Egypt' },
+  { code: 'IQ', dial: '+964', flag: '🇮🇶', nameAr: 'العراق', nameEn: 'Iraq' },
+  { code: 'KW', dial: '+965', flag: '🇰🇼', nameAr: 'الكويت', nameEn: 'Kuwait' },
+  { code: 'QA', dial: '+974', flag: '🇶🇦', nameAr: 'قطر', nameEn: 'Qatar' },
+  { code: 'BH', dial: '+973', flag: '🇧🇭', nameAr: 'البحرين', nameEn: 'Bahrain' },
+  { code: 'TR', dial: '+90', flag: '🇹🇷', nameAr: 'تركيا', nameEn: 'Turkey' },
+  { code: 'US', dial: '+1', flag: '🇺🇸', nameAr: 'أمريكا', nameEn: 'United States' },
+  { code: 'GB', dial: '+44', flag: '🇬🇧', nameAr: 'بريطانيا', nameEn: 'United Kingdom' },
+];
+
+// ✅ خيارات شحن جديدة (بدون تعديل constants)
+type ShippingMethod = { id: string; nameAr: string; nameEn: string; durationAr: string; durationEn: string; price: number; icon?: any };
+const CHECKOUT_SHIPPING_METHODS: ShippingMethod[] = [
+  {
+    id: 'jo_fast_12_24',
+    nameAr: 'توصيل سريع (محلي)',
+    nameEn: 'Fast delivery (Local)',
+    durationAr: 'خلال 12–24 ساعة',
+    durationEn: 'Within 12–24 hours',
+    price: 2.5,
+    icon: Truck,
+  },
+  {
+    id: 'jo_govs_24_48',
+    nameAr: 'توصيل المحافظات',
+    nameEn: 'Governorates delivery',
+    durationAr: 'خلال 24–48 ساعة',
+    durationEn: 'Within 24–48 hours',
+    price: 3.5,
+    icon: Truck,
+  },
+  {
+    id: 'jo_schedule',
+    nameAr: 'تحديد موعد التوصيل',
+    nameEn: 'Schedule delivery',
+    durationAr: 'اختر التاريخ والوقت المناسبين',
+    durationEn: 'Choose your preferred date & time',
+    price: 4.0,
+    icon: CalendarClock,
+  },
+];
+
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const normalizeName = (name: string) => safeTrim(name).replace(/\s+/g, ' ');
+const normalizeAddress = (addr: string) => safeTrim(addr).replace(/\s+/g, ' ');
+
+const digitsOnly = (s: string) => String(s ?? '').replace(/[^\d]/g, '');
+
+const normalizePhoneGlobal = (dial: string, local: string) => {
+  const d = String(dial || '').trim();
+  const num = digitsOnly(local);
+  if (!d || !num) return '';
+  // ✅ لا نعمل قواعد خاصة لكل دولة (حتى يقبل أي رقم)
+  return `${d}${num}`;
+};
 
 const Checkout: React.FC = () => {
   const {
@@ -57,22 +127,47 @@ const Checkout: React.FC = () => {
     user,
     refreshProducts,
     language,
-
-    // ✅ Order Note الرسمي من النظام (Context)
     orderNote,
     setOrderNote,
-    clearOrderNote
+    clearOrderNote,
   } = useCart() as any;
 
   const navigate = useNavigate();
 
-  const tr = (ar: string, en: string) => (language === 'ar' ? ar : en);
-  const tt = (key: string, fallbackAr: string, fallbackEn: string) => t(key) ?? tr(fallbackAr, fallbackEn);
+  const isAR = language === 'ar';
+
+  // ✅ ترجمة ذكية: إذا المفتاح غير موجود t() ترجع نفس المفتاح
+  const tr = (ar: string, en: string) => (isAR ? ar : en);
+  const tt = (key: string, fallbackAr: string, fallbackEn: string) => {
+    try {
+      const out = t(key as any);
+      if (!out || String(out) === key) return tr(fallbackAr, fallbackEn);
+      return String(out);
+    } catch {
+      return tr(fallbackAr, fallbackEn);
+    }
+  };
 
   const [step, setStep] = useState(1);
-  const [shippingMethodId, setShippingMethodId] = useState('local_std');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('card');
+  const [shippingMethodId, setShippingMethodId] = useState<string>(CHECKOUT_SHIPPING_METHODS[0]!.id);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cod');
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // ✅ Email field (يظهر دائماً)
+  const [email, setEmail] = useState<string>(() => safeTrim(user?.email || ''));
+
+  useEffect(() => {
+    // إذا المستخدم سجّل دخول بعد ما فتح الصفحة
+    const uEmail = safeTrim(user?.email || '');
+    if (uEmail && !safeTrim(email)) setEmail(uEmail);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.email]);
+
+  // ✅ Phone dial picker
+  const [dialCode, setDialCode] = useState<string>(() => {
+    // افتراضي: الأردن
+    return '+962';
+  });
 
   // CliQ
   const [cliqRef, setCliqRef] = useState('');
@@ -81,7 +176,7 @@ const Checkout: React.FC = () => {
   // ✅ Address / Checkout Form
   const [formData, setFormData] = useState({
     fullName: '',
-    country: 'Jordan', // ✅ ثابت
+    country: JO_COUNTRY.nameEn, // ثابت الأردن
     citySlug: '',
     streetAddress: '',
     postalCode: '',
@@ -94,38 +189,35 @@ const Checkout: React.FC = () => {
     billingCitySlug: '',
     billingStreetAddress: '',
     billingPhoneLocal: '',
-    billingPostalCode: ''
+    billingPostalCode: '',
   });
 
-  // ✅ Shipping preferences
+  // ✅ Shipping preferences (تاريخ/وقت)
   const [preferredDeliveryDate, setPreferredDeliveryDate] = useState(''); // yyyy-mm-dd
   const [preferredDeliveryTime, setPreferredDeliveryTime] = useState(''); // hh:mm
 
-  // ✅ Policies / Terms acceptance
+  // ✅ Policies acceptance
   const [acceptPolicies, setAcceptPolicies] = useState(true);
 
   // ✅ Field errors
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Money formatter حسب اللغة
+  // Money formatter
   const fmt = useMemo(() => {
     try {
-      return new Intl.NumberFormat(language === 'ar' ? 'ar-JO' : 'en-JO', {
+      return new Intl.NumberFormat(isAR ? 'ar-JO' : 'en-JO', {
         style: 'currency',
         currency: 'JOD',
-        maximumFractionDigits: 2
+        maximumFractionDigits: 2,
       });
     } catch {
       return null;
     }
-  }, [language]);
+  }, [isAR]);
 
   const formatMoney = (value: number) => (fmt ? fmt.format(value) : `JOD ${Number(value || 0).toFixed(2)}`);
 
-  const selectedShipping = useMemo(
-    () => SHIPPING_METHODS.find((m) => m.id === shippingMethodId),
-    [shippingMethodId]
-  );
+  const selectedShipping = useMemo(() => CHECKOUT_SHIPPING_METHODS.find((m) => m.id === shippingMethodId), [shippingMethodId]);
 
   const subtotal = useMemo(
     () =>
@@ -137,10 +229,7 @@ const Checkout: React.FC = () => {
     [cart]
   );
 
-  const totalItems = useMemo(
-    () => cart.reduce((sum: number, item: any) => sum + clampQty(item.quantity), 0),
-    [cart]
-  );
+  const totalItems = useMemo(() => cart.reduce((sum: number, item: any) => sum + clampQty(item.quantity), 0), [cart]);
 
   const discountAmount = useMemo(() => (totalItems > 2 ? subtotal * 0.1 : 0), [subtotal, totalItems]);
 
@@ -149,36 +238,7 @@ const Checkout: React.FC = () => {
 
   const cityLabel = (slug: string) => {
     const c = JO_GOVS.find((x) => x.slug === slug);
-    return c ? (language === 'ar' ? c.ar : c.en) : '';
-  };
-
-  const normalizeName = (name: string) => safeTrim(name).replace(/\s+/g, ' ');
-  const normalizeAddress = (addr: string) => safeTrim(addr).replace(/\s+/g, ' ');
-
-  // ✅ Jordan phone normalization:
-  // - user types: 079xxxxxxx or 7xxxxxxxx or +9627xxxxxxxx
-  // - we store: +9627xxxxxxxx (E.164-ish)
-  const normalizeJordanPhone = (input: string) => {
-    let digits = String(input ?? '').replace(/[^\d]/g, '');
-
-    // remove leading country code if user typed it
-    if (digits.startsWith('962')) digits = digits.slice(3);
-
-    // remove leading 0 (common local format: 07xxxxxxxx)
-    if (digits.startsWith('0')) digits = digits.slice(1);
-
-    // now expect 9 digits (7xxxxxxxx) for mobile; allow 8-10 digits overall as fallback
-    // we'll validate strictly: starts with 7 and length 9
-    if (digits.startsWith('7') && digits.length === 9) {
-      return `+962${digits}`;
-    }
-
-    // fallback keep best effort (still store with +962 if looks close)
-    if (digits.length >= 8 && digits.length <= 10) {
-      return `+962${digits}`;
-    }
-
-    return '';
+    return c ? (isAR ? c.ar : c.en) : '';
   };
 
   const setField = (key: string, value: any) => {
@@ -190,14 +250,33 @@ const Checkout: React.FC = () => {
     });
   };
 
+  const setEmailField = (value: string) => {
+    setEmail(value);
+    setErrors((p) => {
+      const next = { ...p };
+      delete next.email;
+      return next;
+    });
+  };
+
   const validateStep1 = () => {
     const nextErr: Record<string, string> = {};
+
+    // ✅ Email required فقط للضيف
+    const needEmail = !user?.id;
+    const e = safeTrim(email);
+    if (needEmail && !e) {
+      nextErr.email = tt('emailRequired', 'البريد الإلكتروني مطلوب', 'Email is required.');
+    } else if (e && !emailRegex.test(e)) {
+      nextErr.email = tt('emailInvalid', 'البريد الإلكتروني غير صحيح', 'Invalid email address.');
+    }
 
     const name = normalizeName(formData.fullName);
     if (name.length < 5) {
       nextErr.fullName = tt('nameMin5', 'الاسم لازم يكون 5 أحرف على الأقل', 'Name must be at least 5 characters.');
     }
 
+    // ✅ الأردن فقط
     if (!safeTrim(formData.country)) {
       nextErr.country = tt('countryRequired', 'الدولة مطلوبة', 'Country is required.');
     }
@@ -208,60 +287,48 @@ const Checkout: React.FC = () => {
 
     const addr = normalizeAddress(formData.streetAddress);
     if (addr.length < 8) {
-      nextErr.streetAddress = tt(
-        'addressMin8',
-        'اكتب العنوان بالتفصيل (على الأقل 8 أحرف)',
-        'Write detailed address (at least 8 characters).'
-      );
+      nextErr.streetAddress = tt('addressMin8', 'اكتب العنوان بالتفصيل (على الأقل 8 أحرف)', 'Write detailed address (at least 8 characters).');
     }
 
-    const phoneE164 = normalizeJordanPhone(formData.phoneLocal);
-    if (!phoneE164) {
+    // ✅ Phone global with dial
+    const e164 = normalizePhoneGlobal(dialCode, formData.phoneLocal);
+    if (!e164) {
       nextErr.phoneLocal = tt('phoneInvalid', 'رقم الهاتف غير صحيح', 'Invalid phone number.');
-    } else {
-      // strict mobile check: +9627xxxxxxxx
-      const digits = phoneE164.replace(/[^\d]/g, '');
-      // digits now like 9627xxxxxxxx
-      if (!(digits.length === 12 && digits.startsWith('9627'))) {
-        nextErr.phoneLocal = tt(
-          'phoneJordanMobile',
-          'اكتب رقم أردني صحيح (07xxxxxxxx)',
-          'Enter a valid Jordanian number (07xxxxxxxx).'
-        );
+    } else if (digitsOnly(formData.phoneLocal).length < 6) {
+      nextErr.phoneLocal = tt('phoneTooShort', 'رقم الهاتف قصير جداً', 'Phone number is too short.');
+    }
+
+    // ✅ إذا خيار "تحديد موعد" لازم تاريخ + وقت
+    if (shippingMethodId === 'jo_schedule') {
+      if (!safeTrim(preferredDeliveryDate)) {
+        nextErr.preferredDeliveryDate = tt('dateRequired', 'التاريخ مطلوب', 'Date is required.');
+      }
+      if (!safeTrim(preferredDeliveryTime)) {
+        nextErr.preferredDeliveryTime = tt('timeRequired', 'الوقت مطلوب', 'Time is required.');
       }
     }
 
     if (!acceptPolicies) {
-      nextErr.acceptPolicies = tt(
-        'acceptPoliciesRequired',
-        'لازم توافق على السياسات لإتمام الطلب',
-        'You must accept policies to place the order.'
-      );
+      nextErr.acceptPolicies = tt('acceptPoliciesRequired', 'لازم توافق على السياسات لإتمام الطلب', 'You must accept policies to place the order.');
     }
 
     // Billing (إذا مش نفس الشحن)
     if (!formData.billingSameAsShipping) {
       const bn = normalizeName(formData.billingFullName);
       if (bn.length < 5) {
-        nextErr.billingFullName = tt(
-          'billingNameMin5',
-          'اسم الفاتورة لازم يكون 5 أحرف على الأقل',
-          'Billing name must be at least 5 characters.'
-        );
+        nextErr.billingFullName = tt('billingNameMin5', 'اسم الفاتورة لازم يكون 5 أحرف على الأقل', 'Billing name must be at least 5 characters.');
       }
       if (!safeTrim(formData.billingCitySlug)) {
         nextErr.billingCitySlug = tt('billingCityRequired', 'مدينة الفاتورة مطلوبة', 'Billing city is required.');
       }
       const ba = normalizeAddress(formData.billingStreetAddress);
       if (ba.length < 8) {
-        nextErr.billingStreetAddress = tt(
-          'billingAddressMin8',
-          'عنوان الفاتورة بالتفصيل (على الأقل 8 أحرف)',
-          'Billing address must be detailed (at least 8 characters).'
-        );
+        nextErr.billingStreetAddress = tt('billingAddressMin8', 'عنوان الفاتورة بالتفصيل (على الأقل 8 أحرف)', 'Billing address must be detailed (at least 8 characters).');
       }
-      const bphone = normalizeJordanPhone(formData.billingPhoneLocal);
-      if (!bphone) {
+
+      // ✅ Billing phone: نستخدم نفس dial + رقم
+      const bE164 = normalizePhoneGlobal(dialCode, formData.billingPhoneLocal);
+      if (!bE164) {
         nextErr.billingPhoneLocal = tt('billingPhoneInvalid', 'رقم هاتف الفاتورة غير صحيح', 'Invalid billing phone.');
       }
     }
@@ -282,23 +349,22 @@ const Checkout: React.FC = () => {
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      showToast(t('invalidImage') ?? 'Please upload an image file.', 'error');
+      showToast(tt('invalidImage', 'الرجاء رفع صورة صحيحة', 'Please upload an image file.'), 'error');
       return;
     }
 
-    // حد بسيط لحجم الملف عشان الأداء (2.5MB)
     const maxBytes = 2.5 * 1024 * 1024;
     if (file.size > maxBytes) {
-      showToast(t('imageTooLarge') ?? 'Image is too large. Please upload a smaller one.', 'error');
+      showToast(tt('imageTooLarge', 'حجم الصورة كبير جداً، ارفع صورة أصغر', 'Image is too large. Please upload a smaller one.'), 'error');
       return;
     }
 
     try {
       const dataUrl = await readFileAsDataUrl(file);
       setCliqReceiptDataUrl(dataUrl);
-      showToast(t('uploaded') ?? 'Uploaded successfully.', 'success');
+      showToast(tt('uploaded', 'تم الرفع بنجاح', 'Uploaded successfully.'), 'success');
     } catch {
-      showToast(t('uploadFailed') ?? 'Upload failed. Please try again.', 'error');
+      showToast(tt('uploadFailed', 'فشل الرفع، حاول مرة أخرى', 'Upload failed. Please try again.'), 'error');
     }
   };
 
@@ -314,7 +380,6 @@ const Checkout: React.FC = () => {
   const handlePlaceOrder = async () => {
     if (isProcessing) return;
 
-    // ✅ Final validation (Step 1 + policies)
     const ok = validateStep1();
     if (!ok) {
       showToast(tt('fixErrors', 'راجع الحقول المطلوبة', 'Please fix the required fields.'), 'error');
@@ -325,23 +390,22 @@ const Checkout: React.FC = () => {
     if (paymentMethod === 'cliq') {
       const ref = safeTrim(cliqRef);
       if (!ref) {
-        showToast(t('enterCliqRef') ?? 'Please enter the CliQ reference number.', 'error');
+        showToast(tt('enterCliqRef', 'الرجاء إدخال رقم مرجع CliQ', 'Please enter the CliQ reference number.'), 'error');
         return;
       }
       if (ref.length < 4 || ref.length > 40) {
-        showToast(t('invalidCliqRef') ?? 'Invalid CliQ reference number.', 'error');
+        showToast(tt('invalidCliqRef', 'رقم مرجع CliQ غير صحيح', 'Invalid CliQ reference number.'), 'error');
         return;
       }
     }
 
     setIsProcessing(true);
 
-    const shippingPhone = normalizeJordanPhone(formData.phoneLocal) || safeTrim(formData.phoneLocal);
-
+    const shippingPhoneE164 = normalizePhoneGlobal(dialCode, formData.phoneLocal) || safeTrim(formData.phoneLocal);
     const shippingCityName = cityLabel(formData.citySlug) || safeTrim(formData.citySlug);
     const shippingStreet = normalizeAddress(formData.streetAddress);
 
-    const billingPhone = normalizeJordanPhone(formData.billingPhoneLocal) || safeTrim(formData.billingPhoneLocal);
+    const billingPhoneE164 = normalizePhoneGlobal(dialCode, formData.billingPhoneLocal) || safeTrim(formData.billingPhoneLocal);
     const billingCityName = cityLabel(formData.billingCitySlug) || safeTrim(formData.billingCitySlug);
     const billingStreet = normalizeAddress(formData.billingStreetAddress);
 
@@ -353,23 +417,24 @@ const Checkout: React.FC = () => {
         name: item.name,
         price: Number(item.price || 0),
         quantity: clampQty(item.quantity),
-        image: item.image
+        image: item.image,
       })),
       status: 'processing',
       date: new Date().toISOString().split('T')[0],
       total: total,
-      shippingMethod: selectedShipping?.name || 'Standard',
+      shippingMethod: selectedShipping ? (isAR ? selectedShipping.nameAr : selectedShipping.nameEn) : 'Standard',
       paymentMethod: paymentMethod,
 
-      // ✅ نخزّن الملاحظة بشكل رسمي داخل الطلب
+      // ✅ Email saved on order
+      customerEmail: safeTrim(email) || (user?.email || ''),
+
       note: safeTrim(orderNote) || undefined,
 
-      // ✅ Shipping preferences (اختياري)
       deliveryPreference:
         safeTrim(preferredDeliveryDate) || safeTrim(preferredDeliveryTime)
           ? {
               date: safeTrim(preferredDeliveryDate) || undefined,
-              time: safeTrim(preferredDeliveryTime) || undefined
+              time: safeTrim(preferredDeliveryTime) || undefined,
             }
           : undefined,
 
@@ -378,7 +443,7 @@ const Checkout: React.FC = () => {
           ? {
               cliqReference: safeTrim(cliqRef),
               receiptImage: cliqReceiptDataUrl || undefined,
-              isPaid: false
+              isPaid: false,
             }
           : undefined,
 
@@ -386,15 +451,19 @@ const Checkout: React.FC = () => {
         fullName: normalizeName(formData.fullName) || 'Guest',
         city: shippingCityName,
         street: shippingStreet,
-        phone: shippingPhone
+        phone: shippingPhoneE164,
       },
 
-      // ✅ extras for bilingual & admin use (safe with "any")
       addressMeta: {
-        country: 'Jordan',
+        country: JO_COUNTRY.nameEn,
+        countryCode: JO_COUNTRY.code,
         citySlug: formData.citySlug,
         postalCode: safeTrim(formData.postalCode) || undefined,
-        saveInfo: !!formData.saveInfo
+        saveInfo: !!formData.saveInfo,
+
+        // ✅ phone meta
+        phoneDial: dialCode,
+        phoneLocal: safeTrim(formData.phoneLocal),
       },
 
       billingAddress: formData.billingSameAsShipping
@@ -403,66 +472,85 @@ const Checkout: React.FC = () => {
             fullName: normalizeName(formData.billingFullName),
             city: billingCityName,
             street: billingStreet,
-            phone: billingPhone,
+            phone: billingPhoneE164,
             meta: {
               citySlug: formData.billingCitySlug,
-              postalCode: safeTrim(formData.billingPostalCode) || undefined
-            }
-          }
+              postalCode: safeTrim(formData.billingPostalCode) || undefined,
+              phoneDial: dialCode,
+              phoneLocal: safeTrim(formData.billingPhoneLocal),
+            },
+          },
     };
 
     try {
       await db.orders.create(newOrder);
-
       await refreshProducts();
 
       clearCart();
       if (typeof clearOrderNote === 'function') clearOrderNote();
 
-      showToast(t('alertSet') ?? 'Order placed successfully.', 'success');
+      showToast(tt('alertSet', 'تم إنشاء الطلب بنجاح', 'Order placed successfully.'), 'success');
       navigate(`/order-success/${newOrder.id}`);
     } catch {
-      showToast(t('placeOrderFailed') ?? 'Failed to place order. Please try again.', 'error');
+      showToast(tt('placeOrderFailed', 'فشل إنشاء الطلب، حاول مرة أخرى', 'Failed to place order. Please try again.'), 'error');
     } finally {
       setIsProcessing(false);
     }
   };
 
+  // ✅ Selected dial label
+  const dialLabel = useMemo(() => {
+    const d = DIAL_OPTIONS.find((x) => x.dial === dialCode) || DIAL_OPTIONS[0]!;
+    return isAR ? `${d.flag} ${d.nameAr} ${d.dial}` : `${d.flag} ${d.nameEn} ${d.dial}`;
+  }, [dialCode, isAR]);
+
+  const needEmail = !user?.id;
+
+  // ✅ Selected shipping label
+  const shippingLabel = useMemo(() => {
+    if (!selectedShipping) return '';
+    return isAR ? selectedShipping.nameAr : selectedShipping.nameEn;
+  }, [selectedShipping, isAR]);
+
+  // ---------------- Empty cart ----------------
   if (!Array.isArray(cart) || cart.length === 0) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
-        <SEO title={t('checkout')} noIndex={true} />
+        <SEO title={tt('checkout', 'إتمام الطلب', 'Checkout')} noIndex={true} />
         <div className="w-full max-w-md bg-white rounded-3xl border border-slate-100 shadow-sm p-8 text-center">
           <div className="mx-auto w-14 h-14 rounded-2xl bg-secondary-light/20 flex items-center justify-center text-secondary-DEFAULT mb-4">
             <ShoppingBag />
           </div>
-          <h2 className="text-2xl font-heading font-bold text-slate-900 mb-2">{t('cartEmpty')}</h2>
-          <p className="text-slate-500 mb-6">{t('browseToAdd') ?? 'Browse products and add items to your cart.'}</p>
+          <h2 className="text-2xl font-heading font-bold text-slate-900 mb-2">{tt('cartEmpty', 'سلتك فارغة', 'Your cart is empty')}</h2>
+          <p className="text-slate-500 mb-6">{tt('browseToAdd', 'تصفّح المنتجات وأضف للسلة', 'Browse products and add items to your cart.')}</p>
           <Button onClick={() => navigate('/shop')} className="w-full">
-            {t('browseProducts')}
+            {tt('browseProducts', 'تصفح المنتجات', 'Browse products')}
           </Button>
         </div>
       </div>
     );
   }
 
+  // ---------------- UI ----------------
   return (
-    <div className="min-h-screen bg-slate-50 py-10 lg:py-12">
-      <SEO title={t('checkout')} noIndex={true} />
+    <div className="min-h-screen bg-slate-50 py-8 lg:py-12">
+      <SEO title={tt('checkout', 'إتمام الطلب', 'Checkout')} noIndex={true} />
+
       <div className="container mx-auto px-4 lg:px-8">
-        <div className="flex items-end justify-between gap-4 mb-8">
-          <div>
-            <h1 className="text-3xl font-heading font-bold text-slate-900">{t('checkout')}</h1>
-            <p className="text-slate-500 mt-1">{t('checkoutHint') ?? 'Complete your details to place the order.'}</p>
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8">
+          <div className="min-w-0">
+            <h1 className="text-3xl font-heading font-bold text-slate-900">{tt('checkout', 'إتمام الطلب', 'Checkout')}</h1>
+            <p className="text-slate-500 mt-1">{tt('checkoutHint', 'أكمل بياناتك لتأكيد الطلب', 'Complete your details to place the order.')}</p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={() => navigate('/cart')}
               className="text-sm font-bold text-secondary-DEFAULT hover:opacity-80 transition"
               type="button"
             >
-              {t('editCart') ?? 'Edit cart'}
+              {tt('editCart', 'تعديل السلة', 'Edit cart')}
             </button>
 
             <button
@@ -470,43 +558,47 @@ const Checkout: React.FC = () => {
               className="text-sm font-bold text-slate-600 hover:opacity-80 transition"
               type="button"
             >
-              {t('continueShopping') ?? 'Continue shopping'}
+              {tt('continueShopping', 'متابعة التسوق', 'Continue shopping')}
             </button>
           </div>
         </div>
 
         <div className="flex flex-col lg:flex-row gap-8">
-          {/* Form Section */}
+          {/* Form */}
           <div className="flex-1 space-y-6">
-            {/* Steps Indicator */}
+            {/* Steps */}
             <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
               <div className="flex items-center justify-between gap-2">
                 {[1, 2, 3].map((i) => {
                   const active = step === i;
                   const done = step > i;
+                  const title =
+                    i === 1 ? tt('address', 'العنوان', 'Address') : i === 2 ? tt('shipping', 'الشحن', 'Shipping') : tt('payment', 'الدفع', 'Payment');
+
+                  const hint =
+                    i === 1
+                      ? tt('stepAddressHint', 'بيانات الاستلام', 'Delivery details')
+                      : i === 2
+                        ? tt('stepShippingHint', 'اختر نوع الشحن', 'Choose shipping')
+                        : tt('stepPaymentHint', 'اختر طريقة الدفع', 'Choose payment');
+
                   return (
                     <div key={i} className="flex-1 flex items-center gap-3">
                       <div
                         className={[
                           'w-9 h-9 rounded-full flex items-center justify-center font-bold shrink-0 transition',
-                          done || active ? 'bg-secondary-DEFAULT text-white' : 'bg-slate-200 text-slate-500'
+                          done || active ? 'bg-secondary-DEFAULT text-white' : 'bg-slate-200 text-slate-500',
                         ].join(' ')}
                         aria-label={`step-${i}`}
                       >
                         {done ? <CheckCircle size={18} /> : i}
                       </div>
+
                       <div className="min-w-0">
-                        <p className={`text-sm font-bold ${done || active ? 'text-slate-900' : 'text-slate-400'}`}>
-                          {i === 1 ? t('address') : i === 2 ? t('shipping') : t('payment')}
-                        </p>
-                        <p className="text-xs text-slate-400 line-clamp-1">
-                          {i === 1
-                            ? t('stepAddressHint') ?? 'Delivery details'
-                            : i === 2
-                              ? t('stepShippingHint') ?? 'Choose shipping'
-                              : t('stepPaymentHint') ?? 'Choose payment'}
-                        </p>
+                        <p className={`text-sm font-bold ${done || active ? 'text-slate-900' : 'text-slate-400'}`}>{title}</p>
+                        <p className="text-xs text-slate-400 line-clamp-1">{hint}</p>
                       </div>
+
                       {i < 3 && <div className="hidden sm:block h-0.5 bg-slate-200 flex-1 mx-2" />}
                     </div>
                   );
@@ -514,99 +606,124 @@ const Checkout: React.FC = () => {
               </div>
             </div>
 
-            {/* Step 1: Address */}
+            {/* Step 1 */}
             {step === 1 && (
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 animate-in fade-in slide-in-from-right">
-                <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
-                  <MapPin className="text-secondary-DEFAULT" /> {t('deliveryAddress')}
-                </h2>
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-6">
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    <MapPin className="text-secondary-DEFAULT" /> {tt('deliveryAddress', 'عنوان الاستلام', 'Delivery address')}
+                  </h2>
+
+                  <div className="text-xs font-bold text-slate-500">
+                    {tt('deliverOnlyJordan', 'الشحن داخل الأردن فقط', 'Shipping within Jordan only')}
+                  </div>
+                </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* ✅ Email (always visible) */}
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-bold text-slate-600 mb-2">
+                      {tt('email', 'البريد الإلكتروني', 'Email')}
+                      {needEmail ? <span className="text-red-500 ms-1">*</span> : null}
+                    </label>
+
+                    <div
+                      className={[
+                        'flex items-center gap-2 p-3 border rounded-xl bg-slate-50',
+                        errors.email ? 'border-red-400' : 'border-slate-200',
+                      ].join(' ')}
+                    >
+                      <Mail size={18} className="text-slate-400 shrink-0" />
+                      <input
+                        value={email}
+                        onChange={(e) => setEmailField(e.target.value)}
+                        type="email"
+                        placeholder={tt('emailPlaceholder', 'example@email.com', 'example@email.com')}
+                        className="flex-1 bg-transparent outline-none text-slate-800"
+                        autoComplete="email"
+                      />
+                    </div>
+
+                    {errors.email && <p className="mt-1 text-xs font-bold text-red-600">{errors.email}</p>}
+                    {!needEmail ? (
+                      <p className="mt-1 text-[11px] text-slate-400 font-bold">
+                        {tt('emailOptional', 'اختياري (مفيد لإرسال تفاصيل الطلب)', 'Optional (used to send order details)')}
+                      </p>
+                    ) : null}
+                  </div>
+
                   {/* Full Name */}
                   <div className="md:col-span-2">
+                    <label className="block text-xs font-bold text-slate-600 mb-2">{tt('fullName', 'الاسم الكامل', 'Full name')}</label>
                     <input
                       name="fullName"
                       value={formData.fullName}
                       onChange={(e) => setField('fullName', e.target.value)}
                       type="text"
-                      placeholder={tt('fullName', 'الاسم الكامل', 'Full name')}
+                      placeholder={tt('fullNamePh', 'مثال: محمد أحمد', 'Example: John Smith')}
                       className={[
                         'w-full p-3 border rounded-xl bg-slate-50 focus:ring-2 focus:ring-secondary-DEFAULT outline-none',
-                        errors.fullName ? 'border-red-400' : 'border-slate-200'
+                        errors.fullName ? 'border-red-400' : 'border-slate-200',
                       ].join(' ')}
                       autoComplete="name"
                     />
                     {errors.fullName && <p className="mt-1 text-xs font-bold text-red-600">{errors.fullName}</p>}
                   </div>
 
-                  {/* Country (Fixed: Jordan) */}
+                  {/* Country (Jordan only) */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-2">{t('country') ?? 'Country'}</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">{tt('country', 'الدولة', 'Country')}</label>
                     <select
-                      value="Jordan"
-                      onChange={() => setField('country', 'Jordan')}
-                      className={[
-                        'w-full p-3 border rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-secondary-DEFAULT',
-                        errors.country ? 'border-red-400' : 'border-slate-200'
-                      ].join(' ')}
+                      value={JO_COUNTRY.nameEn}
+                      onChange={() => setField('country', JO_COUNTRY.nameEn)}
+                      className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-secondary-DEFAULT"
                     >
-                      <option value="Jordan">{tr('الأردن', 'Jordan')}</option>
+                      <option value={JO_COUNTRY.nameEn}>{isAR ? JO_COUNTRY.nameAr : JO_COUNTRY.nameEn}</option>
                     </select>
-                    {errors.country && <p className="mt-1 text-xs font-bold text-red-600">{errors.country}</p>}
                   </div>
 
-                  {/* City (Select governorate) */}
+                  {/* City */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-2">{t('city') ?? 'City'}</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">{tt('city', 'المحافظة', 'Governorate')}</label>
                     <select
                       value={formData.citySlug}
                       onChange={(e) => setField('citySlug', e.target.value)}
                       className={[
                         'w-full p-3 border rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-secondary-DEFAULT',
-                        errors.citySlug ? 'border-red-400' : 'border-slate-200'
+                        errors.citySlug ? 'border-red-400' : 'border-slate-200',
                       ].join(' ')}
                     >
                       <option value="">{tt('selectCity', 'اختر المحافظة', 'Select governorate')}</option>
                       {JO_GOVS.map((c) => (
                         <option key={c.slug} value={c.slug}>
-                          {language === 'ar' ? c.ar : c.en}
+                          {isAR ? c.ar : c.en}
                         </option>
                       ))}
                     </select>
                     {errors.citySlug && <p className="mt-1 text-xs font-bold text-red-600">{errors.citySlug}</p>}
                   </div>
 
-                  {/* Detailed Address */}
+                  {/* Address */}
                   <div className="md:col-span-2">
-                    <label className="block text-xs font-bold text-slate-600 mb-2">
-                      {tt('detailedAddress', 'العنوان بالتفصيل', 'Detailed address')}
-                    </label>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">{tt('detailedAddress', 'العنوان بالتفصيل', 'Detailed address')}</label>
                     <input
                       name="streetAddress"
                       value={formData.streetAddress}
                       onChange={(e) => setField('streetAddress', e.target.value)}
                       type="text"
-                      placeholder={tt(
-                        'addressPlaceholder',
-                        'مثال: الجبيهة - شارع الجامعة - بناية 12 - شقة 5',
-                        'Example: Jubaiha - University St - Building 12 - Apt 5'
-                      )}
+                      placeholder={tt('addressPlaceholder', 'مثال: الجبيهة - شارع الجامعة - بناية 12 - شقة 5', 'Example: Jubaiha - University St - Building 12 - Apt 5')}
                       className={[
                         'w-full p-3 border rounded-xl bg-slate-50 focus:ring-2 focus:ring-secondary-DEFAULT outline-none',
-                        errors.streetAddress ? 'border-red-400' : 'border-slate-200'
+                        errors.streetAddress ? 'border-red-400' : 'border-slate-200',
                       ].join(' ')}
                       autoComplete="street-address"
                     />
-                    {errors.streetAddress && (
-                      <p className="mt-1 text-xs font-bold text-red-600">{errors.streetAddress}</p>
-                    )}
+                    {errors.streetAddress && <p className="mt-1 text-xs font-bold text-red-600">{errors.streetAddress}</p>}
                   </div>
 
-                  {/* Postal code (optional) */}
+                  {/* Postal code */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-2">
-                      {tt('postalCode', 'الرمز البريدي (اختياري)', 'Postal code (optional)')}
-                    </label>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">{tt('postalCodeOpt', 'الرمز البريدي (اختياري)', 'Postal code (optional)')}</label>
                     <input
                       name="postalCode"
                       value={formData.postalCode}
@@ -618,175 +735,77 @@ const Checkout: React.FC = () => {
                     />
                   </div>
 
-                  {/* Phone with country code */}
+                  {/* ✅ Phone global (dial + number) */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-2">{t('phone') ?? 'Phone'}</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">
+                      {tt('phone', 'رقم الهاتف', 'Phone')}
+                      <span className="text-red-500 ms-1">*</span>
+                    </label>
+
                     <div
                       className={[
                         'flex items-center gap-2 p-2 border rounded-xl bg-slate-50',
-                        errors.phoneLocal ? 'border-red-400' : 'border-slate-200'
+                        errors.phoneLocal ? 'border-red-400' : 'border-slate-200',
                       ].join(' ')}
                     >
-                      <div className="px-3 py-2 rounded-lg bg-white border border-slate-200 text-sm font-bold text-slate-700">
-                        +962
+                      <div className="flex items-center gap-2 px-2 py-1 rounded-lg bg-white border border-slate-200">
+                        <Phone size={16} className="text-slate-400" />
+                        <select
+                          value={dialCode}
+                          onChange={(e) => setDialCode(e.target.value)}
+                          className="bg-transparent outline-none text-sm font-bold text-slate-700"
+                          aria-label="dial-code"
+                        >
+                          {DIAL_OPTIONS.map((d) => (
+                            <option key={d.code} value={d.dial}>
+                              {isAR ? `${d.flag} ${d.nameAr} ${d.dial}` : `${d.flag} ${d.nameEn} ${d.dial}`}
+                            </option>
+                          ))}
+                        </select>
                       </div>
+
                       <input
                         name="phoneLocal"
                         value={formData.phoneLocal}
                         onChange={(e) => setField('phoneLocal', e.target.value)}
                         type="tel"
                         inputMode="tel"
-                        placeholder={tt('phonePlaceholder', '07xxxxxxxx', '07xxxxxxxx')}
+                        placeholder={tt('phonePlaceholder', 'اكتب رقمك بدون رمز الدولة', 'Type number without country code')}
                         className="flex-1 bg-transparent outline-none px-2 py-2 text-slate-800"
-                        autoComplete="tel-national"
+                        autoComplete="tel"
                       />
                     </div>
+
                     {errors.phoneLocal && <p className="mt-1 text-xs font-bold text-red-600">{errors.phoneLocal}</p>}
                     <p className="mt-1 text-[11px] text-slate-400 font-bold">
-                      {tt('phoneHint', 'اكتب رقمك بصيغة 07xxxxxxxx', 'Enter number as 07xxxxxxxx')}
+                      {tt('phoneHintGlobal', 'اختر رمز الدولة ثم اكتب رقمك', 'Choose country code then type your number')}
+                      <span className="mx-2 text-slate-300">•</span>
+                      <span className="text-slate-500 tabular-nums">{dialLabel}</span>
                     </p>
                   </div>
 
                   {/* Save info */}
                   <div className="md:col-span-2 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
                     <div className="min-w-0">
-                      <p className="text-sm font-bold text-slate-800">
-                        {tt('saveInfo', 'حفظ بياناتي للطلبات القادمة', 'Save my info for next time')}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {tt(
-                          'saveInfoHint',
-                          'لتسريع الطلب القادم (محلي فقط/حسب النظام)',
-                          'Speeds up next checkout (local/system dependent).'
-                        )}
-                      </p>
+                      <p className="text-sm font-bold text-slate-800">{tt('saveInfo', 'حفظ بياناتي للطلبات القادمة', 'Save my info for next time')}</p>
+                      <p className="text-xs text-slate-500">{tt('saveInfoHint', 'لتسريع الطلب القادم (حسب النظام)', 'Speeds up next checkout (system dependent).')}</p>
                     </div>
-                    <input
-                      type="checkbox"
-                      checked={!!formData.saveInfo}
-                      onChange={(e) => setField('saveInfo', e.target.checked)}
-                      className="w-5 h-5 accent-secondary-DEFAULT"
-                    />
+                    <input type="checkbox" checked={!!formData.saveInfo} onChange={(e) => setField('saveInfo', e.target.checked)} className="w-5 h-5 accent-secondary-DEFAULT" />
                   </div>
 
-                  {/* Billing address toggle */}
+                  {/* Billing toggle */}
                   <div className="md:col-span-2 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
                     <div className="min-w-0">
-                      <p className="text-sm font-bold text-slate-800">
-                        {tt('billingSame', 'عنوان الفاتورة نفس عنوان الشحن', 'Billing address same as shipping')}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {tt('billingHint', 'إذا بدك عنوان مختلف، ألغِ التحديد', 'Uncheck to use a different billing.')}
-                      </p>
+                      <p className="text-sm font-bold text-slate-800">{tt('billingSame', 'عنوان الفاتورة نفس عنوان الشحن', 'Billing address same as shipping')}</p>
+                      <p className="text-xs text-slate-500">{tt('billingHint', 'ألغِ التحديد إذا تريد عنوان مختلف', 'Uncheck to use a different billing address')}</p>
                     </div>
-                    <input
-                      type="checkbox"
-                      checked={!!formData.billingSameAsShipping}
-                      onChange={(e) => setField('billingSameAsShipping', e.target.checked)}
-                      className="w-5 h-5 accent-secondary-DEFAULT"
-                    />
+                    <input type="checkbox" checked={!!formData.billingSameAsShipping} onChange={(e) => setField('billingSameAsShipping', e.target.checked)} className="w-5 h-5 accent-secondary-DEFAULT" />
                   </div>
 
                   {/* Billing fields */}
-                  {!formData.billingSameAsShipping && (
-                    <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="md:col-span-2">
-                        <input
-                          value={formData.billingFullName}
-                          onChange={(e) => setField('billingFullName', e.target.value)}
-                          type="text"
-                          placeholder={tt('billingFullName', 'اسم الفاتورة', 'Billing full name')}
-                          className={[
-                            'w-full p-3 border rounded-xl bg-slate-50 focus:ring-2 focus:ring-secondary-DEFAULT outline-none',
-                            errors.billingFullName ? 'border-red-400' : 'border-slate-200'
-                          ].join(' ')}
-                        />
-                        {errors.billingFullName && (
-                          <p className="mt-1 text-xs font-bold text-red-600">{errors.billingFullName}</p>
-                        )}
-                      </div>
+                  
 
-                      <div>
-                        <select
-                          value={formData.billingCitySlug}
-                          onChange={(e) => setField('billingCitySlug', e.target.value)}
-                          className={[
-                            'w-full p-3 border rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-secondary-DEFAULT',
-                            errors.billingCitySlug ? 'border-red-400' : 'border-slate-200'
-                          ].join(' ')}
-                        >
-                          <option value="">{tt('selectBillingCity', 'اختر محافظة الفاتورة', 'Select billing city')}</option>
-                          {JO_GOVS.map((c) => (
-                            <option key={c.slug} value={c.slug}>
-                              {language === 'ar' ? c.ar : c.en}
-                            </option>
-                          ))}
-                        </select>
-                        {errors.billingCitySlug && (
-                          <p className="mt-1 text-xs font-bold text-red-600">{errors.billingCitySlug}</p>
-                        )}
-                      </div>
-
-                      <div>
-                        <div
-                          className={[
-                            'flex items-center gap-2 p-2 border rounded-xl bg-slate-50',
-                            errors.billingPhoneLocal ? 'border-red-400' : 'border-slate-200'
-                          ].join(' ')}
-                        >
-                          <div className="px-3 py-2 rounded-lg bg-white border border-slate-200 text-sm font-bold text-slate-700">
-                            +962
-                          </div>
-                          <input
-                            value={formData.billingPhoneLocal}
-                            onChange={(e) => setField('billingPhoneLocal', e.target.value)}
-                            type="tel"
-                            placeholder={tt('phonePlaceholder', '07xxxxxxxx', '07xxxxxxxx')}
-                            className="flex-1 bg-transparent outline-none px-2 py-2 text-slate-800"
-                          />
-                        </div>
-                        {errors.billingPhoneLocal && (
-                          <p className="mt-1 text-xs font-bold text-red-600">{errors.billingPhoneLocal}</p>
-                        )}
-                      </div>
-
-                      <div className="md:col-span-2">
-                        <input
-                          value={formData.billingStreetAddress}
-                          onChange={(e) => setField('billingStreetAddress', e.target.value)}
-                          type="text"
-                          placeholder={tt(
-                            'billingAddressPlaceholder',
-                            'عنوان الفاتورة بالتفصيل',
-                            'Billing detailed address'
-                          )}
-                          className={[
-                            'w-full p-3 border rounded-xl bg-slate-50 focus:ring-2 focus:ring-secondary-DEFAULT outline-none',
-                            errors.billingStreetAddress ? 'border-red-400' : 'border-slate-200'
-                          ].join(' ')}
-                        />
-                        {errors.billingStreetAddress && (
-                          <p className="mt-1 text-xs font-bold text-red-600">{errors.billingStreetAddress}</p>
-                        )}
-                      </div>
-
-                      <div className="md:col-span-2">
-                        <input
-                          value={formData.billingPostalCode}
-                          onChange={(e) => setField('billingPostalCode', e.target.value)}
-                          type="text"
-                          placeholder={tt(
-                            'billingPostalCode',
-                            'الرمز البريدي للفاتورة (اختياري)',
-                            'Billing postal code (optional)'
-                          )}
-                          className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 focus:ring-2 focus:ring-secondary-DEFAULT outline-none"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Policies checkbox */}
+                  {/* Policies */}
                   <div className="md:col-span-2 rounded-2xl border border-slate-100 bg-slate-50 p-4">
                     <label className="flex items-start gap-3 cursor-pointer">
                       <input
@@ -804,22 +823,12 @@ const Checkout: React.FC = () => {
                       />
                       <div className="min-w-0">
                         <p className="text-sm font-bold text-slate-800">
-                          {tt(
-                            'acceptPolicies',
-                            'أوافق على سياسات الشحن والخصوصية وشروط الخدمة',
-                            'I agree to Shipping Policy, Privacy Policy, and Terms of Service'
-                          )}
+                          {tt('acceptPolicies', 'أوافق على سياسات الشحن والخصوصية وشروط الخدمة', 'I agree to Shipping Policy, Privacy Policy, and Terms of Service')}
                         </p>
                         <p className="text-xs text-slate-500 mt-1">
-                          {tt(
-                            'policiesHint',
-                            'تقدر تضيف روابط الصفحات لاحقاً من إعدادات الموقع',
-                            'You can add policy pages links later from site settings.'
-                          )}
+                          {tt('policiesHint', 'يمكن إضافة روابط الصفحات لاحقاً', 'You can add policy pages links later')}
                         </p>
-                        {errors.acceptPolicies && (
-                          <p className="mt-2 text-xs font-bold text-red-600">{errors.acceptPolicies}</p>
-                        )}
+                        {errors.acceptPolicies && <p className="mt-2 text-xs font-bold text-red-600">{errors.acceptPolicies}</p>}
                       </div>
                     </label>
                   </div>
@@ -827,120 +836,141 @@ const Checkout: React.FC = () => {
 
                 <div className="mt-6 flex justify-end">
                   <Button onClick={goToShipping} disabled={isProcessing}>
-                    {t('continueToShipping')}
+                    {tt('continueToShipping', 'متابعة للشحن', 'Continue to shipping')}
                   </Button>
                 </div>
               </div>
             )}
 
-            {/* Step 2: Shipping */}
+            {/* Step 2 */}
             {step === 2 && (
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 animate-in fade-in slide-in-from-right">
                 <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
-                  <Truck className="text-secondary-DEFAULT" /> {t('shippingMethod')}
+                  <Truck className="text-secondary-DEFAULT" /> {tt('shippingMethod', 'طريقة الشحن', 'Shipping method')}
                 </h2>
 
-                <div className="space-y-4">
-                  {SHIPPING_METHODS.map((method: any) => (
-                    <label
-                      key={method.id}
-                      className={[
-                        'flex items-center justify-between p-4 border rounded-2xl cursor-pointer transition-all',
-                        shippingMethodId === method.id
-                          ? 'border-secondary-DEFAULT bg-secondary-light/10'
-                          : 'border-slate-200 hover:bg-slate-50'
-                      ].join(' ')}
-                    >
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="radio"
-                          name="shipping"
-                          checked={shippingMethodId === method.id}
-                          onChange={() => setShippingMethodId(method.id)}
-                          className="w-5 h-5 accent-secondary-DEFAULT"
-                        />
-                        <div>
-                          <p className="font-bold text-slate-800">{method.name}</p>
-                          <p className="text-xs text-slate-500">{method.duration}</p>
+                <div className="space-y-3">
+                  {CHECKOUT_SHIPPING_METHODS.map((method) => {
+                    const active = shippingMethodId === method.id;
+                    const Icon = method.icon || Truck;
+
+                    return (
+                      <label
+                        key={method.id}
+                        className={[
+                          'flex items-center justify-between p-4 border rounded-2xl cursor-pointer transition-all',
+                          active ? 'border-secondary-DEFAULT bg-secondary-light/10' : 'border-slate-200 hover:bg-slate-50',
+                        ].join(' ')}
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="radio"
+                            name="shipping"
+                            checked={active}
+                            onChange={() => setShippingMethodId(method.id)}
+                            className="w-5 h-5 accent-secondary-DEFAULT"
+                          />
+                          <div className="min-w-0">
+                            <p className="font-extrabold text-slate-800 flex items-center gap-2">
+                              <Icon size={16} className="text-secondary-DEFAULT" />
+                              {isAR ? method.nameAr : method.nameEn}
+                            </p>
+                            <p className="text-xs text-slate-500">{isAR ? method.durationAr : method.durationEn}</p>
+                          </div>
                         </div>
-                      </div>
-                      <span className="font-bold text-slate-800">{formatMoney(Number(method.price || 0))}</span>
-                    </label>
-                  ))}
+
+                        <span className="font-extrabold text-slate-800 tabular-nums">{formatMoney(Number(method.price || 0))}</span>
+                      </label>
+                    );
+                  })}
                 </div>
 
-                {/* ✅ Preferred delivery time (optional) */}
+                {/* موعد التوصيل (يظهر + يصير إلزامي فقط مع schedule) */}
                 <div className="mt-6 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-sm font-bold text-slate-800 mb-3">
-                    {tt('preferredDelivery', 'وقت توصيل مفضل (اختياري)', 'Preferred delivery time (optional)')}
+                  <p className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                    <CalendarClock size={18} className="text-secondary-DEFAULT" />
+                    {tt('preferredDelivery', 'موعد توصيل مفضل', 'Preferred delivery time')}
+                    <span className="text-slate-400 font-medium text-xs">
+                      {shippingMethodId === 'jo_schedule' ? tt('required', '(مطلوب)', '(required)') : tt('optional', '(اختياري)', '(optional)')}
+                    </span>
                   </p>
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <input
-                      type="date"
-                      value={preferredDeliveryDate}
-                      onChange={(e) => setPreferredDeliveryDate(e.target.value)}
-                      className="p-3 border border-slate-200 rounded-xl bg-white outline-none focus:ring-2 focus:ring-secondary-DEFAULT"
-                    />
-                    <input
-                      type="time"
-                      value={preferredDeliveryTime}
-                      onChange={(e) => setPreferredDeliveryTime(e.target.value)}
-                      className="p-3 border border-slate-200 rounded-xl bg-white outline-none focus:ring-2 focus:ring-secondary-DEFAULT"
-                    />
+                    <div>
+                      <input
+                        type="date"
+                        value={preferredDeliveryDate}
+                        onChange={(e) => {
+                          setPreferredDeliveryDate(e.target.value);
+                          setErrors((p) => {
+                            const n = { ...p };
+                            delete n.preferredDeliveryDate;
+                            return n;
+                          });
+                        }}
+                        className={[
+                          'w-full p-3 border rounded-xl bg-white outline-none focus:ring-2 focus:ring-secondary-DEFAULT',
+                          errors.preferredDeliveryDate ? 'border-red-400' : 'border-slate-200',
+                        ].join(' ')}
+                      />
+                      {errors.preferredDeliveryDate && <p className="mt-1 text-xs font-bold text-red-600">{errors.preferredDeliveryDate}</p>}
+                    </div>
+
+                    <div>
+                      <input
+                        type="time"
+                        value={preferredDeliveryTime}
+                        onChange={(e) => {
+                          setPreferredDeliveryTime(e.target.value);
+                          setErrors((p) => {
+                            const n = { ...p };
+                            delete n.preferredDeliveryTime;
+                            return n;
+                          });
+                        }}
+                        className={[
+                          'w-full p-3 border rounded-xl bg-white outline-none focus:ring-2 focus:ring-secondary-DEFAULT',
+                          errors.preferredDeliveryTime ? 'border-red-400' : 'border-slate-200',
+                        ].join(' ')}
+                      />
+                      {errors.preferredDeliveryTime && <p className="mt-1 text-xs font-bold text-red-600">{errors.preferredDeliveryTime}</p>}
+                    </div>
                   </div>
+
                   <p className="text-[11px] text-slate-500 mt-2 font-bold">
-                    {tt(
-                      'deliveryTimeHint',
-                      'الوقت المفضل حسب توفر المندوب/المنطقة',
-                      'Preferred time depends on availability.'
-                    )}
+                    {tt('deliveryTimeHint', 'قد يتغير حسب توفر المندوب والمنطقة', 'May vary based on courier and area availability.')}
                   </p>
                 </div>
 
                 <div className="mt-6 flex justify-between">
                   <Button variant="outline" onClick={() => setStep(1)} disabled={isProcessing}>
-                    {t('back')}
+                    {tt('back', 'رجوع', 'Back')}
                   </Button>
                   <Button onClick={() => setStep(3)} disabled={isProcessing}>
-                    {t('continueToPayment')}
+                    {tt('continueToPayment', 'متابعة للدفع', 'Continue to payment')}
                   </Button>
                 </div>
               </div>
             )}
 
-            {/* Step 3: Payment */}
+            {/* Step 3 */}
             {step === 3 && (
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 animate-in fade-in slide-in-from-right">
                 <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
-                  <CreditCard className="text-secondary-DEFAULT" /> {t('paymentMethod')}
+                  <DollarSign className="text-secondary-DEFAULT" /> {tt('paymentMethod', 'طريقة الدفع', 'Payment method')}
                 </h2>
 
                 <div className="flex flex-wrap gap-3 mb-6">
                   <button
-                    onClick={() => setPaymentMethod('card')}
-                    type="button"
-                    className={[
-                      'flex-1 min-w-[140px] py-3 rounded-2xl border font-bold transition-all',
-                      paymentMethod === 'card'
-                        ? 'border-secondary-DEFAULT bg-secondary-light/10 text-secondary-DEFAULT'
-                        : 'border-slate-200 text-slate-500 hover:bg-slate-50'
-                    ].join(' ')}
-                  >
-                    {t('creditCard')}
-                  </button>
-
-                  <button
                     onClick={() => setPaymentMethod('cliq')}
                     type="button"
                     className={[
-                      'flex-1 min-w-[140px] py-3 rounded-2xl border font-bold transition-all',
-                      paymentMethod === 'cliq'
-                        ? 'border-blue-700 bg-blue-50 text-blue-900'
-                        : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                      'flex-1 min-w-[160px] py-3 rounded-2xl border font-extrabold transition-all',
+                      paymentMethod === 'cliq' ? 'border-blue-700 bg-blue-50 text-blue-900' : 'border-slate-200 text-slate-500 hover:bg-slate-50',
                     ].join(' ')}
                   >
-                    <div className="flex items-center justify-center gap-1">
-                      <Smartphone size={16} /> CliQ
+                    <div className="flex items-center justify-center gap-2">
+                      <Smartphone size={18} /> CliQ
                     </div>
                   </button>
 
@@ -948,133 +978,66 @@ const Checkout: React.FC = () => {
                     onClick={() => setPaymentMethod('cod')}
                     type="button"
                     className={[
-                      'flex-1 min-w-[140px] py-3 rounded-2xl border font-bold transition-all',
-                      paymentMethod === 'cod'
-                        ? 'border-green-500 bg-green-50 text-green-700'
-                        : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                      'flex-1 min-w-[160px] py-3 rounded-2xl border font-extrabold transition-all',
+                      paymentMethod === 'cod' ? 'border-green-500 bg-green-50 text-green-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50',
                     ].join(' ')}
                   >
-                    <div className="flex items-center justify-center gap-1">
-                      <DollarSign size={16} /> {t('cod')}
+                    <div className="flex items-center justify-center gap-2">
+                      <DollarSign size={18} /> {tt('cod', 'الدفع عند الاستلام', 'Cash on delivery')}
                     </div>
                   </button>
                 </div>
 
-                {paymentMethod === 'card' && (
-                  <div className="space-y-4">
-                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-800 text-sm">
-                      {t('cardDemoHint') ??
-                        'Demo UI only: connect a real payment gateway (CliQ / Cash / Stripe) for production.'}
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-1">{t('cardNumber')}</label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          placeholder="0000 0000 0000 0000"
-                          className="w-full pl-12 pr-4 py-3 bg-slate-50 border rounded-2xl outline-none focus:border-secondary-DEFAULT"
-                        />
-                        <CreditCard className="absolute left-4 top-3.5 text-slate-400" size={20} />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <input
-                        type="text"
-                        placeholder="MM/YY"
-                        className="p-3 bg-slate-50 border rounded-2xl outline-none focus:border-secondary-DEFAULT"
-                      />
-                      <input
-                        type="text"
-                        placeholder="CVC"
-                        className="p-3 bg-slate-50 border rounded-2xl outline-none focus:border-secondary-DEFAULT"
-                      />
-                    </div>
-
-                    <div className="flex items-center gap-2 text-xs text-slate-500 mt-2">
-                      <Shield size={14} className="text-green-500" />
-                      {t('secureData') ?? 'Your payment details are protected.'}
-                    </div>
-
-                    <Button onClick={handlePlaceOrder} className="w-full mt-4" isLoading={isProcessing}>
-                      {t('pay')} {formatMoney(total)}
-                    </Button>
-                  </div>
-                )}
-
                 {paymentMethod === 'cliq' && (
                   <div className="space-y-6">
                     <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
-                      <p className="text-sm text-blue-800 mb-2 font-bold">
-                        {t('cliqTransferHint') ?? 'Transfer the total amount to this CliQ ID:'}
-                      </p>
-                      <div className="text-3xl font-bold text-blue-900 tracking-wider mb-2 select-all cursor-pointer bg-white/60 p-2 rounded-xl inline-block">
+                      <p className="text-sm text-blue-800 mb-2 font-extrabold">{tt('cliqTransferHint', 'حوّل المبلغ إلى معرف CliQ التالي:', 'Transfer the total amount to this CliQ ID:')}</p>
+                      <div className="text-3xl font-extrabold text-blue-900 tracking-wider mb-2 select-all cursor-pointer bg-white/60 p-2 rounded-xl inline-block">
                         ANTASTORE
                       </div>
-                      <p className="text-xs text-blue-700">{t('cliqRecipient') ?? 'Recipient:'} مكتبة دير شرف العلمية Tech & Art</p>
+                      <p className="text-xs text-blue-700">
+                        {tt('cliqRecipient', 'المستفيد:', 'Recipient:')} {tt('recipientName', 'مكتبة دير شرف العلمية Tech & Art', 'Dair Sharaf Library Tech & Art')}
+                      </p>
                       <p className="text-xs text-blue-700 mt-1">
-                        {t('amount') ?? 'Amount:'} <span className="font-bold">{formatMoney(total)}</span>
+                        {tt('amount', 'المبلغ:', 'Amount:')} <span className="font-extrabold">{formatMoney(total)}</span>
                       </p>
                     </div>
 
                     <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
-                        {t('referenceOrReceipt') ?? 'Reference Number / Receipt'}
-                      </label>
+                      <label className="block text-sm font-extrabold text-slate-700 mb-2">{tt('referenceOrReceipt', 'رقم المرجع / صورة التحويل', 'Reference Number / Receipt')}</label>
 
                       <input
                         type="text"
-                        placeholder={t('enterCliqRef') ?? 'Enter CliQ Reference Number'}
+                        placeholder={tt('enterCliqRef', 'أدخل رقم مرجع CliQ', 'Enter CliQ reference number')}
                         value={cliqRef}
                         onChange={(e) => setCliqRef(e.target.value)}
-                        className="w-full p-3 bg-slate-50 border rounded-2xl outline-none focus:border-secondary-DEFAULT mb-3"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:border-secondary-DEFAULT mb-3"
                       />
 
                       <label className="block">
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => handleCliqReceiptPick(e.target.files?.[0] ?? null)}
-                        />
+                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleCliqReceiptPick(e.target.files?.[0] ?? null)} />
                         <div className="border-2 border-dashed border-slate-200 rounded-2xl p-6 text-center hover:bg-slate-50 cursor-pointer transition-colors">
                           <Upload className="mx-auto text-slate-400 mb-2" />
-                          <span className="text-sm text-slate-600 font-bold">
-                            {t('uploadReceipt') ?? 'Upload transfer screenshot (optional)'}
-                          </span>
-                          <p className="text-xs text-slate-400 mt-1">{t('uploadHint') ?? 'PNG/JPG up to ~2.5MB'}</p>
+                          <span className="text-sm text-slate-600 font-extrabold">{tt('uploadReceipt', 'ارفع صورة التحويل (اختياري)', 'Upload transfer screenshot (optional)')}</span>
+                          <p className="text-xs text-slate-400 mt-1">{tt('uploadHint', 'PNG/JPG حتى ~2.5MB', 'PNG/JPG up to ~2.5MB')}</p>
                         </div>
                       </label>
 
                       {cliqReceiptDataUrl && (
                         <div className="mt-4 rounded-2xl border border-slate-100 bg-white p-3">
-                          <div className="flex items-center gap-2 text-sm font-bold text-slate-700 mb-2">
-                            <ImageIcon size={16} /> {t('receiptPreview') ?? 'Receipt preview'}
+                          <div className="flex items-center gap-2 text-sm font-extrabold text-slate-700 mb-2">
+                            <ImageIcon size={16} /> {tt('receiptPreview', 'معاينة الصورة', 'Receipt preview')}
                           </div>
-                          <img
-                            src={cliqReceiptDataUrl}
-                            alt="CliQ receipt preview"
-                            className="w-full max-h-72 object-contain rounded-xl bg-slate-50"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setCliqReceiptDataUrl('')}
-                            className="mt-3 text-xs font-bold text-red-600 hover:opacity-80"
-                          >
-                            {t('remove') ?? 'Remove'}
+                          <img src={cliqReceiptDataUrl} alt="CliQ receipt preview" className="w-full max-h-72 object-contain rounded-xl bg-slate-50" />
+                          <button type="button" onClick={() => setCliqReceiptDataUrl('')} className="mt-3 text-xs font-extrabold text-red-600 hover:opacity-80">
+                            {tt('remove', 'حذف', 'Remove')}
                           </button>
                         </div>
                       )}
                     </div>
 
-                    <Button
-                      onClick={handlePlaceOrder}
-                      className="w-full bg-blue-900 hover:bg-blue-800 text-white"
-                      isLoading={isProcessing}
-                      disabled={isProcessing}
-                    >
-                      {t('confirmOrder') ?? 'Confirm Order'}
+                    <Button onClick={handlePlaceOrder} className="w-full bg-blue-900 hover:bg-blue-800 text-white" isLoading={isProcessing} disabled={isProcessing}>
+                      {tt('confirmOrder', 'تأكيد الطلب', 'Confirm order')}
                     </Button>
                   </div>
                 )}
@@ -1085,50 +1048,37 @@ const Checkout: React.FC = () => {
                       <DollarSign size={32} />
                     </div>
                     <p className="text-slate-600 font-medium">
-                      {t('codHint') ?? 'You will pay cash upon delivery.'} —{' '}
-                      <span className="font-bold">{formatMoney(total)}</span>
+                      {tt('codHint', 'ستدفع عند الاستلام', 'You will pay cash upon delivery.')} — <span className="font-extrabold">{formatMoney(total)}</span>
                     </p>
-                    <Button
-                      onClick={handlePlaceOrder}
-                      className="w-full bg-green-600 hover:bg-green-700 text-white"
-                      isLoading={isProcessing}
-                      disabled={isProcessing}
-                    >
-                      {t('confirmOrder')}
+                    <Button onClick={handlePlaceOrder} className="w-full bg-green-600 hover:bg-green-700 text-white" isLoading={isProcessing} disabled={isProcessing}>
+                      {tt('confirmOrder', 'تأكيد الطلب', 'Confirm order')}
                     </Button>
                   </div>
                 )}
 
                 <div className="mt-6">
                   <Button variant="outline" onClick={() => setStep(2)} disabled={isProcessing}>
-                    {t('back')}
+                    {tt('back', 'رجوع', 'Back')}
                   </Button>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Summary Section */}
+          {/* Summary */}
           <div className="lg:w-96">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 sticky top-24">
-              <h3 className="font-bold text-lg mb-4">{t('orderSummary')}</h3>
+              <h3 className="font-extrabold text-lg mb-4">{tt('orderSummary', 'ملخص الطلب', 'Order summary')}</h3>
 
               <div className="space-y-4 max-h-72 overflow-y-auto pr-2 custom-scrollbar mb-4">
                 {cart.map((item: any) => (
                   <div key={item.id} className="flex gap-3">
-                    <LazyImage
-                      src={item.image}
-                      alt={item.name}
-                      className="w-12 h-12 rounded-xl object-cover"
-                      containerClassName="w-12 h-12 rounded-xl shrink-0"
-                    />
+                    <LazyImage src={item.image} alt={item.name} className="w-12 h-12 rounded-xl object-cover" containerClassName="w-12 h-12 rounded-xl shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-slate-800 line-clamp-1">{getProductTitle(item)}</p>
+                      <p className="text-sm font-extrabold text-slate-800 line-clamp-1">{getProductTitle(item)}</p>
                       <div className="flex justify-between text-xs text-slate-500 mt-1">
-                        <span>x{clampQty(item.quantity)}</span>
-                        <span className="font-bold text-slate-700">
-                          {formatMoney(Number(item.price || 0) * clampQty(item.quantity))}
-                        </span>
+                        <span className="tabular-nums">x{clampQty(item.quantity)}</span>
+                        <span className="font-extrabold text-slate-700 tabular-nums">{formatMoney(Number(item.price || 0) * clampQty(item.quantity))}</span>
                       </div>
                     </div>
                   </div>
@@ -1137,30 +1087,30 @@ const Checkout: React.FC = () => {
 
               <div className="border-t border-slate-100 pt-4 space-y-2 text-sm">
                 <div className="flex justify-between text-slate-600">
-                  <span>{t('subtotal')}</span>
-                  <span className="font-bold">{formatMoney(subtotal)}</span>
+                  <span>{tt('subtotal', 'المجموع الفرعي', 'Subtotal')}</span>
+                  <span className="font-extrabold tabular-nums">{formatMoney(subtotal)}</span>
                 </div>
 
                 <div className="flex justify-between text-green-700">
-                  <span>{t('discount')}</span>
-                  <span className="font-bold">-{formatMoney(discountAmount)}</span>
+                  <span>{tt('discount', 'خصم', 'Discount')}</span>
+                  <span className="font-extrabold tabular-nums">-{formatMoney(discountAmount)}</span>
                 </div>
 
                 <div className="flex justify-between text-slate-600">
                   <span>
-                    {t('shipping')} ({selectedShipping?.name})
+                    {tt('shipping', 'الشحن', 'Shipping')} ({shippingLabel})
                   </span>
-                  <span className="font-bold">{formatMoney(shippingCost)}</span>
+                  <span className="font-extrabold tabular-nums">{formatMoney(shippingCost)}</span>
                 </div>
 
-                <div className="flex justify-between text-lg font-bold text-slate-900 border-t border-slate-100 pt-2 mt-2">
-                  <span>{t('total')}</span>
-                  <span>{formatMoney(total)}</span>
+                <div className="flex justify-between text-lg font-extrabold text-slate-900 border-t border-slate-100 pt-2 mt-2">
+                  <span>{tt('total', 'الإجمالي', 'Total')}</span>
+                  <span className="tabular-nums">{formatMoney(total)}</span>
                 </div>
 
                 {safeTrim(orderNote) && (
                   <div className="mt-3 rounded-2xl bg-slate-50 border border-slate-100 p-3 text-xs text-slate-600">
-                    <span className="font-bold">{t('orderNote') ?? 'Order note'}:</span>{' '}
+                    <span className="font-extrabold">{tt('orderNote', 'ملاحظة الطلب', 'Order note')}:</span>{' '}
                     <span className="text-slate-700">{safeTrim(orderNote)}</span>
                   </div>
                 )}
@@ -1168,7 +1118,7 @@ const Checkout: React.FC = () => {
                 <div className="mt-3 rounded-2xl bg-slate-50 border border-slate-100 p-3 text-xs text-slate-500">
                   <div className="flex items-center gap-2">
                     <Shield size={14} className="text-green-600" />
-                    <span>{t('secureCheckoutNote') ?? 'Secure checkout. Your information is protected.'}</span>
+                    <span>{tt('secureCheckoutNote', 'عملية دفع آمنة. معلوماتك محمية.', 'Secure checkout. Your information is protected.')}</span>
                   </div>
                 </div>
               </div>
@@ -1176,23 +1126,45 @@ const Checkout: React.FC = () => {
               <button
                 type="button"
                 onClick={() => navigate('/cart')}
-                className="mt-5 w-full text-sm font-bold text-secondary-DEFAULT hover:opacity-80 transition"
+                className="mt-5 w-full text-sm font-extrabold text-secondary-DEFAULT hover:opacity-80 transition"
               >
-                {t('editCart') ?? 'Edit cart'}
+                {tt('editCart', 'تعديل السلة', 'Edit cart')}
               </button>
 
-              {/* ✅ تعديل الملاحظة من هنا */}
+              {/* Order note editor */}
               <div className="mt-4">
-                <label className="block text-xs font-bold text-slate-600 mb-2">{t('orderNote') ?? 'Order note'}</label>
+                <label className="block text-xs font-extrabold text-slate-600 mb-2">{tt('orderNote', 'ملاحظة الطلب', 'Order note')}</label>
                 <textarea
                   value={orderNote || ''}
                   onChange={(e) => setOrderNote(e.target.value)}
                   maxLength={600}
-                  placeholder={t('orderNotePlaceholder') ?? 'Write a note for the seller...'}
+                  placeholder={tt('orderNotePlaceholder', 'اكتب ملاحظة للبائع…', 'Write a note for the seller...')}
                   className="w-full min-h-[70px] resize-none p-3 rounded-2xl bg-slate-50 border border-slate-200 outline-none focus:border-secondary-DEFAULT focus:ring-2 focus:ring-secondary-DEFAULT/30 text-sm"
                 />
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Bottom mobile action (اختياري/احترافي) */}
+        <div className="lg:hidden mt-8">
+          <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs text-slate-500">{tt('total', 'الإجمالي', 'Total')}</div>
+              <div className="text-lg font-extrabold text-slate-900 tabular-nums">{formatMoney(total)}</div>
+            </div>
+
+            <Button
+              onClick={() => {
+                if (step === 1) goToShipping();
+                else if (step === 2) setStep(3);
+                else handlePlaceOrder();
+              }}
+              className="px-5"
+              isLoading={isProcessing}
+            >
+              {step === 1 ? tt('continueToShipping', 'متابعة', 'Continue') : step === 2 ? tt('continueToPayment', 'متابعة', 'Continue') : tt('confirmOrder', 'تأكيد', 'Confirm')}
+            </Button>
           </div>
         </div>
       </div>
