@@ -562,8 +562,25 @@ const Checkout: React.FC = () => {
             },
       };
 
-      await db.orders.create(newOrder);
+const workerUrl = import.meta.env.VITE_WORKER_URL;
 
+if (!workerUrl) {
+  throw new Error('VITE_WORKER_URL is missing');
+}
+
+const response = await fetch(`${workerUrl}/create-order`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({ order: newOrder }),
+});
+
+const result = await response.json();
+
+if (!response.ok || !result?.ok) {
+  throw new Error(result?.message || 'create-order failed');
+}
       try {
         sessionStorage.setItem(
           `order_success_${newOrder.id}`,
