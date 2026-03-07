@@ -1,5 +1,7 @@
 // src/pages/AdminDashboard.tsx
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
+import { getFirestoreDb, firebaseReady as fbReady } from '../services/firebase';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import Papa from 'papaparse';
 import {
   BarChart,
@@ -165,10 +167,21 @@ const safeText = (v: any) => String(v ?? '').trim();
 
 const statusBadge = (status?: string) => {
   const s = safeText(status).toLowerCase();
+  if (s === 'new') return 'bg-purple-100 text-purple-700';
+  if (s === 'processing') return 'bg-yellow-100 text-yellow-800';
   if (s === 'delivered') return 'bg-green-100 text-green-700';
   if (s === 'shipped') return 'bg-blue-100 text-blue-700';
   if (s === 'cancelled') return 'bg-red-100 text-red-700';
-  return 'bg-yellow-100 text-yellow-800';
+  return 'bg-slate-100 text-slate-700';
+};
+
+const toMillis = (v: any): number => {
+  if (!v) return 0;
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') return Number.isFinite(Date.parse(v)) ? Date.parse(v) : 0;
+  if (typeof v?.toMillis === 'function') return v.toMillis();
+  if (typeof v?.seconds === 'number') return v.seconds * 1000;
+  return 0;
 };
 
 const AdminDashboard: React.FC = () => {
@@ -181,6 +194,11 @@ const AdminDashboard: React.FC = () => {
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [stats, setStats] = useState({ sales: 0, orders: 0, users: 0, avg: 0 });
+
+  // ✅ New orders badge + realtime detection
+  const [newOrdersCount, setNewOrdersCount] = useState(0);
+  const prevNewIdsRef = useRef<Set<string>>(new Set());
+  const initializedRef = useRef(false);
 
   // Search (debounced)
   const [searchTerm, setSearchTerm] = useState('');
@@ -207,7 +225,13 @@ const AdminDashboard: React.FC = () => {
     orderId: undefined,
     url: undefined,
   });
-
+const [orderDetailsModal, setOrderDetailsModal] = useState<{
+  open: boolean;
+  order: Order | null;
+}>({
+  open: false,
+  order: null,
+});
   const firebaseReady = useMemo(() => getFirebaseReady(), []);
 
   const moneyFmt = useMemo(() => {
@@ -242,6 +266,51 @@ const AdminDashboard: React.FC = () => {
     [showToast, t]
   );
 
+  const dateTimeFmt = useMemo(() => {
+  try {
+    return new Intl.DateTimeFormat(language === 'ar' ? 'ar-JO' : 'en-JO', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
+  } catch {
+    return null;
+  }
+}, [language]);
+
+const formatDateTime = useCallback(
+  (value: any) => {
+    const ms = toMillis(value);
+    if (!ms) return safeText(value) || '—';
+    return dateTimeFmt ? dateTimeFmt.format(new Date(ms)) : new Date(ms).toLocaleString();
+  },
+  [dateTimeFmt]
+);
+
+const paymentLabel = useCallback(
+  (paymentMethod?: string) => {
+    const pm = safeText(paymentMethod).toLowerCase();
+    if (!pm) return '—';
+    if (pm === 'cod') return t('cod') ?? 'الدفع عند الاستلام';
+    if (pm === 'cliq') return t('cliq') ?? 'CliQ';
+    if (pm === 'card') return t('creditCard') ?? 'بطاقة';
+    if (pm === 'paypal') return 'PayPal';
+    return paymentMethod || '—';
+  },
+  [t]
+);
+
+const openOrderDetails = useCallback((order: Order) => {
+  setOrderDetailsModal({ open: true, order });
+}, []);
+
+const closeOrderDetails = useCallback(() => {
+  setOrderDetailsModal({ open: false, order: null });
+}, []);
+
+const selectedOrder: any = orderDetailsModal.order;
+const selectedOrderStatus = safeText(selectedOrder?.status).toLowerCase();
+const selectedOrderCliqRef = safeText(selectedOrder?.paymentDetails?.cliqReference);
+const selectedOrderReceipt = safeText(selectedOrder?.paymentDetails?.receiptImage);
   // Debounce search input
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchTerm), 250);
@@ -253,25 +322,98 @@ const AdminDashboard: React.FC = () => {
     setPage(1);
   }, [debouncedSearch]);
 
-  // Load Orders + Stats
+  /**
+   * ✅ World-Class Orders:
+   * - Realtime subscription when available: db.orders.subscribeAll
+   * - Fallback to getAll if subscribeAll not present
+   */
   useEffect(() => {
-    const fetchOrders = async () => {
-      const allOrders = await db.orders.getAll();
-      setOrders(allOrders);
+    const maybeSubscribe = (db as any)?.orders?.subscribeAll;
 
-      const totalSales = allOrders.reduce((sum, o: any) => sum + (Number(o.total) || 0), 0);
+    // ✅ Realtime
+    if (typeof maybeSubscribe === 'function') {
+  const unsub = maybeSubscribe(
+    (allOrders: any[]) => {
+      const sorted = [...(allOrders || [])].sort(
+        (a, b) => toMillis(b.createdAt) - toMillis(a.createdAt)
+      );
+
+      setOrders(sorted);
+
+      const totalSales = sorted.reduce(
+        (sum, o: any) => sum + (Number(o.total) || 0),
+        0
+      );
       const totalUsers = JSON.parse(localStorage.getItem('anta_users') || '[]').length;
 
       setStats({
         sales: totalSales,
-        orders: allOrders.length,
+        orders: sorted.length,
         users: totalUsers,
-        avg: allOrders.length > 0 ? Math.round(totalSales / allOrders.length) : 0,
+        avg: sorted.length > 0 ? Math.round(totalSales / sorted.length) : 0,
       });
+
+      const newIds = sorted
+        .filter((o: any) => String(o.status || '').toLowerCase() === 'new')
+        .map((o: any) => String(o.id));
+
+      setNewOrdersCount(newIds.length);
+
+      const prev = prevNewIdsRef.current;
+      const current = new Set(newIds);
+
+      if (initializedRef.current) {
+        const hasNew = newIds.some((id) => !prev.has(id));
+        if (hasNew) showToast?.('✅ طلب جديد وصل!', 'success');
+      } else {
+        initializedRef.current = true;
+      }
+
+      prevNewIdsRef.current = current;
+    },
+    (error: any) => {
+      console.error('Admin orders subscription error:', error);
+      showToast?.('فشل تحميل الطلبات من قاعدة البيانات. راجع Console.', 'error');
+    }
+  );
+
+  return () => {
+    try {
+      unsub?.();
+    } catch {}
+  };
+}
+
+    // ✅ Fallback (one-time load)
+    let alive = true;
+    const run = async () => {
+      try {
+        const allOrders = await db.orders.getAll();
+        if (!alive) return;
+
+        const sorted = [...(allOrders || [])].sort((a: any, b: any) => toMillis(b.createdAt) - toMillis(a.createdAt));
+        setOrders(sorted);
+
+        const totalSales = sorted.reduce((sum, o: any) => sum + (Number(o.total) || 0), 0);
+        const totalUsers = JSON.parse(localStorage.getItem('anta_users') || '[]').length;
+
+        setStats({
+          sales: totalSales,
+          orders: sorted.length,
+          users: totalUsers,
+          avg: sorted.length > 0 ? Math.round(totalSales / sorted.length) : 0,
+        });
+
+        const newCount = sorted.filter((o: any) => String(o.status || '').toLowerCase() === 'new').length;
+        setNewOrdersCount(newCount);
+      } catch {}
     };
 
-    fetchOrders();
-  }, [products]);
+    run();
+    return () => {
+      alive = false;
+    };
+  }, [showToast]);
 
   const handleDeleteProduct = async (id: string) => {
     if (window.confirm(t('confirmDelete') ?? 'Are you sure you want to delete this product?')) {
@@ -337,10 +479,25 @@ const AdminDashboard: React.FC = () => {
   };
 
   const handleUpdateOrderStatus = async (id: string, newStatus: any) => {
-    const updated = await db.orders.updateStatus(id, newStatus);
-    setOrders(updated);
-    showToast(`${t('updated') ?? 'Updated'}: ${id} → ${newStatus}`, 'success');
-  };
+  const updated = await db.orders.updateStatus(id, newStatus);
+  setOrders(updated);
+
+  setOrderDetailsModal((prev) => {
+    if (!prev.order || (prev.order as any).id !== id) return prev;
+
+    return {
+      ...prev,
+      order: {
+        ...(prev.order as any),
+        status: newStatus,
+        updatedAt: new Date().toISOString(),
+        seenByAdmin: true,
+      },
+    };
+  });
+
+  showToast(`${t('updated') ?? 'Updated'}: ${id} → ${newStatus}`, 'success');
+};
 
   // --- Sitemap Generation (HashRouter compatible) ---
   const generateSitemap = () => {
@@ -577,13 +734,8 @@ const AdminDashboard: React.FC = () => {
 
   // ✅ UPDATED: Cloudinary optimized thumbnail (no forced JPG)
   const toThumb = (url?: string) => {
-  // ✅ لا نضيف أي Transform هنا
-  // LazyImage.tsx عندك مسؤول عن:
-  // - cloudinarySize (thumb)
-  // - srcSet (responsiveWidths)
-  // - iOS-safe format (f_jpg) + q_auto + dpr_auto
-  return url || '';
-};
+    return url || '';
+  };
 
   const fromIdx = Math.min((page - 1) * PAGE_SIZE + 1, filteredProducts.length || 0);
   const toIdx = Math.min(page * PAGE_SIZE, filteredProducts.length || 0);
@@ -621,6 +773,11 @@ const AdminDashboard: React.FC = () => {
             }`}
           >
             {t('orderManagement')}
+            {newOrdersCount > 0 && (
+              <span className="ms-2 inline-flex items-center justify-center min-w-[20px] h-5 px-2 rounded-full bg-red-600 text-white text-xs font-extrabold">
+                {newOrdersCount}
+              </span>
+            )}
           </button>
 
           <button
@@ -649,7 +806,8 @@ const AdminDashboard: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
               {[
                 { title: t('totalSales'), value: money(stats.sales), icon: DollarSign, color: 'bg-green-100 text-green-600' },
-                { title: t('newOrders'), value: stats.orders.toLocaleString(), icon: Package, color: 'bg-blue-100 text-blue-600' },
+                // ✅ show NEW orders count (not total)
+                { title: t('newOrders'), value: Number(newOrdersCount).toLocaleString(), icon: Package, color: 'bg-blue-100 text-blue-600' },
                 { title: t('users'), value: stats.users.toLocaleString(), icon: Users, color: 'bg-purple-100 text-purple-600' },
                 { title: 'Avg Order Value', value: money(stats.avg), icon: BarChart, color: 'bg-orange-100 text-orange-600' },
               ].map((stat, idx) => (
@@ -908,7 +1066,14 @@ const AdminDashboard: React.FC = () => {
         {/* ORDERS */}
         {activeTab === 'orders' && (
           <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 animate-in fade-in">
-            <h3 className="font-bold text-lg mb-6">{t('orderManagement')}</h3>
+            <h3 className="font-bold text-lg mb-6 flex items-center gap-3">
+              {t('orderManagement')}
+              {newOrdersCount > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[22px] h-6 px-2 rounded-full bg-red-600 text-white text-xs font-extrabold">
+                  {newOrdersCount}
+                </span>
+              )}
+            </h3>
 
             <div className="overflow-x-auto">
               <table className="w-full text-sm text-left rtl:text-right">
@@ -930,6 +1095,7 @@ const AdminDashboard: React.FC = () => {
                     const pm = safeText(order.paymentMethod).toLowerCase();
                     const cliqRef = safeText(order.paymentDetails?.cliqReference);
                     const receipt = safeText(order.paymentDetails?.receiptImage);
+                    const st = safeText(order.status).toLowerCase();
 
                     return (
                       <tr key={order.id} className="hover:bg-slate-50 transition-colors align-top">
@@ -1026,26 +1192,51 @@ const AdminDashboard: React.FC = () => {
                         <td className="px-4 py-3 font-bold whitespace-nowrap">{money(Number(order.total || 0))}</td>
 
                         <td className="px-4 py-3">
-                          <div className="flex flex-wrap gap-2">
-                            {order.status === 'processing' && (
-                              <button
-                                onClick={() => handleUpdateOrderStatus(order.id, 'shipped')}
-                                className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-xl text-xs font-bold hover:bg-blue-100 border border-blue-100"
-                              >
-                                {t('ship') ?? 'Ship'}
-                              </button>
-                            )}
+  <div className="flex flex-wrap gap-2">
+    <button
+      onClick={() => openOrderDetails(order)}
+      className="px-3 py-1.5 bg-slate-50 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-100 border border-slate-200"
+    >
+      تفاصيل
+    </button>
 
-                            {order.status === 'shipped' && (
-                              <button
-                                onClick={() => handleUpdateOrderStatus(order.id, 'delivered')}
-                                className="px-3 py-1.5 bg-green-50 text-green-700 rounded-xl text-xs font-bold hover:bg-green-100 border border-green-100"
-                              >
-                                {t('deliver') ?? 'Deliver'}
-                              </button>
-                            )}
-                          </div>
-                        </td>
+    {st === 'new' && (
+      <button
+        onClick={() => handleUpdateOrderStatus(order.id, 'processing')}
+        className="px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold hover:bg-emerald-100 border border-emerald-100"
+      >
+        قبول الطلب
+      </button>
+    )}
+
+    {st === 'processing' && (
+      <button
+        onClick={() => handleUpdateOrderStatus(order.id, 'shipped')}
+        className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-xl text-xs font-bold hover:bg-blue-100 border border-blue-100"
+      >
+        قيد الشحن
+      </button>
+    )}
+
+    {st === 'shipped' && (
+      <button
+        onClick={() => handleUpdateOrderStatus(order.id, 'delivered')}
+        className="px-3 py-1.5 bg-green-50 text-green-700 rounded-xl text-xs font-bold hover:bg-green-100 border border-green-100"
+      >
+        تم التسليم
+      </button>
+    )}
+
+    {st !== 'delivered' && st !== 'cancelled' && (
+      <button
+        onClick={() => handleUpdateOrderStatus(order.id, 'cancelled')}
+        className="px-3 py-1.5 bg-red-50 text-red-700 rounded-xl text-xs font-bold hover:bg-red-100 border border-red-100"
+      >
+        إلغاء
+      </button>
+    )}
+  </div>
+</td>
                       </tr>
                     );
                   })}
@@ -1112,7 +1303,281 @@ const AdminDashboard: React.FC = () => {
           </div>
         )}
       </div>
+{orderDetailsModal.open && selectedOrder && (
+  <div className="fixed inset-0 z-[79] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={closeOrderDetails} />
 
+    <div className="relative z-[80] w-full max-w-5xl bg-white rounded-3xl border border-slate-100 shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
+      <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm text-slate-500">تفاصيل الطلب</p>
+          <p className="font-bold text-slate-900 break-all">{safeText(selectedOrder?.id)}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${statusBadge(selectedOrder?.status)}`}>
+              {t(selectedOrder?.status ?? '') ?? safeText(selectedOrder?.status) ?? '—'}
+            </span>
+            <span className="text-xs text-slate-500">
+              أُنشئ: {formatDateTime(selectedOrder?.createdAt || selectedOrder?.date)}
+            </span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          className="p-2 rounded-xl border border-slate-200 hover:bg-slate-50"
+          onClick={closeOrderDetails}
+          aria-label="Close"
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      <div className="p-5 overflow-y-auto bg-slate-50">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+          <div className="xl:col-span-2 space-y-5">
+            <div className="bg-white rounded-2xl border border-slate-100 p-4">
+              <h4 className="font-bold text-slate-900 mb-4">المنتجات المطلوبة</h4>
+
+              <div className="space-y-3">
+                {(selectedOrder?.items || []).map((item: any, idx: number) => (
+                  <div key={`${item?.productId || item?.id || idx}`} className="flex gap-3 p-3 rounded-2xl border border-slate-100 bg-slate-50">
+                    <LazyImage
+                      src={safeText(item?.image)}
+                      alt={safeText(item?.name) || `item-${idx + 1}`}
+                      className="w-16 h-16 rounded-xl object-cover bg-white"
+                      containerClassName="w-16 h-16 rounded-xl shrink-0"
+                    />
+
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-slate-900 break-words">{safeText(item?.name) || '—'}</p>
+                      <p className="text-xs text-slate-500 mt-1">Product ID: {safeText(item?.productId) || '—'}</p>
+
+                      <div className="mt-2 flex flex-wrap gap-3 text-sm text-slate-600">
+                        <span>الكمية: <span className="font-bold text-slate-900">{Number(item?.quantity || 0)}</span></span>
+                        <span>السعر: <span className="font-bold text-slate-900">{money(Number(item?.price || 0))}</span></span>
+                        <span>الإجمالي: <span className="font-bold text-slate-900">{money(Number(item?.price || 0) * Number(item?.quantity || 0))}</span></span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {(!selectedOrder?.items || selectedOrder.items.length === 0) && (
+                  <div className="text-sm text-slate-500">لا توجد عناصر داخل هذا الطلب.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 p-4">
+              <h4 className="font-bold text-slate-900 mb-4">بيانات العميل والتوصيل</h4>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-slate-500 mb-1">الاسم</p>
+                  <p className="font-bold text-slate-900 break-words">{safeText(selectedOrder?.address?.fullName) || '—'}</p>
+                </div>
+
+                <div>
+                  <p className="text-slate-500 mb-1">الهاتف</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold text-slate-900 break-all">{safeText(selectedOrder?.address?.phone) || '—'}</p>
+                    {safeText(selectedOrder?.address?.phone) && (
+                      <button
+                        type="button"
+                        className="p-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50"
+                        onClick={() => copyToClipboard(safeText(selectedOrder?.address?.phone), 'تم نسخ رقم الهاتف')}
+                      >
+                        <Copy size={13} className="text-slate-600" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="md:col-span-2">
+                  <p className="text-slate-500 mb-1">البريد الإلكتروني</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold text-slate-900 break-all">{safeText(selectedOrder?.customerEmail) || '—'}</p>
+                    {safeText(selectedOrder?.customerEmail) && (
+                      <button
+                        type="button"
+                        className="p-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50"
+                        onClick={() => copyToClipboard(safeText(selectedOrder?.customerEmail), 'تم نسخ البريد الإلكتروني')}
+                      >
+                        <Copy size={13} className="text-slate-600" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-slate-500 mb-1">المحافظة / المدينة</p>
+                  <p className="font-bold text-slate-900">{safeText(selectedOrder?.address?.city) || '—'}</p>
+                </div>
+
+                <div>
+                  <p className="text-slate-500 mb-1">طريقة الشحن</p>
+                  <p className="font-bold text-slate-900">{safeText(selectedOrder?.shippingMethod) || '—'}</p>
+                </div>
+
+                <div className="md:col-span-2">
+                  <p className="text-slate-500 mb-1">العنوان الكامل</p>
+                  <p className="font-bold text-slate-900 break-words">{safeText(selectedOrder?.address?.street) || '—'}</p>
+                </div>
+
+                {(safeText(selectedOrder?.deliveryPreference?.date) || safeText(selectedOrder?.deliveryPreference?.time)) && (
+                  <div className="md:col-span-2 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                    <p className="text-slate-500 mb-1">موعد التوصيل المفضل</p>
+                    <p className="font-bold text-slate-900">
+                      {safeText(selectedOrder?.deliveryPreference?.date) || '—'}
+                      {safeText(selectedOrder?.deliveryPreference?.time)
+                        ? ` - ${safeText(selectedOrder?.deliveryPreference?.time)}`
+                        : ''}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {safeText(selectedOrder?.note) && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-4">
+                <h4 className="font-bold text-slate-900 mb-3">ملاحظة الطلب</h4>
+                <div className="flex items-start gap-2">
+                  <div className="flex-1 text-sm text-slate-700 whitespace-pre-wrap break-words bg-slate-50 border border-slate-100 rounded-2xl p-3">
+                    {safeText(selectedOrder?.note)}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50"
+                    onClick={() => copyToClipboard(safeText(selectedOrder?.note), 'تم نسخ الملاحظة')}
+                  >
+                    <Copy size={14} className="text-slate-600" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-5">
+            <div className="bg-white rounded-2xl border border-slate-100 p-4">
+              <h4 className="font-bold text-slate-900 mb-4">ملخص مالي</h4>
+
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-500">المجموع الفرعي</span>
+                  <span className="font-bold text-slate-900">{money(Number(selectedOrder?.subtotal || 0))}</span>
+                </div>
+
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-500">الخصم</span>
+                  <span className="font-bold text-green-700">-{money(Number(selectedOrder?.discountAmount || 0))}</span>
+                </div>
+
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-500">الشحن</span>
+                  <span className="font-bold text-slate-900">{money(Number(selectedOrder?.shippingCost || 0))}</span>
+                </div>
+
+                <div className="flex justify-between gap-3 pt-2 mt-2 border-t border-slate-100">
+                  <span className="text-slate-700 font-bold">الإجمالي</span>
+                  <span className="font-extrabold text-slate-900">{money(Number(selectedOrder?.total || 0))}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 p-4">
+              <h4 className="font-bold text-slate-900 mb-4">الدفع</h4>
+
+              <div className="space-y-3 text-sm">
+                <div>
+                  <p className="text-slate-500 mb-1">طريقة الدفع</p>
+                  <p className="font-bold text-slate-900">{paymentLabel(selectedOrder?.paymentMethod)}</p>
+                </div>
+
+                {selectedOrderCliqRef && (
+                  <div>
+                    <p className="text-slate-500 mb-1">مرجع CliQ</p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-bold text-slate-900 break-all">{selectedOrderCliqRef}</p>
+                      <button
+                        type="button"
+                        className="p-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50"
+                        onClick={() => copyToClipboard(selectedOrderCliqRef, 'تم نسخ مرجع CliQ')}
+                      >
+                        <Copy size={13} className="text-slate-600" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {selectedOrderReceipt && (
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-sm font-bold text-slate-700"
+                      onClick={() => setReceiptModal({ open: true, orderId: selectedOrder?.id, url: selectedOrderReceipt })}
+                    >
+                      <ImageIcon size={16} />
+                      معاينة إيصال CliQ
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {!selectedOrder?.billingAddress ? null : (
+              <div className="bg-white rounded-2xl border border-slate-100 p-4">
+                <h4 className="font-bold text-slate-900 mb-4">عنوان الفاتورة</h4>
+
+                <div className="space-y-2 text-sm">
+                  <p><span className="text-slate-500">الاسم: </span><span className="font-bold text-slate-900">{safeText(selectedOrder?.billingAddress?.fullName) || '—'}</span></p>
+                  <p><span className="text-slate-500">المدينة: </span><span className="font-bold text-slate-900">{safeText(selectedOrder?.billingAddress?.city) || '—'}</span></p>
+                  <p><span className="text-slate-500">العنوان: </span><span className="font-bold text-slate-900 break-words">{safeText(selectedOrder?.billingAddress?.street) || '—'}</span></p>
+                  <p><span className="text-slate-500">الهاتف: </span><span className="font-bold text-slate-900">{safeText(selectedOrder?.billingAddress?.phone) || '—'}</span></p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="p-5 border-t border-slate-100 bg-white">
+        <div className="flex flex-wrap gap-2">
+          {selectedOrderStatus === 'new' && (
+            <Button onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'processing')}>
+              قبول الطلب
+            </Button>
+          )}
+
+          {selectedOrderStatus === 'processing' && (
+            <Button onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'shipped')}>
+              قيد الشحن
+            </Button>
+          )}
+
+          {selectedOrderStatus === 'shipped' && (
+            <Button onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'delivered')}>
+              تم التسليم
+            </Button>
+          )}
+
+          {selectedOrderStatus !== 'delivered' && selectedOrderStatus !== 'cancelled' && (
+            <Button
+              variant="outline"
+              onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'cancelled')}
+              className="border-red-200 text-red-600 hover:bg-red-50"
+            >
+              إلغاء الطلب
+            </Button>
+          )}
+
+          <Button variant="outline" onClick={closeOrderDetails}>
+            إغلاق
+          </Button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
       {/* ✅ Receipt Modal */}
       {receiptModal.open && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" role="dialog" aria-modal="true">
@@ -1139,6 +1604,7 @@ const AdminDashboard: React.FC = () => {
               ) : (
                 <div className="text-center text-slate-500 py-10">لا يوجد صورة إيصال.</div>
               )}
+
 
               <div className="mt-4 flex flex-col sm:flex-row gap-3">
                 <Button variant="outline" className="w-full" onClick={() => copyToClipboard(receiptModal.url || '', 'تم نسخ رابط الإيصال')}>

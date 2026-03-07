@@ -17,6 +17,8 @@ import {
   limit,
   startAfter,
   DocumentSnapshot,
+  onSnapshot,
+  serverTimestamp,
 } from 'firebase/firestore';
 
 import {
@@ -49,7 +51,13 @@ const firebaseReady = (): boolean => {
 
 /**
  * ✅ Remove any undefined recursively (Firestore doesn't accept undefined)
+ * ✅ IMPORTANT: only deep-clean PLAIN objects (not Firestore special types like Timestamp/FieldValue)
  */
+const isPlainObject = (v: any) =>
+  v !== null &&
+  typeof v === 'object' &&
+  (v.constructor === Object || Object.getPrototypeOf(v) === Object.prototype);
+
 const cleanForFirestore = <T,>(value: T): T => {
   if (Array.isArray(value)) {
     return value
@@ -57,7 +65,8 @@ const cleanForFirestore = <T,>(value: T): T => {
       .filter((v) => v !== undefined) as any;
   }
 
-  if (value && typeof value === 'object') {
+  // ✅ Do NOT traverse Firestore sentinel objects (serverTimestamp etc.)
+  if (isPlainObject(value)) {
     const out: any = {};
     Object.keys(value as any).forEach((k) => {
       const v = (value as any)[k];
@@ -97,7 +106,7 @@ export const normalizeIndex = (s: string) =>
  * Ensure required fields exist on product:
  * - nameIndex: `${name} ${nameEn}` normalized
  * - createdAt: ms timestamp (number)
- * - ratingAvg: default 0 (if your UI uses it)
+ * - ratingAvg: default 0
  */
 const ensureProductSearchFields = (p: Product): Product => {
   const anyP: any = p as any;
@@ -178,10 +187,6 @@ export type ProductListResult = {
  */
 export const db = {
   products: {
-    /**
-     * ⚠️ getAll: keep it for admin/tools only.
-     * For Storefront (Shop) use list() to avoid loading 1000 products at once.
-     */
     getAll: async (): Promise<Product[]> => {
       if (firebaseReady()) {
         try {
@@ -199,16 +204,6 @@ export const db = {
       });
     },
 
-    /**
-     * ✅ World-Class: list products with:
-     * - Prefix search on nameIndex
-     * - Filters (category/subcategory/priceMax/minRating)
-     * - Sorting (newest/price/rating)
-     * - Cursor pagination (startAfter)
-     *
-     * NOTE:
-     * Firestore may require composite indexes for some combinations.
-     */
     list: async (args: ProductListArgs): Promise<ProductListResult> => {
       const {
         q = '',
@@ -221,7 +216,6 @@ export const db = {
         cursor = null,
       } = args || {};
 
-      // Local fallback: simple filter in memory (dev only)
       if (!firebaseReady()) {
         const all = JSON.parse(localStorage.getItem(KEYS.PRODUCTS) || '[]') as any[];
         const qNorm = normalizeIndex(q);
@@ -246,7 +240,6 @@ export const db = {
           result = result.filter((p) => Number(p?.ratingAvg || 0) >= minRating);
         }
 
-        // sorting
         const sorted = [...result];
         if (sort === 'price-asc') sorted.sort((a, b) => Number(a?.price || 0) - Number(b?.price || 0));
         else if (sort === 'price-desc') sorted.sort((a, b) => Number(b?.price || 0) - Number(a?.price || 0));
@@ -261,7 +254,6 @@ export const db = {
       const qNorm = normalizeIndex(q);
       const constraints: any[] = [];
 
-      // Filters
       if (category) constraints.push(where('category', '==', category));
       if (subcategory) constraints.push(where('subcategory', '==', subcategory));
 
@@ -273,9 +265,7 @@ export const db = {
         constraints.push(where('ratingAvg', '>=', minRating));
       }
 
-      // Search or Sort
       if (qNorm) {
-        // Prefix range on nameIndex
         constraints.push(where('nameIndex', '>=', qNorm));
         constraints.push(where('nameIndex', '<=', prefixEnd(qNorm)));
         constraints.push(orderBy('nameIndex', 'asc'));
@@ -283,15 +273,13 @@ export const db = {
         if (sort === 'price-asc') constraints.push(orderBy('price', 'asc'));
         else if (sort === 'price-desc') constraints.push(orderBy('price', 'desc'));
         else if (sort === 'rating') constraints.push(orderBy('ratingAvg', 'desc'));
-        else constraints.push(orderBy('createdAt', 'desc')); // newest
+        else constraints.push(orderBy('createdAt', 'desc'));
       }
 
       constraints.push(limit(Math.max(1, Math.min(60, Math.floor(pageSize)))));
 
       let qRef = query(colRef, ...constraints);
-      if (cursor) {
-        qRef = query(colRef, ...constraints, startAfter(cursor));
-      }
+      if (cursor) qRef = query(colRef, ...constraints, startAfter(cursor));
 
       const snap = await getDocs(qRef);
 
@@ -338,10 +326,7 @@ export const db = {
     add: async (newProducts: Product[]): Promise<Product[]> => {
       if (firebaseReady()) {
         for (const p of newProducts) {
-          // ✅ ensure search fields exist
           const enriched = ensureProductSearchFields(p);
-
-          // ✅ clean undefined before save
           const safeProduct = cleanForFirestore(enriched);
           await setDoc(doc(firestore, 'products', (enriched as any).id), safeProduct as any);
         }
@@ -368,7 +353,6 @@ export const db = {
 
     update: async (updatedProduct: Product): Promise<Product[]> => {
       if (firebaseReady()) {
-        // ✅ keep search fields consistent on update too
         const enriched = ensureProductSearchFields(updatedProduct);
         const safeProduct = cleanForFirestore(enriched);
 
@@ -386,10 +370,39 @@ export const db = {
     },
   },
 
-  orders: {
+    orders: {
+    /**
+     * ✅ Realtime subscription (Admin)
+     */
+   subscribeAll: (
+  cb: (orders: Order[]) => void,
+  onError?: (error: any) => void
+) => {
+  if (firebaseReady()) {
+    const qRef = query(collection(firestore, 'orders'), orderBy('createdAt', 'desc'));
+
+    return onSnapshot(
+      qRef,
+      (snap) => {
+        const items = snap.docs.map(
+          (d) => ({ ...(d.data() as any), id: d.id } as Order)
+        );
+        cb(items);
+      },
+      (error) => {
+        console.error('db.orders.subscribeAll failed:', error);
+        onError?.(error);
+      }
+    );
+  }
+
+  cb(JSON.parse(localStorage.getItem(KEYS.ORDERS) || '[]'));
+  return () => {};
+},
     getAll: async (): Promise<Order[]> => {
       if (firebaseReady()) {
-        const snapshot = await getDocs(collection(firestore, 'orders'));
+        const qRef = query(collection(firestore, 'orders'), orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(qRef);
         return snapshot.docs.map((d) => ({ ...(d.data() as any), id: d.id } as Order));
       }
 
@@ -400,8 +413,8 @@ export const db = {
 
     getByUserId: async (userId: string): Promise<Order[]> => {
       if (firebaseReady()) {
-        const q = query(collection(firestore, 'orders'), where('userId', '==', userId));
-        const snapshot = await getDocs(q);
+        const qRef = query(collection(firestore, 'orders'), where('userId', '==', userId), orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(qRef);
         return snapshot.docs.map((d) => ({ ...(d.data() as any), id: d.id } as Order));
       }
 
@@ -420,16 +433,7 @@ export const db = {
       return orders.find((o: Order) => o.id === id);
     },
 
-    /**
-     * ✅ World-Class: هل المستخدم اشترى المنتج؟
-     * - Firebase: Query orders حسب userId ثم فلترة داخل items
-     * - LocalStorage: نفس المنطق
-     */
-    hasPurchasedProduct: async (
-      userId: string,
-      productId: string,
-      allowedStatuses: Order['status'][] = ['processing', 'shipped', 'delivered']
-    ): Promise<boolean> => {
+    hasPurchasedProduct: async (userId: string, productId: string, allowedStatuses: any[] = ['processing', 'shipped', 'delivered']): Promise<boolean> => {
       const uid = String(userId || '').trim();
       const pid = String(productId || '').trim();
 
@@ -438,46 +442,83 @@ export const db = {
 
       const orders = await db.orders.getByUserId(uid);
 
-      return orders.some((o) => {
+      return orders.some((o: any) => {
         if (!allowedStatuses.includes(o.status)) return false;
         const items = Array.isArray(o.items) ? o.items : [];
-        return items.some((it) => it?.productId === pid);
+        return items.some((it: any) => it?.productId === pid);
       });
     },
 
+    /**
+     * ✅ Create order (GLOBAL SAFE):
+     * - status: "new"
+     * - seenByAdmin: false
+     * - createdAt/updatedAt: serverTimestamp() ALWAYS in Firebase mode
+     */
     create: async (order: Order): Promise<Order> => {
-      if (firebaseReady()) {
-        // ✅ Firestore rejects undefined: clean the order deeply
-        const safeOrder = cleanForFirestore(order);
-        await setDoc(doc(firestore, 'orders', order.id), safeOrder as any);
+  const anyOrder: any = order as any;
 
-        for (const item of order.items) {
-          await db.products.updateStock(item.productId, item.quantity);
-        }
-        return order;
-      }
+  const base: any = {
+    ...anyOrder,
+    status: String(anyOrder?.status || 'new').toLowerCase(),
+    seenByAdmin: typeof anyOrder?.seenByAdmin === 'boolean' ? anyOrder.seenByAdmin : false,
+  };
 
-      const orders = JSON.parse(localStorage.getItem(KEYS.ORDERS) || '[]');
-      orders.unshift(order);
-      localStorage.setItem(KEYS.ORDERS, JSON.stringify(orders));
+  if (firebaseReady()) {
+    const payload = cleanForFirestore({
+      ...base,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
 
-      order.items.forEach((item) => {
-        db.products.updateStock(item.productId, item.quantity);
+    try {
+      await setDoc(doc(firestore, 'orders', anyOrder.id), payload as any);
+      return order;
+    } catch (error) {
+      console.error('db.orders.create failed:', error, {
+        orderId: anyOrder?.id,
       });
+      throw error;
+    }
+  }
 
-      return new Promise((resolve) => setTimeout(() => resolve(order), 800));
-    },
+  const orders = JSON.parse(localStorage.getItem(KEYS.ORDERS) || '[]');
+  orders.unshift({
+    ...base,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  localStorage.setItem(KEYS.ORDERS, JSON.stringify(orders));
 
-    updateStatus: async (id: string, status: Order['status']): Promise<Order[]> => {
+  (anyOrder.items || []).forEach((item: any) => {
+    db.products.updateStock(item.productId, item.quantity);
+  });
+
+  return new Promise((resolve) => setTimeout(() => resolve(order), 800));
+},
+
+    /**
+     * ✅ Update status + updatedAt + seenByAdmin
+     */
+    updateStatus: async (id: string, status: any): Promise<Order[]> => {
+      const nextStatus = String(status || '').toLowerCase();
+
       if (firebaseReady()) {
-        await updateDoc(doc(firestore, 'orders', id), { status });
+        await updateDoc(doc(firestore, 'orders', id), {
+          status: nextStatus,
+          seenByAdmin: true,
+          updatedAt: serverTimestamp(),
+        } as any);
+
         return db.orders.getAll();
       }
 
       const orders = JSON.parse(localStorage.getItem(KEYS.ORDERS) || '[]');
-      const index = orders.findIndex((o: Order) => o.id === id);
+      const index = orders.findIndex((o: any) => o.id === id);
       if (index !== -1) {
-        orders[index].status = status;
+        orders[index].status = nextStatus;
+        orders[index].seenByAdmin = true;
+        orders[index].updatedAt = new Date().toISOString();
         localStorage.setItem(KEYS.ORDERS, JSON.stringify(orders));
       }
       return orders;

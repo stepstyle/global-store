@@ -207,19 +207,18 @@ const Header: React.FC = () => {
 
   // Lock Body Scroll on mobile menu
   useEffect(() => {
-    if (isMenuOpen) {
-      document.body.style.overflow = 'hidden';
-      document.body.style.touchAction = 'none';
-    } else {
-      document.body.style.overflow = 'unset';
-      document.body.style.touchAction = 'auto';
-    }
-    return () => {
-      document.body.style.overflow = 'unset';
-      document.body.style.touchAction = 'auto';
-    };
-  }, [isMenuOpen]);
+  const prev = document.body.style.overflow;
 
+  if (isMenuOpen) {
+    document.body.style.overflow = 'hidden';
+  } else {
+    document.body.style.overflow = prev || 'unset';
+  }
+
+  return () => {
+    document.body.style.overflow = prev || 'unset';
+  };
+}, [isMenuOpen]);
   /**
    * ✅ goTo = انتقال موحّد “World-Class”
    * - يغلق كل الـoverlays
@@ -958,7 +957,7 @@ const Header: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setIsMenuOpen(true)}
+                onClick={() => setIsMenuOpen((v) => !v)}
                 className="p-2 text-slate-900 hover:bg-white/20 rounded-full transition-colors active:scale-90"
                 aria-label="Open Menu"
                 type="button"
@@ -971,12 +970,108 @@ const Header: React.FC = () => {
       </header>
 
       {/* Mobile Menu (كما هو عندك — بدون تغيير منطقي كبير) */}
-      {isMenuOpen && (
-        <div className="fixed inset-0 z-[9999] bg-white flex flex-col animate-in fade-in duration-200 overflow-hidden">
-          {/* ... نفس كود الموبايل عندك ... */}
-          {/* إذا تريد: في الخطوة القادمة سأعدّل الموبايل من نفس فكرة closeAllOverlays + goTo لتوحيد كل شيء */}
-        </div>
-      )}
+     {isMenuOpen && (
+  <div className="fixed inset-0 z-[9999]">
+    {/* Backdrop */}
+    <button
+      type="button"
+      onClick={() => setIsMenuOpen(false)}
+      className="absolute inset-0 bg-black/40"
+      aria-label="Close menu backdrop"
+    />
+
+    {/* Drawer */}
+    <div
+      className="
+        absolute top-0 bottom-0
+        right-0 rtl:right-auto rtl:left-0
+        w-[86%] max-w-sm
+        bg-white
+        shadow-2xl
+        flex flex-col
+      "
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between p-4 border-b border-slate-100">
+        <div className="font-extrabold text-slate-900">{L('القائمة', 'Menu')}</div>
+        <button
+          type="button"
+          onClick={() => setIsMenuOpen(false)}
+          className="p-2 rounded-full hover:bg-slate-100 text-slate-900"
+          aria-label="Close menu"
+        >
+          <X size={22} />
+        </button>
+      </div>
+
+      {/* Content */}
+      <div className="p-4 overflow-y-auto">
+        <button
+          type="button"
+          onClick={() => goTo('/')}
+          className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2"
+        >
+          <Home size={18} /> {t('home')}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => goTo(gamesTo('all'))}
+          className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2"
+        >
+          <Gamepad2 size={18} /> {L('ألعاب', 'Games')}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => goTo('/shop?filter=Stationery')}
+          className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2"
+        >
+          <PencilRuler size={18} /> {L('قرطاسية', 'Stationery')}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => goTo('/shop?filter=Offers')}
+          className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2"
+        >
+          <Gift size={18} /> {L('عروض', 'Offers')}
+        </button>
+
+        <div className="my-3 h-px bg-slate-100" />
+
+        <button
+          type="button"
+          onClick={() => goTo('/tracking')}
+          className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2"
+        >
+          <Truck size={18} /> {t('tracking')}
+        </button>
+
+        {!user ? (
+          <button
+            type="button"
+            onClick={() => goTo('/login')}
+            className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2"
+          >
+            <LogIn size={18} /> {t('login')}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              closeAllOverlays();
+              logout();
+            }}
+            className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-red-50 font-bold text-red-600 flex items-center gap-2"
+          >
+            <LogOut size={18} /> {t('logout')}
+          </button>
+        )}
+      </div>
+    </div>
+  </div>
+)}
     </>
   );
 };

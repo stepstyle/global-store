@@ -21,10 +21,10 @@ import { db } from '../services/storage';
 import { Order } from '../types';
 import SEO from '../components/SEO';
 import LazyImage from '../components/LazyImage';
+import { uploadToCloudinary } from '../services/cloudinary';
 
 const { useNavigate } = ReactRouterDOM as any;
 
-// ✅ فقط CliQ أو COD (تم حذف الفيزا)
 type PaymentMethod = 'cod' | 'cliq';
 
 const safeTrim = (s: any) => String(s ?? '').trim();
@@ -34,10 +34,8 @@ const clampQty = (n: any) => {
   return Math.max(1, Math.min(99, x));
 };
 
-// ✅ الأردن فقط للشحن
 const JO_COUNTRY = { code: 'JO', nameAr: 'الأردن', nameEn: 'Jordan' };
 
-// ✅ محافظات الأردن
 const JO_GOVS: Array<{ slug: string; ar: string; en: string }> = [
   { slug: 'amman', ar: 'عمّان', en: 'Amman' },
   { slug: 'zarqa', ar: 'الزرقاء', en: 'Zarqa' },
@@ -53,7 +51,6 @@ const JO_GOVS: Array<{ slug: string; ar: string; en: string }> = [
   { slug: 'aqaba', ar: 'العقبة', en: 'Aqaba' },
 ];
 
-// ✅ Phone dial codes (قائمة مختصرة + ممكن توسّعها لاحقاً)
 type DialOption = { code: string; dial: string; flag: string; nameAr: string; nameEn: string };
 const DIAL_OPTIONS: DialOption[] = [
   { code: 'JO', dial: '+962', flag: '🇯🇴', nameAr: 'الأردن', nameEn: 'Jordan' },
@@ -70,8 +67,16 @@ const DIAL_OPTIONS: DialOption[] = [
   { code: 'GB', dial: '+44', flag: '🇬🇧', nameAr: 'بريطانيا', nameEn: 'United Kingdom' },
 ];
 
-// ✅ خيارات شحن جديدة (بدون تعديل constants)
-type ShippingMethod = { id: string; nameAr: string; nameEn: string; durationAr: string; durationEn: string; price: number; icon?: any };
+type ShippingMethod = {
+  id: string;
+  nameAr: string;
+  nameEn: string;
+  durationAr: string;
+  durationEn: string;
+  price: number;
+  icon?: any;
+};
+
 const CHECKOUT_SHIPPING_METHODS: ShippingMethod[] = [
   {
     id: 'jo_fast_12_24',
@@ -106,15 +111,21 @@ const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const normalizeName = (name: string) => safeTrim(name).replace(/\s+/g, ' ');
 const normalizeAddress = (addr: string) => safeTrim(addr).replace(/\s+/g, ' ');
-
 const digitsOnly = (s: string) => String(s ?? '').replace(/[^\d]/g, '');
 
 const normalizePhoneGlobal = (dial: string, local: string) => {
   const d = String(dial || '').trim();
   const num = digitsOnly(local);
   if (!d || !num) return '';
-  // ✅ لا نعمل قواعد خاصة لكل دولة (حتى يقبل أي رقم)
   return `${d}${num}`;
+};
+
+const makeOrderId = () => {
+  const rnd = Math.random().toString(36).slice(2, 8).toUpperCase();
+  const ts = Date.now().toString(36).toUpperCase();
+  const uuid = (globalThis as any)?.crypto?.randomUUID?.();
+  if (uuid) return `ORD-${uuid.split('-')[0].toUpperCase()}-${ts}`;
+  return `ORD-${ts}-${rnd}`;
 };
 
 const Checkout: React.FC = () => {
@@ -133,11 +144,10 @@ const Checkout: React.FC = () => {
   } = useCart() as any;
 
   const navigate = useNavigate();
-
   const isAR = language === 'ar';
 
-  // ✅ ترجمة ذكية: إذا المفتاح غير موجود t() ترجع نفس المفتاح
   const tr = (ar: string, en: string) => (isAR ? ar : en);
+
   const tt = (key: string, fallbackAr: string, fallbackEn: string) => {
     try {
       const out = t(key as any);
@@ -153,30 +163,22 @@ const Checkout: React.FC = () => {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cod');
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // ✅ Email field (يظهر دائماً)
   const [email, setEmail] = useState<string>(() => safeTrim(user?.email || ''));
-
   useEffect(() => {
-    // إذا المستخدم سجّل دخول بعد ما فتح الصفحة
     const uEmail = safeTrim(user?.email || '');
     if (uEmail && !safeTrim(email)) setEmail(uEmail);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.email]);
 
-  // ✅ Phone dial picker
-  const [dialCode, setDialCode] = useState<string>(() => {
-    // افتراضي: الأردن
-    return '+962';
-  });
+  const [dialCode, setDialCode] = useState<string>(() => '+962');
 
-  // CliQ
   const [cliqRef, setCliqRef] = useState('');
-  const [cliqReceiptDataUrl, setCliqReceiptDataUrl] = useState<string>('');
+  const [cliqReceiptPreview, setCliqReceiptPreview] = useState<string>('');
+  const [cliqReceiptUrl, setCliqReceiptUrl] = useState<string>('');
 
-  // ✅ Address / Checkout Form
   const [formData, setFormData] = useState({
     fullName: '',
-    country: JO_COUNTRY.nameEn, // ثابت الأردن
+    country: JO_COUNTRY.nameEn,
     citySlug: '',
     streetAddress: '',
     postalCode: '',
@@ -184,7 +186,6 @@ const Checkout: React.FC = () => {
     saveInfo: true,
     billingSameAsShipping: true,
 
-    // Billing (اختياري)
     billingFullName: '',
     billingCitySlug: '',
     billingStreetAddress: '',
@@ -192,17 +193,11 @@ const Checkout: React.FC = () => {
     billingPostalCode: '',
   });
 
-  // ✅ Shipping preferences (تاريخ/وقت)
-  const [preferredDeliveryDate, setPreferredDeliveryDate] = useState(''); // yyyy-mm-dd
-  const [preferredDeliveryTime, setPreferredDeliveryTime] = useState(''); // hh:mm
-
-  // ✅ Policies acceptance
+  const [preferredDeliveryDate, setPreferredDeliveryDate] = useState('');
+  const [preferredDeliveryTime, setPreferredDeliveryTime] = useState('');
   const [acceptPolicies, setAcceptPolicies] = useState(true);
-
-  // ✅ Field errors
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Money formatter
   const fmt = useMemo(() => {
     try {
       return new Intl.NumberFormat(isAR ? 'ar-JO' : 'en-JO', {
@@ -215,9 +210,13 @@ const Checkout: React.FC = () => {
     }
   }, [isAR]);
 
-  const formatMoney = (value: number) => (fmt ? fmt.format(value) : `JOD ${Number(value || 0).toFixed(2)}`);
+  const formatMoney = (value: number) =>
+    fmt ? fmt.format(value) : `JOD ${Number(value || 0).toFixed(2)}`;
 
-  const selectedShipping = useMemo(() => CHECKOUT_SHIPPING_METHODS.find((m) => m.id === shippingMethodId), [shippingMethodId]);
+  const selectedShipping = useMemo(
+    () => CHECKOUT_SHIPPING_METHODS.find((m) => m.id === shippingMethodId),
+    [shippingMethodId]
+  );
 
   const subtotal = useMemo(
     () =>
@@ -229,9 +228,15 @@ const Checkout: React.FC = () => {
     [cart]
   );
 
-  const totalItems = useMemo(() => cart.reduce((sum: number, item: any) => sum + clampQty(item.quantity), 0), [cart]);
+  const totalItems = useMemo(
+    () => cart.reduce((sum: number, item: any) => sum + clampQty(item.quantity), 0),
+    [cart]
+  );
 
-  const discountAmount = useMemo(() => (totalItems > 2 ? subtotal * 0.1 : 0), [subtotal, totalItems]);
+  const discountAmount = useMemo(
+    () => (totalItems > 2 ? subtotal * 0.1 : 0),
+    [subtotal, totalItems]
+  );
 
   const shippingCost = selectedShipping ? Number(selectedShipping.price || 0) : 0;
   const total = Math.max(0, subtotal - discountAmount + shippingCost);
@@ -262,9 +267,9 @@ const Checkout: React.FC = () => {
   const validateStep1 = () => {
     const nextErr: Record<string, string> = {};
 
-    // ✅ Email required فقط للضيف
     const needEmail = !user?.id;
     const e = safeTrim(email);
+
     if (needEmail && !e) {
       nextErr.email = tt('emailRequired', 'البريد الإلكتروني مطلوب', 'Email is required.');
     } else if (e && !emailRegex.test(e)) {
@@ -276,7 +281,6 @@ const Checkout: React.FC = () => {
       nextErr.fullName = tt('nameMin5', 'الاسم لازم يكون 5 أحرف على الأقل', 'Name must be at least 5 characters.');
     }
 
-    // ✅ الأردن فقط
     if (!safeTrim(formData.country)) {
       nextErr.country = tt('countryRequired', 'الدولة مطلوبة', 'Country is required.');
     }
@@ -287,10 +291,13 @@ const Checkout: React.FC = () => {
 
     const addr = normalizeAddress(formData.streetAddress);
     if (addr.length < 8) {
-      nextErr.streetAddress = tt('addressMin8', 'اكتب العنوان بالتفصيل (على الأقل 8 أحرف)', 'Write detailed address (at least 8 characters).');
+      nextErr.streetAddress = tt(
+        'addressMin8',
+        'اكتب العنوان بالتفصيل (على الأقل 8 أحرف)',
+        'Write detailed address (at least 8 characters).'
+      );
     }
 
-    // ✅ Phone global with dial
     const e164 = normalizePhoneGlobal(dialCode, formData.phoneLocal);
     if (!e164) {
       nextErr.phoneLocal = tt('phoneInvalid', 'رقم الهاتف غير صحيح', 'Invalid phone number.');
@@ -298,7 +305,6 @@ const Checkout: React.FC = () => {
       nextErr.phoneLocal = tt('phoneTooShort', 'رقم الهاتف قصير جداً', 'Phone number is too short.');
     }
 
-    // ✅ إذا خيار "تحديد موعد" لازم تاريخ + وقت
     if (shippingMethodId === 'jo_schedule') {
       if (!safeTrim(preferredDeliveryDate)) {
         nextErr.preferredDeliveryDate = tt('dateRequired', 'التاريخ مطلوب', 'Date is required.');
@@ -309,27 +315,47 @@ const Checkout: React.FC = () => {
     }
 
     if (!acceptPolicies) {
-      nextErr.acceptPolicies = tt('acceptPoliciesRequired', 'لازم توافق على السياسات لإتمام الطلب', 'You must accept policies to place the order.');
+      nextErr.acceptPolicies = tt(
+        'acceptPoliciesRequired',
+        'لازم توافق على السياسات لإتمام الطلب',
+        'You must accept policies to place the order.'
+      );
     }
 
-    // Billing (إذا مش نفس الشحن)
     if (!formData.billingSameAsShipping) {
       const bn = normalizeName(formData.billingFullName);
       if (bn.length < 5) {
-        nextErr.billingFullName = tt('billingNameMin5', 'اسم الفاتورة لازم يكون 5 أحرف على الأقل', 'Billing name must be at least 5 characters.');
-      }
-      if (!safeTrim(formData.billingCitySlug)) {
-        nextErr.billingCitySlug = tt('billingCityRequired', 'مدينة الفاتورة مطلوبة', 'Billing city is required.');
-      }
-      const ba = normalizeAddress(formData.billingStreetAddress);
-      if (ba.length < 8) {
-        nextErr.billingStreetAddress = tt('billingAddressMin8', 'عنوان الفاتورة بالتفصيل (على الأقل 8 أحرف)', 'Billing address must be detailed (at least 8 characters).');
+        nextErr.billingFullName = tt(
+          'billingNameMin5',
+          'اسم الفاتورة لازم يكون 5 أحرف على الأقل',
+          'Billing name must be at least 5 characters.'
+        );
       }
 
-      // ✅ Billing phone: نستخدم نفس dial + رقم
+      if (!safeTrim(formData.billingCitySlug)) {
+        nextErr.billingCitySlug = tt(
+          'billingCityRequired',
+          'مدينة الفاتورة مطلوبة',
+          'Billing city is required.'
+        );
+      }
+
+      const ba = normalizeAddress(formData.billingStreetAddress);
+      if (ba.length < 8) {
+        nextErr.billingStreetAddress = tt(
+          'billingAddressMin8',
+          'عنوان الفاتورة بالتفصيل (على الأقل 8 أحرف)',
+          'Billing address must be detailed (at least 8 characters).'
+        );
+      }
+
       const bE164 = normalizePhoneGlobal(dialCode, formData.billingPhoneLocal);
       if (!bE164) {
-        nextErr.billingPhoneLocal = tt('billingPhoneInvalid', 'رقم هاتف الفاتورة غير صحيح', 'Invalid billing phone.');
+        nextErr.billingPhoneLocal = tt(
+          'billingPhoneInvalid',
+          'رقم هاتف الفاتورة غير صحيح',
+          'Invalid billing phone.'
+        );
       }
     }
 
@@ -355,15 +381,23 @@ const Checkout: React.FC = () => {
 
     const maxBytes = 2.5 * 1024 * 1024;
     if (file.size > maxBytes) {
-      showToast(tt('imageTooLarge', 'حجم الصورة كبير جداً، ارفع صورة أصغر', 'Image is too large. Please upload a smaller one.'), 'error');
+      showToast(
+        tt('imageTooLarge', 'حجم الصورة كبير جداً، ارفع صورة أصغر', 'Image is too large. Please upload a smaller one.'),
+        'error'
+      );
       return;
     }
 
     try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setCliqReceiptDataUrl(dataUrl);
+      const preview = await readFileAsDataUrl(file);
+      setCliqReceiptPreview(preview);
+
+      const url = await uploadToCloudinary(file);
+      setCliqReceiptUrl(url);
+
       showToast(tt('uploaded', 'تم الرفع بنجاح', 'Uploaded successfully.'), 'success');
     } catch {
+      setCliqReceiptUrl('');
       showToast(tt('uploadFailed', 'فشل الرفع، حاول مرة أخرى', 'Upload failed. Please try again.'), 'error');
     }
   };
@@ -380,6 +414,11 @@ const Checkout: React.FC = () => {
   const handlePlaceOrder = async () => {
     if (isProcessing) return;
 
+    if (!Array.isArray(cart) || cart.length === 0) {
+      showToast(tt('cartEmpty', 'سلتك فارغة', 'Your cart is empty'), 'error');
+      return;
+    }
+
     const ok = validateStep1();
     if (!ok) {
       showToast(tt('fixErrors', 'راجع الحقول المطلوبة', 'Please fix the required fields.'), 'error');
@@ -387,118 +426,184 @@ const Checkout: React.FC = () => {
       return;
     }
 
+    if (!selectedShipping) {
+      showToast(
+        tt('shippingRequired', 'اختر طريقة الشحن أولاً', 'Please select a shipping method first.'),
+        'error'
+      );
+      setStep(2);
+      return;
+    }
+
     if (paymentMethod === 'cliq') {
       const ref = safeTrim(cliqRef);
+
       if (!ref) {
-        showToast(tt('enterCliqRef', 'الرجاء إدخال رقم مرجع CliQ', 'Please enter the CliQ reference number.'), 'error');
+        showToast(
+          tt('enterCliqRef', 'الرجاء إدخال رقم مرجع CliQ', 'Please enter the CliQ reference number.'),
+          'error'
+        );
         return;
       }
+
       if (ref.length < 4 || ref.length > 40) {
-        showToast(tt('invalidCliqRef', 'رقم مرجع CliQ غير صحيح', 'Invalid CliQ reference number.'), 'error');
+        showToast(
+          tt('invalidCliqRef', 'رقم مرجع CliQ غير صحيح', 'Invalid CliQ reference number.'),
+          'error'
+        );
         return;
       }
     }
 
     setIsProcessing(true);
 
-    const shippingPhoneE164 = normalizePhoneGlobal(dialCode, formData.phoneLocal) || safeTrim(formData.phoneLocal);
-    const shippingCityName = cityLabel(formData.citySlug) || safeTrim(formData.citySlug);
-    const shippingStreet = normalizeAddress(formData.streetAddress);
-
-    const billingPhoneE164 = normalizePhoneGlobal(dialCode, formData.billingPhoneLocal) || safeTrim(formData.billingPhoneLocal);
-    const billingCityName = cityLabel(formData.billingCitySlug) || safeTrim(formData.billingCitySlug);
-    const billingStreet = normalizeAddress(formData.billingStreetAddress);
-
-    const newOrder: Order & any = {
-      id: `ORD-${Date.now().toString().slice(-6)}`,
-      userId: user ? user.id : 'guest',
-      items: cart.map((item: any) => ({
-        productId: item.id,
-        name: item.name,
-        price: Number(item.price || 0),
-        quantity: clampQty(item.quantity),
-        image: item.image,
-      })),
-      status: 'processing',
-      date: new Date().toISOString().split('T')[0],
-      total: total,
-      shippingMethod: selectedShipping ? (isAR ? selectedShipping.nameAr : selectedShipping.nameEn) : 'Standard',
-      paymentMethod: paymentMethod,
-
-      // ✅ Email saved on order
-      customerEmail: safeTrim(email) || (user?.email || ''),
-
-      note: safeTrim(orderNote) || undefined,
-
-      deliveryPreference:
-        safeTrim(preferredDeliveryDate) || safeTrim(preferredDeliveryTime)
-          ? {
-              date: safeTrim(preferredDeliveryDate) || undefined,
-              time: safeTrim(preferredDeliveryTime) || undefined,
-            }
-          : undefined,
-
-      paymentDetails:
-        paymentMethod === 'cliq'
-          ? {
-              cliqReference: safeTrim(cliqRef),
-              receiptImage: cliqReceiptDataUrl || undefined,
-              isPaid: false,
-            }
-          : undefined,
-
-      address: {
-        fullName: normalizeName(formData.fullName) || 'Guest',
-        city: shippingCityName,
-        street: shippingStreet,
-        phone: shippingPhoneE164,
-      },
-
-      addressMeta: {
-        country: JO_COUNTRY.nameEn,
-        countryCode: JO_COUNTRY.code,
-        citySlug: formData.citySlug,
-        postalCode: safeTrim(formData.postalCode) || undefined,
-        saveInfo: !!formData.saveInfo,
-
-        // ✅ phone meta
-        phoneDial: dialCode,
-        phoneLocal: safeTrim(formData.phoneLocal),
-      },
-
-      billingAddress: formData.billingSameAsShipping
-        ? undefined
-        : {
-            fullName: normalizeName(formData.billingFullName),
-            city: billingCityName,
-            street: billingStreet,
-            phone: billingPhoneE164,
-            meta: {
-              citySlug: formData.billingCitySlug,
-              postalCode: safeTrim(formData.billingPostalCode) || undefined,
-              phoneDial: dialCode,
-              phoneLocal: safeTrim(formData.billingPhoneLocal),
-            },
-          },
-    };
-
     try {
+      const shippingPhoneE164 =
+        normalizePhoneGlobal(dialCode, formData.phoneLocal) || safeTrim(formData.phoneLocal);
+
+      const shippingCityName =
+        cityLabel(formData.citySlug) || safeTrim(formData.citySlug);
+
+      const shippingStreet = normalizeAddress(formData.streetAddress);
+
+      const billingPhoneE164 =
+        normalizePhoneGlobal(dialCode, formData.billingPhoneLocal) || safeTrim(formData.billingPhoneLocal);
+
+      const billingCityName =
+        cityLabel(formData.billingCitySlug) || safeTrim(formData.billingCitySlug);
+
+      const billingStreet = normalizeAddress(formData.billingStreetAddress);
+
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const nowDate = nowIso.split('T')[0];
+      const nowMs = now.getTime();
+      const orderId = makeOrderId();
+
+      const newOrder: Order & any = {
+        id: orderId,
+        userId: user ? user.id : 'guest',
+
+        status: 'new',
+        seenByAdmin: false,
+
+        date: nowDate,
+        createdAt: nowIso,
+        createdAtMs: nowMs,
+        updatedAt: nowIso,
+
+        items: cart.map((item: any) => ({
+          productId: item.id,
+          name: item.name,
+          price: Number(item.price || 0),
+          quantity: clampQty(item.quantity),
+          image: item.image,
+        })),
+
+        subtotal,
+        discountAmount,
+        shippingCost,
+        total,
+
+        shippingMethodId,
+        shippingMethod: isAR ? selectedShipping.nameAr : selectedShipping.nameEn,
+        paymentMethod,
+
+        customerEmail: safeTrim(email) || safeTrim(user?.email || ''),
+        note: safeTrim(orderNote) || undefined,
+
+        deliveryPreference:
+          safeTrim(preferredDeliveryDate) || safeTrim(preferredDeliveryTime)
+            ? {
+                date: safeTrim(preferredDeliveryDate) || undefined,
+                time: safeTrim(preferredDeliveryTime) || undefined,
+              }
+            : undefined,
+
+        paymentDetails:
+          paymentMethod === 'cliq'
+            ? {
+                cliqReference: safeTrim(cliqRef),
+                receiptImage: cliqReceiptUrl || undefined,
+                isPaid: false,
+              }
+            : undefined,
+
+        address: {
+          fullName: normalizeName(formData.fullName) || 'Guest',
+          city: shippingCityName,
+          street: shippingStreet,
+          phone: shippingPhoneE164,
+        },
+
+        addressMeta: {
+          country: JO_COUNTRY.nameEn,
+          countryCode: JO_COUNTRY.code,
+          citySlug: formData.citySlug,
+          postalCode: safeTrim(formData.postalCode) || undefined,
+          saveInfo: !!formData.saveInfo,
+          phoneDial: dialCode,
+          phoneLocal: safeTrim(formData.phoneLocal),
+        },
+
+        billingAddress: formData.billingSameAsShipping
+          ? undefined
+          : {
+              fullName: normalizeName(formData.billingFullName),
+              city: billingCityName,
+              street: billingStreet,
+              phone: billingPhoneE164,
+              meta: {
+                citySlug: formData.billingCitySlug,
+                postalCode: safeTrim(formData.billingPostalCode) || undefined,
+                phoneDial: dialCode,
+                phoneLocal: safeTrim(formData.billingPhoneLocal),
+              },
+            },
+      };
+
       await db.orders.create(newOrder);
-      await refreshProducts();
+
+      try {
+        sessionStorage.setItem(
+          `order_success_${newOrder.id}`,
+          JSON.stringify(newOrder)
+        );
+      } catch (storageError) {
+        console.error('Failed to cache order success payload:', storageError);
+      }
 
       clearCart();
-      if (typeof clearOrderNote === 'function') clearOrderNote();
+      if (typeof clearOrderNote === 'function') {
+        clearOrderNote();
+      }
 
-      showToast(tt('alertSet', 'تم إنشاء الطلب بنجاح', 'Order placed successfully.'), 'success');
-      navigate(`/order-success/${newOrder.id}`);
-    } catch {
-      showToast(tt('placeOrderFailed', 'فشل إنشاء الطلب، حاول مرة أخرى', 'Failed to place order. Please try again.'), 'error');
+      try {
+        await refreshProducts();
+      } catch (refreshError) {
+        console.error('refreshProducts failed after order creation:', refreshError);
+      }
+
+      showToast(
+        tt('alertSet', 'تم إنشاء الطلب بنجاح', 'Order placed successfully.'),
+        'success'
+      );
+
+      navigate(`/order-success/${newOrder.id}`, {
+        state: { order: newOrder },
+        replace: true,
+      });
+    } catch (error: any) {
+      console.error('Checkout submit failed:', error);
+      showToast(
+        tt('placeOrderFailed', 'فشل إنشاء الطلب، حاول مرة أخرى', 'Failed to place order. Please try again.'),
+        'error'
+      );
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // ✅ Selected dial label
   const dialLabel = useMemo(() => {
     const d = DIAL_OPTIONS.find((x) => x.dial === dialCode) || DIAL_OPTIONS[0]!;
     return isAR ? `${d.flag} ${d.nameAr} ${d.dial}` : `${d.flag} ${d.nameEn} ${d.dial}`;
@@ -506,13 +611,11 @@ const Checkout: React.FC = () => {
 
   const needEmail = !user?.id;
 
-  // ✅ Selected shipping label
   const shippingLabel = useMemo(() => {
     if (!selectedShipping) return '';
     return isAR ? selectedShipping.nameAr : selectedShipping.nameEn;
   }, [selectedShipping, isAR]);
 
-  // ---------------- Empty cart ----------------
   if (!Array.isArray(cart) || cart.length === 0) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
@@ -521,8 +624,12 @@ const Checkout: React.FC = () => {
           <div className="mx-auto w-14 h-14 rounded-2xl bg-secondary-light/20 flex items-center justify-center text-secondary-DEFAULT mb-4">
             <ShoppingBag />
           </div>
-          <h2 className="text-2xl font-heading font-bold text-slate-900 mb-2">{tt('cartEmpty', 'سلتك فارغة', 'Your cart is empty')}</h2>
-          <p className="text-slate-500 mb-6">{tt('browseToAdd', 'تصفّح المنتجات وأضف للسلة', 'Browse products and add items to your cart.')}</p>
+          <h2 className="text-2xl font-heading font-bold text-slate-900 mb-2">
+            {tt('cartEmpty', 'سلتك فارغة', 'Your cart is empty')}
+          </h2>
+          <p className="text-slate-500 mb-6">
+            {tt('browseToAdd', 'تصفّح المنتجات وأضف للسلة', 'Browse products and add items to your cart.')}
+          </p>
           <Button onClick={() => navigate('/shop')} className="w-full">
             {tt('browseProducts', 'تصفح المنتجات', 'Browse products')}
           </Button>
@@ -531,17 +638,19 @@ const Checkout: React.FC = () => {
     );
   }
 
-  // ---------------- UI ----------------
   return (
     <div className="min-h-screen bg-slate-50 py-8 lg:py-12">
       <SEO title={tt('checkout', 'إتمام الطلب', 'Checkout')} noIndex={true} />
 
       <div className="container mx-auto px-4 lg:px-8">
-        {/* Header */}
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8">
           <div className="min-w-0">
-            <h1 className="text-3xl font-heading font-bold text-slate-900">{tt('checkout', 'إتمام الطلب', 'Checkout')}</h1>
-            <p className="text-slate-500 mt-1">{tt('checkoutHint', 'أكمل بياناتك لتأكيد الطلب', 'Complete your details to place the order.')}</p>
+            <h1 className="text-3xl font-heading font-bold text-slate-900">
+              {tt('checkout', 'إتمام الطلب', 'Checkout')}
+            </h1>
+            <p className="text-slate-500 mt-1">
+              {tt('checkoutHint', 'أكمل بياناتك لتأكيد الطلب', 'Complete your details to place the order.')}
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -564,23 +673,25 @@ const Checkout: React.FC = () => {
         </div>
 
         <div className="flex flex-col lg:flex-row gap-8">
-          {/* Form */}
           <div className="flex-1 space-y-6">
-            {/* Steps */}
             <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
               <div className="flex items-center justify-between gap-2">
                 {[1, 2, 3].map((i) => {
                   const active = step === i;
                   const done = step > i;
                   const title =
-                    i === 1 ? tt('address', 'العنوان', 'Address') : i === 2 ? tt('shipping', 'الشحن', 'Shipping') : tt('payment', 'الدفع', 'Payment');
+                    i === 1
+                      ? tt('address', 'العنوان', 'Address')
+                      : i === 2
+                      ? tt('shipping', 'الشحن', 'Shipping')
+                      : tt('payment', 'الدفع', 'Payment');
 
                   const hint =
                     i === 1
                       ? tt('stepAddressHint', 'بيانات الاستلام', 'Delivery details')
                       : i === 2
-                        ? tt('stepShippingHint', 'اختر نوع الشحن', 'Choose shipping')
-                        : tt('stepPaymentHint', 'اختر طريقة الدفع', 'Choose payment');
+                      ? tt('stepShippingHint', 'اختر نوع الشحن', 'Choose shipping')
+                      : tt('stepPaymentHint', 'اختر طريقة الدفع', 'Choose payment');
 
                   return (
                     <div key={i} className="flex-1 flex items-center gap-3">
@@ -595,7 +706,9 @@ const Checkout: React.FC = () => {
                       </div>
 
                       <div className="min-w-0">
-                        <p className={`text-sm font-bold ${done || active ? 'text-slate-900' : 'text-slate-400'}`}>{title}</p>
+                        <p className={`text-sm font-bold ${done || active ? 'text-slate-900' : 'text-slate-400'}`}>
+                          {title}
+                        </p>
                         <p className="text-xs text-slate-400 line-clamp-1">{hint}</p>
                       </div>
 
@@ -606,12 +719,12 @@ const Checkout: React.FC = () => {
               </div>
             </div>
 
-            {/* Step 1 */}
             {step === 1 && (
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 animate-in fade-in slide-in-from-right">
                 <div className="flex items-center justify-between gap-3 flex-wrap mb-6">
                   <h2 className="text-xl font-bold flex items-center gap-2">
-                    <MapPin className="text-secondary-DEFAULT" /> {tt('deliveryAddress', 'عنوان الاستلام', 'Delivery address')}
+                    <MapPin className="text-secondary-DEFAULT" />
+                    {tt('deliveryAddress', 'عنوان الاستلام', 'Delivery address')}
                   </h2>
 
                   <div className="text-xs font-bold text-slate-500">
@@ -620,7 +733,6 @@ const Checkout: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* ✅ Email (always visible) */}
                   <div className="md:col-span-2">
                     <label className="block text-xs font-bold text-slate-600 mb-2">
                       {tt('email', 'البريد الإلكتروني', 'Email')}
@@ -652,9 +764,10 @@ const Checkout: React.FC = () => {
                     ) : null}
                   </div>
 
-                  {/* Full Name */}
                   <div className="md:col-span-2">
-                    <label className="block text-xs font-bold text-slate-600 mb-2">{tt('fullName', 'الاسم الكامل', 'Full name')}</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">
+                      {tt('fullName', 'الاسم الكامل', 'Full name')}
+                    </label>
                     <input
                       name="fullName"
                       value={formData.fullName}
@@ -670,9 +783,10 @@ const Checkout: React.FC = () => {
                     {errors.fullName && <p className="mt-1 text-xs font-bold text-red-600">{errors.fullName}</p>}
                   </div>
 
-                  {/* Country (Jordan only) */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-2">{tt('country', 'الدولة', 'Country')}</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">
+                      {tt('country', 'الدولة', 'Country')}
+                    </label>
                     <select
                       value={JO_COUNTRY.nameEn}
                       onChange={() => setField('country', JO_COUNTRY.nameEn)}
@@ -682,9 +796,10 @@ const Checkout: React.FC = () => {
                     </select>
                   </div>
 
-                  {/* City */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-2">{tt('city', 'المحافظة', 'Governorate')}</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">
+                      {tt('city', 'المحافظة', 'Governorate')}
+                    </label>
                     <select
                       value={formData.citySlug}
                       onChange={(e) => setField('citySlug', e.target.value)}
@@ -703,15 +818,20 @@ const Checkout: React.FC = () => {
                     {errors.citySlug && <p className="mt-1 text-xs font-bold text-red-600">{errors.citySlug}</p>}
                   </div>
 
-                  {/* Address */}
                   <div className="md:col-span-2">
-                    <label className="block text-xs font-bold text-slate-600 mb-2">{tt('detailedAddress', 'العنوان بالتفصيل', 'Detailed address')}</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">
+                      {tt('detailedAddress', 'العنوان بالتفصيل', 'Detailed address')}
+                    </label>
                     <input
                       name="streetAddress"
                       value={formData.streetAddress}
                       onChange={(e) => setField('streetAddress', e.target.value)}
                       type="text"
-                      placeholder={tt('addressPlaceholder', 'مثال: الجبيهة - شارع الجامعة - بناية 12 - شقة 5', 'Example: Jubaiha - University St - Building 12 - Apt 5')}
+                      placeholder={tt(
+                        'addressPlaceholder',
+                        'مثال: الجبيهة - شارع الجامعة - بناية 12 - شقة 5',
+                        'Example: Jubaiha - University St - Building 12 - Apt 5'
+                      )}
                       className={[
                         'w-full p-3 border rounded-xl bg-slate-50 focus:ring-2 focus:ring-secondary-DEFAULT outline-none',
                         errors.streetAddress ? 'border-red-400' : 'border-slate-200',
@@ -721,9 +841,10 @@ const Checkout: React.FC = () => {
                     {errors.streetAddress && <p className="mt-1 text-xs font-bold text-red-600">{errors.streetAddress}</p>}
                   </div>
 
-                  {/* Postal code */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-2">{tt('postalCodeOpt', 'الرمز البريدي (اختياري)', 'Postal code (optional)')}</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">
+                      {tt('postalCodeOpt', 'الرمز البريدي (اختياري)', 'Postal code (optional)')}
+                    </label>
                     <input
                       name="postalCode"
                       value={formData.postalCode}
@@ -735,7 +856,6 @@ const Checkout: React.FC = () => {
                     />
                   </div>
 
-                  {/* ✅ Phone global (dial + number) */}
                   <div>
                     <label className="block text-xs font-bold text-slate-600 mb-2">
                       {tt('phone', 'رقم الهاتف', 'Phone')}
@@ -784,28 +904,40 @@ const Checkout: React.FC = () => {
                     </p>
                   </div>
 
-                  {/* Save info */}
                   <div className="md:col-span-2 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
                     <div className="min-w-0">
-                      <p className="text-sm font-bold text-slate-800">{tt('saveInfo', 'حفظ بياناتي للطلبات القادمة', 'Save my info for next time')}</p>
-                      <p className="text-xs text-slate-500">{tt('saveInfoHint', 'لتسريع الطلب القادم (حسب النظام)', 'Speeds up next checkout (system dependent).')}</p>
+                      <p className="text-sm font-bold text-slate-800">
+                        {tt('saveInfo', 'حفظ بياناتي للطلبات القادمة', 'Save my info for next time')}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {tt('saveInfoHint', 'لتسريع الطلب القادم (حسب النظام)', 'Speeds up next checkout (system dependent).')}
+                      </p>
                     </div>
-                    <input type="checkbox" checked={!!formData.saveInfo} onChange={(e) => setField('saveInfo', e.target.checked)} className="w-5 h-5 accent-secondary-DEFAULT" />
+                    <input
+                      type="checkbox"
+                      checked={!!formData.saveInfo}
+                      onChange={(e) => setField('saveInfo', e.target.checked)}
+                      className="w-5 h-5 accent-secondary-DEFAULT"
+                    />
                   </div>
 
-                  {/* Billing toggle */}
                   <div className="md:col-span-2 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
                     <div className="min-w-0">
-                      <p className="text-sm font-bold text-slate-800">{tt('billingSame', 'عنوان الفاتورة نفس عنوان الشحن', 'Billing address same as shipping')}</p>
-                      <p className="text-xs text-slate-500">{tt('billingHint', 'ألغِ التحديد إذا تريد عنوان مختلف', 'Uncheck to use a different billing address')}</p>
+                      <p className="text-sm font-bold text-slate-800">
+                        {tt('billingSame', 'عنوان الفاتورة نفس عنوان الشحن', 'Billing address same as shipping')}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {tt('billingHint', 'ألغِ التحديد إذا تريد عنوان مختلف', 'Uncheck to use a different billing address')}
+                      </p>
                     </div>
-                    <input type="checkbox" checked={!!formData.billingSameAsShipping} onChange={(e) => setField('billingSameAsShipping', e.target.checked)} className="w-5 h-5 accent-secondary-DEFAULT" />
+                    <input
+                      type="checkbox"
+                      checked={!!formData.billingSameAsShipping}
+                      onChange={(e) => setField('billingSameAsShipping', e.target.checked)}
+                      className="w-5 h-5 accent-secondary-DEFAULT"
+                    />
                   </div>
 
-                  {/* Billing fields */}
-                  
-
-                  {/* Policies */}
                   <div className="md:col-span-2 rounded-2xl border border-slate-100 bg-slate-50 p-4">
                     <label className="flex items-start gap-3 cursor-pointer">
                       <input
@@ -823,12 +955,18 @@ const Checkout: React.FC = () => {
                       />
                       <div className="min-w-0">
                         <p className="text-sm font-bold text-slate-800">
-                          {tt('acceptPolicies', 'أوافق على سياسات الشحن والخصوصية وشروط الخدمة', 'I agree to Shipping Policy, Privacy Policy, and Terms of Service')}
+                          {tt(
+                            'acceptPolicies',
+                            'أوافق على سياسات الشحن والخصوصية وشروط الخدمة',
+                            'I agree to Shipping Policy, Privacy Policy, and Terms of Service'
+                          )}
                         </p>
                         <p className="text-xs text-slate-500 mt-1">
                           {tt('policiesHint', 'يمكن إضافة روابط الصفحات لاحقاً', 'You can add policy pages links later')}
                         </p>
-                        {errors.acceptPolicies && <p className="mt-2 text-xs font-bold text-red-600">{errors.acceptPolicies}</p>}
+                        {errors.acceptPolicies && (
+                          <p className="mt-2 text-xs font-bold text-red-600">{errors.acceptPolicies}</p>
+                        )}
                       </div>
                     </label>
                   </div>
@@ -842,11 +980,11 @@ const Checkout: React.FC = () => {
               </div>
             )}
 
-            {/* Step 2 */}
             {step === 2 && (
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 animate-in fade-in slide-in-from-right">
                 <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
-                  <Truck className="text-secondary-DEFAULT" /> {tt('shippingMethod', 'طريقة الشحن', 'Shipping method')}
+                  <Truck className="text-secondary-DEFAULT" />
+                  {tt('shippingMethod', 'طريقة الشحن', 'Shipping method')}
                 </h2>
 
                 <div className="space-y-3">
@@ -875,23 +1013,28 @@ const Checkout: React.FC = () => {
                               <Icon size={16} className="text-secondary-DEFAULT" />
                               {isAR ? method.nameAr : method.nameEn}
                             </p>
-                            <p className="text-xs text-slate-500">{isAR ? method.durationAr : method.durationEn}</p>
+                            <p className="text-xs text-slate-500">
+                              {isAR ? method.durationAr : method.durationEn}
+                            </p>
                           </div>
                         </div>
 
-                        <span className="font-extrabold text-slate-800 tabular-nums">{formatMoney(Number(method.price || 0))}</span>
+                        <span className="font-extrabold text-slate-800 tabular-nums">
+                          {formatMoney(Number(method.price || 0))}
+                        </span>
                       </label>
                     );
                   })}
                 </div>
 
-                {/* موعد التوصيل (يظهر + يصير إلزامي فقط مع schedule) */}
                 <div className="mt-6 rounded-2xl border border-slate-100 bg-slate-50 p-4">
                   <p className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
                     <CalendarClock size={18} className="text-secondary-DEFAULT" />
                     {tt('preferredDelivery', 'موعد توصيل مفضل', 'Preferred delivery time')}
                     <span className="text-slate-400 font-medium text-xs">
-                      {shippingMethodId === 'jo_schedule' ? tt('required', '(مطلوب)', '(required)') : tt('optional', '(اختياري)', '(optional)')}
+                      {shippingMethodId === 'jo_schedule'
+                        ? tt('required', '(مطلوب)', '(required)')
+                        : tt('optional', '(اختياري)', '(optional)')}
                     </span>
                   </p>
 
@@ -913,7 +1056,9 @@ const Checkout: React.FC = () => {
                           errors.preferredDeliveryDate ? 'border-red-400' : 'border-slate-200',
                         ].join(' ')}
                       />
-                      {errors.preferredDeliveryDate && <p className="mt-1 text-xs font-bold text-red-600">{errors.preferredDeliveryDate}</p>}
+                      {errors.preferredDeliveryDate && (
+                        <p className="mt-1 text-xs font-bold text-red-600">{errors.preferredDeliveryDate}</p>
+                      )}
                     </div>
 
                     <div>
@@ -933,7 +1078,9 @@ const Checkout: React.FC = () => {
                           errors.preferredDeliveryTime ? 'border-red-400' : 'border-slate-200',
                         ].join(' ')}
                       />
-                      {errors.preferredDeliveryTime && <p className="mt-1 text-xs font-bold text-red-600">{errors.preferredDeliveryTime}</p>}
+                      {errors.preferredDeliveryTime && (
+                        <p className="mt-1 text-xs font-bold text-red-600">{errors.preferredDeliveryTime}</p>
+                      )}
                     </div>
                   </div>
 
@@ -953,11 +1100,11 @@ const Checkout: React.FC = () => {
               </div>
             )}
 
-            {/* Step 3 */}
             {step === 3 && (
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 animate-in fade-in slide-in-from-right">
                 <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
-                  <DollarSign className="text-secondary-DEFAULT" /> {tt('paymentMethod', 'طريقة الدفع', 'Payment method')}
+                  <DollarSign className="text-secondary-DEFAULT" />
+                  {tt('paymentMethod', 'طريقة الدفع', 'Payment method')}
                 </h2>
 
                 <div className="flex flex-wrap gap-3 mb-6">
@@ -966,7 +1113,9 @@ const Checkout: React.FC = () => {
                     type="button"
                     className={[
                       'flex-1 min-w-[160px] py-3 rounded-2xl border font-extrabold transition-all',
-                      paymentMethod === 'cliq' ? 'border-blue-700 bg-blue-50 text-blue-900' : 'border-slate-200 text-slate-500 hover:bg-slate-50',
+                      paymentMethod === 'cliq'
+                        ? 'border-blue-700 bg-blue-50 text-blue-900'
+                        : 'border-slate-200 text-slate-500 hover:bg-slate-50',
                     ].join(' ')}
                   >
                     <div className="flex items-center justify-center gap-2">
@@ -979,11 +1128,14 @@ const Checkout: React.FC = () => {
                     type="button"
                     className={[
                       'flex-1 min-w-[160px] py-3 rounded-2xl border font-extrabold transition-all',
-                      paymentMethod === 'cod' ? 'border-green-500 bg-green-50 text-green-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50',
+                      paymentMethod === 'cod'
+                        ? 'border-green-500 bg-green-50 text-green-700'
+                        : 'border-slate-200 text-slate-500 hover:bg-slate-50',
                     ].join(' ')}
                   >
                     <div className="flex items-center justify-center gap-2">
-                      <DollarSign size={18} /> {tt('cod', 'الدفع عند الاستلام', 'Cash on delivery')}
+                      <DollarSign size={18} />
+                      {tt('cod', 'الدفع عند الاستلام', 'Cash on delivery')}
                     </div>
                   </button>
                 </div>
@@ -991,12 +1143,15 @@ const Checkout: React.FC = () => {
                 {paymentMethod === 'cliq' && (
                   <div className="space-y-6">
                     <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
-                      <p className="text-sm text-blue-800 mb-2 font-extrabold">{tt('cliqTransferHint', 'حوّل المبلغ إلى معرف CliQ التالي:', 'Transfer the total amount to this CliQ ID:')}</p>
+                      <p className="text-sm text-blue-800 mb-2 font-extrabold">
+                        {tt('cliqTransferHint', 'حوّل المبلغ إلى معرف CliQ التالي:', 'Transfer the total amount to this CliQ ID:')}
+                      </p>
                       <div className="text-3xl font-extrabold text-blue-900 tracking-wider mb-2 select-all cursor-pointer bg-white/60 p-2 rounded-xl inline-block">
                         ANTASTORE
                       </div>
                       <p className="text-xs text-blue-700">
-                        {tt('cliqRecipient', 'المستفيد:', 'Recipient:')} {tt('recipientName', 'مكتبة دير شرف العلمية Tech & Art', 'Dair Sharaf Library Tech & Art')}
+                        {tt('cliqRecipient', 'المستفيد:', 'Recipient:')}{' '}
+                        {tt('recipientName', 'مكتبة دير شرف العلمية Tech & Art', 'Dair Sharaf Library Tech & Art')}
                       </p>
                       <p className="text-xs text-blue-700 mt-1">
                         {tt('amount', 'المبلغ:', 'Amount:')} <span className="font-extrabold">{formatMoney(total)}</span>
@@ -1004,7 +1159,9 @@ const Checkout: React.FC = () => {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-extrabold text-slate-700 mb-2">{tt('referenceOrReceipt', 'رقم المرجع / صورة التحويل', 'Reference Number / Receipt')}</label>
+                      <label className="block text-sm font-extrabold text-slate-700 mb-2">
+                        {tt('referenceOrReceipt', 'رقم المرجع / صورة التحويل', 'Reference Number / Receipt')}
+                      </label>
 
                       <input
                         type="text"
@@ -1015,28 +1172,66 @@ const Checkout: React.FC = () => {
                       />
 
                       <label className="block">
-                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleCliqReceiptPick(e.target.files?.[0] ?? null)} />
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleCliqReceiptPick(e.target.files?.[0] ?? null)}
+                        />
                         <div className="border-2 border-dashed border-slate-200 rounded-2xl p-6 text-center hover:bg-slate-50 cursor-pointer transition-colors">
                           <Upload className="mx-auto text-slate-400 mb-2" />
-                          <span className="text-sm text-slate-600 font-extrabold">{tt('uploadReceipt', 'ارفع صورة التحويل (اختياري)', 'Upload transfer screenshot (optional)')}</span>
-                          <p className="text-xs text-slate-400 mt-1">{tt('uploadHint', 'PNG/JPG حتى ~2.5MB', 'PNG/JPG up to ~2.5MB')}</p>
+                          <span className="text-sm text-slate-600 font-extrabold">
+                            {tt('uploadReceipt', 'ارفع صورة التحويل (اختياري)', 'Upload transfer screenshot (optional)')}
+                          </span>
+                          <p className="text-xs text-slate-400 mt-1">
+                            {tt('uploadHint', 'PNG/JPG حتى ~2.5MB', 'PNG/JPG up to ~2.5MB')}
+                          </p>
                         </div>
                       </label>
 
-                      {cliqReceiptDataUrl && (
+                      {(cliqReceiptPreview || cliqReceiptUrl) && (
                         <div className="mt-4 rounded-2xl border border-slate-100 bg-white p-3">
                           <div className="flex items-center gap-2 text-sm font-extrabold text-slate-700 mb-2">
-                            <ImageIcon size={16} /> {tt('receiptPreview', 'معاينة الصورة', 'Receipt preview')}
+                            <ImageIcon size={16} />
+                            {tt('receiptPreview', 'معاينة الصورة', 'Receipt preview')}
                           </div>
-                          <img src={cliqReceiptDataUrl} alt="CliQ receipt preview" className="w-full max-h-72 object-contain rounded-xl bg-slate-50" />
-                          <button type="button" onClick={() => setCliqReceiptDataUrl('')} className="mt-3 text-xs font-extrabold text-red-600 hover:opacity-80">
+
+                          <img
+                            src={cliqReceiptPreview || cliqReceiptUrl}
+                            alt="CliQ receipt preview"
+                            className="w-full max-h-72 object-contain rounded-xl bg-slate-50"
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCliqReceiptPreview('');
+                              setCliqReceiptUrl('');
+                            }}
+                            className="mt-3 text-xs font-extrabold text-red-600 hover:opacity-80"
+                          >
                             {tt('remove', 'حذف', 'Remove')}
                           </button>
+
+                          {!cliqReceiptUrl && (
+                            <p className="mt-2 text-xs text-red-600 font-bold">
+                              {tt(
+                                'receiptNotSaved',
+                                'تنبيه: لم يتم رفع الإيصال (لن يُحفظ مع الطلب).',
+                                'Warning: receipt was not uploaded (it will not be saved with the order).'
+                              )}
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
 
-                    <Button onClick={handlePlaceOrder} className="w-full bg-blue-900 hover:bg-blue-800 text-white" isLoading={isProcessing} disabled={isProcessing}>
+                    <Button
+                      onClick={handlePlaceOrder}
+                      className="w-full bg-blue-900 hover:bg-blue-800 text-white"
+                      isLoading={isProcessing}
+                      disabled={isProcessing}
+                    >
                       {tt('confirmOrder', 'تأكيد الطلب', 'Confirm order')}
                     </Button>
                   </div>
@@ -1048,9 +1243,15 @@ const Checkout: React.FC = () => {
                       <DollarSign size={32} />
                     </div>
                     <p className="text-slate-600 font-medium">
-                      {tt('codHint', 'ستدفع عند الاستلام', 'You will pay cash upon delivery.')} — <span className="font-extrabold">{formatMoney(total)}</span>
+                      {tt('codHint', 'ستدفع عند الاستلام', 'You will pay cash upon delivery.')}{' '}
+                      — <span className="font-extrabold">{formatMoney(total)}</span>
                     </p>
-                    <Button onClick={handlePlaceOrder} className="w-full bg-green-600 hover:bg-green-700 text-white" isLoading={isProcessing} disabled={isProcessing}>
+                    <Button
+                      onClick={handlePlaceOrder}
+                      className="w-full bg-green-600 hover:bg-green-700 text-white"
+                      isLoading={isProcessing}
+                      disabled={isProcessing}
+                    >
                       {tt('confirmOrder', 'تأكيد الطلب', 'Confirm order')}
                     </Button>
                   </div>
@@ -1065,20 +1266,30 @@ const Checkout: React.FC = () => {
             )}
           </div>
 
-          {/* Summary */}
           <div className="lg:w-96">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 sticky top-24">
-              <h3 className="font-extrabold text-lg mb-4">{tt('orderSummary', 'ملخص الطلب', 'Order summary')}</h3>
+              <h3 className="font-extrabold text-lg mb-4">
+                {tt('orderSummary', 'ملخص الطلب', 'Order summary')}
+              </h3>
 
               <div className="space-y-4 max-h-72 overflow-y-auto pr-2 custom-scrollbar mb-4">
                 {cart.map((item: any) => (
                   <div key={item.id} className="flex gap-3">
-                    <LazyImage src={item.image} alt={item.name} className="w-12 h-12 rounded-xl object-cover" containerClassName="w-12 h-12 rounded-xl shrink-0" />
+                    <LazyImage
+                      src={item.image}
+                      alt={item.name}
+                      className="w-12 h-12 rounded-xl object-cover"
+                      containerClassName="w-12 h-12 rounded-xl shrink-0"
+                    />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-extrabold text-slate-800 line-clamp-1">{getProductTitle(item)}</p>
+                      <p className="text-sm font-extrabold text-slate-800 line-clamp-1">
+                        {getProductTitle(item)}
+                      </p>
                       <div className="flex justify-between text-xs text-slate-500 mt-1">
                         <span className="tabular-nums">x{clampQty(item.quantity)}</span>
-                        <span className="font-extrabold text-slate-700 tabular-nums">{formatMoney(Number(item.price || 0) * clampQty(item.quantity))}</span>
+                        <span className="font-extrabold text-slate-700 tabular-nums">
+                          {formatMoney(Number(item.price || 0) * clampQty(item.quantity))}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -1110,7 +1321,9 @@ const Checkout: React.FC = () => {
 
                 {safeTrim(orderNote) && (
                   <div className="mt-3 rounded-2xl bg-slate-50 border border-slate-100 p-3 text-xs text-slate-600">
-                    <span className="font-extrabold">{tt('orderNote', 'ملاحظة الطلب', 'Order note')}:</span>{' '}
+                    <span className="font-extrabold">
+                      {tt('orderNote', 'ملاحظة الطلب', 'Order note')}:
+                    </span>{' '}
                     <span className="text-slate-700">{safeTrim(orderNote)}</span>
                   </div>
                 )}
@@ -1118,7 +1331,9 @@ const Checkout: React.FC = () => {
                 <div className="mt-3 rounded-2xl bg-slate-50 border border-slate-100 p-3 text-xs text-slate-500">
                   <div className="flex items-center gap-2">
                     <Shield size={14} className="text-green-600" />
-                    <span>{tt('secureCheckoutNote', 'عملية دفع آمنة. معلوماتك محمية.', 'Secure checkout. Your information is protected.')}</span>
+                    <span>
+                      {tt('secureCheckoutNote', 'عملية دفع آمنة. معلوماتك محمية.', 'Secure checkout. Your information is protected.')}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1131,9 +1346,10 @@ const Checkout: React.FC = () => {
                 {tt('editCart', 'تعديل السلة', 'Edit cart')}
               </button>
 
-              {/* Order note editor */}
               <div className="mt-4">
-                <label className="block text-xs font-extrabold text-slate-600 mb-2">{tt('orderNote', 'ملاحظة الطلب', 'Order note')}</label>
+                <label className="block text-xs font-extrabold text-slate-600 mb-2">
+                  {tt('orderNote', 'ملاحظة الطلب', 'Order note')}
+                </label>
                 <textarea
                   value={orderNote || ''}
                   onChange={(e) => setOrderNote(e.target.value)}
@@ -1146,7 +1362,6 @@ const Checkout: React.FC = () => {
           </div>
         </div>
 
-        {/* Bottom mobile action (اختياري/احترافي) */}
         <div className="lg:hidden mt-8">
           <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -1163,7 +1378,11 @@ const Checkout: React.FC = () => {
               className="px-5"
               isLoading={isProcessing}
             >
-              {step === 1 ? tt('continueToShipping', 'متابعة', 'Continue') : step === 2 ? tt('continueToPayment', 'متابعة', 'Continue') : tt('confirmOrder', 'تأكيد', 'Confirm')}
+              {step === 1
+                ? tt('continueToShipping', 'متابعة', 'Continue')
+                : step === 2
+                ? tt('continueToPayment', 'متابعة', 'Continue')
+                : tt('confirmOrder', 'تأكيد', 'Confirm')}
             </Button>
           </div>
         </div>
