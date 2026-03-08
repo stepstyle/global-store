@@ -1,15 +1,14 @@
 // src/components/ProductImageZoom.tsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { X, ZoomIn, ZoomOut } from 'lucide-react';
 import LazyImage from './LazyImage';
+import { useCart } from '../App'; // ✅ استدعاء حالة التطبيق لجلب اللغة
 
 type Props = {
   src: string;
   alt?: string;
-
   containerClassName?: string;
   imageClassName?: string;
-
   priority?: boolean;
   hoverZoom?: number;
 };
@@ -24,6 +23,7 @@ const isValid = (u: string) => {
   return /^https?:\/\//i.test(s) || s.startsWith('data:') || s.startsWith('blob:') || s.startsWith('/');
 };
 
+// 🧮 معادلة فيثاغورس لحساب المسافة بين إصبعين (Pinch Zoom)
 const distance = (a: Pt, b: Pt) => {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
@@ -50,6 +50,10 @@ const ProductImageZoom: React.FC<Props> = ({
   priority = true,
   hoverZoom = 2.2,
 }) => {
+  // ✅ دعم اللغتين
+  const { language } = useCart() as any;
+  const L = useCallback((ar: string, en: string) => (language === 'ar' ? ar : en), [language]);
+
   const safeSrc = useMemo(() => String(src || '').trim(), [src]);
   const ok = useMemo(() => isValid(safeSrc), [safeSrc]);
 
@@ -171,10 +175,8 @@ const ProductImageZoom: React.FC<Props> = ({
 
   if (!ok) {
     return (
-      <div
-        className={`w-full aspect-square rounded-3xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 ${containerClassName}`}
-      >
-        {alt || 'No image'}
+      <div className={`w-full aspect-square rounded-3xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 ${containerClassName}`}>
+        {alt || L('لا توجد صورة', 'No image')}
       </div>
     );
   }
@@ -198,7 +200,7 @@ const ProductImageZoom: React.FC<Props> = ({
           type="button"
           onClick={() => setOpen(true)}
           className="absolute inset-0 w-full h-full"
-          aria-label={alt || 'Open image'}
+          aria-label={alt || L('فتح الصورة', 'Open image')}
         >
           <LazyImage
             src={safeSrc}
@@ -235,8 +237,9 @@ const ProductImageZoom: React.FC<Props> = ({
               filter: 'contrast(1.03) saturate(1.02)',
             }}
           />
-          <div className="absolute bottom-3 left-3 rtl:left-auto rtl:right-3 bg-slate-900/70 text-white text-[11px] font-bold px-3 py-1.5 rounded-full backdrop-blur">
-            Zoom
+          {/* 🌍 استخدام start-3 بدلاً من الكلاسات المكررة للـ RTL */}
+          <div className="absolute bottom-3 start-3 bg-slate-900/70 text-white text-[11px] font-bold px-3 py-1.5 rounded-full backdrop-blur">
+            {L('تكبير', 'Zoom')}
           </div>
         </div>
       </div>
@@ -247,11 +250,12 @@ const ProductImageZoom: React.FC<Props> = ({
           <div className="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" onClick={close} />
           <div className="absolute inset-0 p-3 sm:p-6 flex items-center justify-center">
             <div className="relative w-full max-w-5xl h-[88vh] bg-white rounded-3xl shadow-2xl overflow-hidden border border-white/10">
+              
               {/* Top bar */}
-              <div className="absolute top-0 left-0 w-full z-10 flex items-center justify-between gap-2 p-3 sm:p-4 bg-white/85 backdrop-blur border-b border-slate-100">
+              <div className="absolute top-0 start-0 w-full z-10 flex items-center justify-between gap-2 p-3 sm:p-4 bg-white/85 backdrop-blur border-b border-slate-100">
                 <div className="min-w-0">
-                  <div className="text-xs text-slate-500">{alt || 'Image preview'}</div>
-                  <div className="text-[11px] text-slate-400 tabular-nums">{`×${Math.round(scale * 100)}%`}</div>
+                  <div className="text-xs text-slate-500 truncate">{alt || L('معاينة الصورة', 'Image preview')}</div>
+                  <div className="text-[11px] text-slate-400 tabular-nums" dir="ltr">{`×${Math.round(scale * 100)}%`}</div>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -260,14 +264,14 @@ const ProductImageZoom: React.FC<Props> = ({
                     onClick={resetModalView}
                     className="hidden sm:inline-flex px-3 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm font-bold"
                   >
-                    Reset
+                    {L('إعادة ضبط', 'Reset')}
                   </button>
 
                   <button
                     type="button"
                     onClick={zoomOut}
                     className="p-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50"
-                    aria-label="Zoom out"
+                    aria-label={L('تصغير', 'Zoom out')}
                   >
                     <ZoomOut size={18} />
                   </button>
@@ -276,7 +280,7 @@ const ProductImageZoom: React.FC<Props> = ({
                     type="button"
                     onClick={zoomIn}
                     className="p-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50"
-                    aria-label="Zoom in"
+                    aria-label={L('تكبير', 'Zoom in')}
                   >
                     <ZoomIn size={18} />
                   </button>
@@ -284,8 +288,8 @@ const ProductImageZoom: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={close}
-                    className="p-2 rounded-xl hover:bg-slate-100 text-slate-700"
-                    aria-label="Close"
+                    className="p-2 rounded-xl hover:bg-red-50 text-slate-700 hover:text-red-500 transition-colors"
+                    aria-label={L('إغلاق', 'Close')}
                   >
                     <X size={20} />
                   </button>
@@ -318,8 +322,9 @@ const ProductImageZoom: React.FC<Props> = ({
                   </div>
                 </div>
 
-                <div className="absolute bottom-3 left-3 rtl:left-auto rtl:right-3 text-[11px] font-bold text-white bg-slate-900/60 px-3 py-1.5 rounded-full backdrop-blur">
-                  Pinch / Drag
+                {/* 🌍 استخدام start-3 */}
+                <div className="absolute bottom-3 start-3 text-[11px] font-bold text-white bg-slate-900/60 px-3 py-1.5 rounded-full backdrop-blur">
+                  {L('اسحب للتنقل / كبّر', 'Pinch / Drag')}
                 </div>
               </div>
             </div>

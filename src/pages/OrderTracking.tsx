@@ -1,3 +1,4 @@
+// src/pages/OrderTracking.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as ReactRouterDOM from 'react-router-dom';
 import {
@@ -42,11 +43,25 @@ const OrderTracking: React.FC = () => {
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState('');
 
-  const isRTL = useMemo(() => (language ?? 'ar') === 'ar', [language]);
+  // 🌍 دعم اللغتين
+  const isAR = language === 'ar';
+  const tr = useCallback((ar: string, en: string) => (isAR ? ar : en), [isAR]);
+  const tt = useCallback(
+    (key: string, fallbackAr: string, fallbackEn: string) => {
+      try {
+        const v = t?.(key);
+        if (!v || String(v) === key) return tr(fallbackAr, fallbackEn);
+        return String(v);
+      } catch {
+        return tr(fallbackAr, fallbackEn);
+      }
+    },
+    [t, tr]
+  );
 
   const moneyFmt = useMemo(() => {
     try {
-      return new Intl.NumberFormat(isRTL ? 'ar-JO' : 'en-JO', {
+      return new Intl.NumberFormat(isAR ? 'ar-JO' : 'en-JO', {
         style: 'currency',
         currency: 'JOD',
         maximumFractionDigits: 2,
@@ -54,12 +69,12 @@ const OrderTracking: React.FC = () => {
     } catch {
       return null;
     }
-  }, [isRTL]);
+  }, [isAR]);
 
   const formatMoney = useCallback(
     (n?: number) => {
       const x = typeof n === 'number' && Number.isFinite(n) ? n : 0;
-      return moneyFmt ? moneyFmt.format(x) : `JOD ${x.toFixed(2)}`;
+      return moneyFmt ? moneyFmt.format(x) : `${x.toFixed(2)} JOD`;
     },
     [moneyFmt]
   );
@@ -74,19 +89,21 @@ const OrderTracking: React.FC = () => {
     }
   }, [location.search]);
 
-  // ✅ خطوات الشحن (حالة الطلب)
+  // ✅ خطوات الشحن (حالة الطلب) - مترجمة
   const steps = useMemo(
     () => [
-      { status: 'processing', label: t('processing') ?? 'Processing', icon: Package },
-      { status: 'shipped', label: t('shipped') ?? 'Shipped', icon: Truck },
-      { status: 'delivered', label: t('delivered') ?? 'Delivered', icon: MapPin },
+      { status: 'processing', label: tt('processing', 'قيد المعالجة', 'Processing'), icon: Package },
+      { status: 'shipped', label: tt('shipped', 'تم الشحن', 'Shipped'), icon: Truck },
+      { status: 'delivered', label: tt('delivered', 'تم التسليم', 'Delivered'), icon: MapPin },
     ],
-    [t]
+    [tt]
   );
 
   const getCurrentStepIndex = useCallback(
     (s: string) => {
-      const idx = steps.findIndex((x) => x.status === s);
+      // إذا كان "new" نعتبره "processing"
+      const statusToFind = s === 'new' ? 'processing' : s;
+      const idx = steps.findIndex((x) => x.status === statusToFind);
       return idx === -1 ? 0 : idx;
     },
     [steps]
@@ -106,7 +123,7 @@ const OrderTracking: React.FC = () => {
       if (!id) {
         setOrder(null);
         setStatus('error');
-        setError(t('orderIdError') ?? 'Please enter a valid order ID.');
+        setError(tt('orderIdError', 'الرجاء إدخال رقم طلب صحيح.', 'Please enter a valid order ID.'));
         return;
       }
 
@@ -124,18 +141,18 @@ const OrderTracking: React.FC = () => {
         } else {
           setOrder(null);
           setStatus('error');
-          setError(t('orderIdError') ?? 'Order not found. Please check the order ID.');
+          setError(tt('orderNotFound', 'لم يتم العثور على الطلب. يرجى التأكد من الرقم.', 'Order not found. Please check the order ID.'));
         }
       } catch {
         setOrder(null);
         setStatus('error');
-        setError(t('trackingFailed') ?? 'Failed to fetch order. Please try again.');
+        setError(tt('trackingFailed', 'فشل تتبع الطلب. حاول مرة أخرى.', 'Failed to fetch order tracking. Please try again.'));
       }
     },
-    [t]
+    [tt]
   );
 
-  // ✅ Auto-fill + Auto-track إذا جاي من OrderSuccess
+  // ✅ Auto-fill + Auto-track إذا جاي من رابط
   useEffect(() => {
     if (!queryOrderId) return;
     setOrderId(queryOrderId);
@@ -150,102 +167,99 @@ const OrderTracking: React.FC = () => {
   const copyText = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      showToast?.(t('copied') ?? 'Copied', 'success');
+      showToast?.(tt('copied', 'تم النسخ', 'Copied'), 'success');
     } catch {
-      showToast?.(t('copyFailed') ?? 'Copy failed', 'error');
+      showToast?.(tt('copyFailed', 'تعذر النسخ', 'Copy failed'), 'error');
     }
   };
 
-  // ✅ Title SEO
-  const seoTitle = useMemo(() => t('trackOrder') ?? 'Track Order', [t]);
-
+  const seoTitle = useMemo(() => tt('trackOrder', 'تتبع الطلب', 'Track Order'), [tt]);
   const orderNote = useMemo(() => safeText((order as any)?.note), [order]);
 
   return (
-    <div className="min-h-screen bg-slate-50 py-12">
+    <div className="min-h-screen bg-slate-50 py-12 lg:py-16">
       <SEO title={seoTitle} />
       <div className="container mx-auto px-4 max-w-2xl">
-        <h1 className="text-3xl font-heading font-bold text-center mb-8 text-slate-900">
-          {t('trackOrder') ?? 'Track your order'}
+        <h1 className="text-3xl font-heading font-extrabold text-center mb-8 text-slate-900">
+          {tt('trackYourOrder', 'تتبع طلبك', 'Track your order')}
         </h1>
 
         {/* Search Card */}
-        <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-sm border border-slate-100 mb-8">
+        <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-sm border border-slate-200/60 mb-8 animate-in fade-in zoom-in duration-300">
           <form onSubmit={handleTrack} className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <span className={`absolute inset-y-0 flex items-center text-slate-400 ${isRTL ? 'right-4' : 'left-4'}`}>
-                <Search size={18} />
+            <div className="relative flex-1 group">
+              {/* 🌍 استخدام start-4 بدلاً من isRTL ? right : left */}
+              <span className="absolute inset-y-0 start-4 flex items-center text-slate-400 group-focus-within:text-secondary-DEFAULT transition-colors">
+                <Search size={18} strokeWidth={2.5} />
               </span>
 
+              {/* 🌍 استخدام ps-12 pe-4 للـ Padding المتجاوب مع الاتجاه */}
               <input
                 type="text"
                 inputMode="text"
-                placeholder={t('enterOrderId') ?? 'Enter order ID'}
+                placeholder={tt('enterOrderId', 'أدخل رقم الطلب هنا...', 'Enter your order ID...')}
                 value={orderId}
                 onChange={(e) => setOrderId(sanitizeOrderId(e.target.value))}
-                className={`w-full py-3 bg-slate-50 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-secondary-DEFAULT outline-none ${
-                  isRTL ? 'pr-12 pl-4' : 'pl-12 pr-4'
-                }`}
-                aria-label="Order ID"
+                className="w-full py-3.5 ps-11 pe-4 bg-slate-50 rounded-2xl border border-slate-200 focus:bg-white focus:ring-2 focus:ring-secondary-DEFAULT/50 outline-none transition-all font-bold text-slate-800 placeholder:font-normal placeholder:text-slate-400"
+                aria-label={tt('enterOrderId', 'أدخل رقم الطلب', 'Enter order ID')}
+                dir="ltr" // يفضل إدخال رقم الطلب من اليسار لليمين دائماً
               />
             </div>
 
-            <Button type="submit" isLoading={status === 'loading'} disabled={!sanitizeOrderId(orderId)}>
-              {t('track') ?? 'Track'}
+            <Button type="submit" isLoading={status === 'loading'} disabled={!sanitizeOrderId(orderId)} className="px-8 shadow-md">
+              {tt('track', 'تتبع', 'Track')}
             </Button>
           </form>
 
           {status === 'error' && (
-            <div className="mt-4 flex items-start gap-2 text-red-700 bg-red-50 border border-red-100 p-3 rounded-2xl">
-              <AlertTriangle size={18} className="mt-0.5" />
-              <p className="text-sm font-semibold">{error}</p>
+            <div className="mt-5 flex items-start gap-2.5 text-red-700 bg-red-50 border border-red-100 p-4 rounded-2xl animate-in slide-in-from-top-2">
+              <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+              <p className="text-sm font-bold leading-relaxed">{error}</p>
             </div>
           )}
 
           {status === 'idle' && !queryOrderId && (
-            <p className="mt-4 text-sm text-slate-500">
-              {t('trackHint') ?? `Enter your order ID then press "${t('track') ?? 'Track'}".`}
+            <p className="mt-5 text-sm font-medium text-slate-500 text-center">
+              {tt('trackHint', 'أدخل رقم الطلب في الحقل أعلاه ثم اضغط "تتبع" لمعرفة حالة طلبك.', 'Enter your order ID above then press "Track" to see its status.')}
             </p>
           )}
         </div>
 
         {/* Result */}
         {status === 'success' && order && (
-          <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-lg border border-slate-100 animate-in fade-in slide-in-from-bottom-4">
+          <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-lg border border-slate-200/60 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            
             {/* Header */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-8 pb-6 border-b border-slate-100">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-10 pb-6 border-b border-slate-100">
               <div className="w-full">
-                <p className="text-slate-500 text-sm">{t('orderNumber') ?? 'Order number'}</p>
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-bold text-xl text-slate-900">{(order as any).id}</p>
+                <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">{tt('orderNumber', 'رقم الطلب', 'Order number')}</p>
+                <div className="flex items-center justify-between sm:justify-start gap-4">
+                  <p className="font-black text-xl text-slate-900 break-all" dir="ltr">{(order as any).id}</p>
 
                   <button
                     onClick={() => copyText(String((order as any).id))}
-                    className="inline-flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-50 border border-slate-200 px-3 py-2 rounded-2xl transition"
+                    className="inline-flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-50 border border-slate-200 hover:bg-slate-100 px-3 py-1.5 rounded-xl transition-colors shrink-0"
                     type="button"
-                    aria-label="Copy order id"
-                    title={t('copy') ?? 'Copy'}
+                    title={tt('copy', 'نسخ', 'Copy')}
                   >
-                    <Copy size={14} /> {t('copy') ?? 'Copy'}
+                    <Copy size={14} /> {tt('copy', 'نسخ', 'Copy')}
                   </button>
                 </div>
               </div>
 
-              <div className={`${isRTL ? 'text-right' : 'text-left'} w-full sm:w-auto`}>
-                <p className="text-slate-500 text-sm">{t('orderDate') ?? 'Order date'}</p>
-                <p className="font-bold text-slate-900">{safeText((order as any).date)}</p>
+              <div className="text-start sm:text-end w-full sm:w-auto shrink-0">
+                <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">{tt('orderDate', 'تاريخ الطلب', 'Order date')}</p>
+                <p className="font-bold text-slate-800" dir="ltr">{safeText((order as any).date)}</p>
               </div>
             </div>
 
             {/* Progress */}
-            <div className="relative flex justify-between">
-              <div className="absolute top-5 left-0 w-full h-1 bg-slate-100 -z-0 rounded-full"></div>
+            <div className="relative flex justify-between px-2 sm:px-4 mb-12">
+              <div className="absolute top-5 start-0 w-full h-1.5 bg-slate-100 -z-0 rounded-full" />
 
-              {/* ✅ RTL/LTR progress */}
+              {/* 🌍 استخدام start-0 لشريط التقدم لكي يملأ من الجهة الصحيحة بناءً على اللغة */}
               <div
-                className={`absolute top-5 h-1 bg-green-500 transition-all duration-700 -z-0 rounded-full ${
-                  isRTL ? 'right-0' : 'left-0'
-                }`}
+                className="absolute top-5 h-1.5 bg-green-500 transition-all duration-1000 ease-out -z-0 rounded-full start-0"
                 style={{ width: `${progressPct}%` }}
               />
 
@@ -257,13 +271,13 @@ const OrderTracking: React.FC = () => {
                 return (
                   <div key={step.status} className="flex flex-col items-center relative z-10">
                     <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors duration-500 border-4 border-white ${
-                        isCompleted ? 'bg-green-500 text-white' : 'bg-slate-200 text-slate-400'
+                      className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-500 border-4 border-white shadow-sm ${
+                        isCompleted ? 'bg-green-500 text-white scale-110' : 'bg-slate-100 text-slate-400'
                       }`}
                     >
-                      <Icon size={18} />
+                      <Icon size={18} strokeWidth={isCompleted ? 2.5 : 2} />
                     </div>
-                    <span className={`mt-2 text-xs font-bold ${isCompleted ? 'text-green-700' : 'text-slate-400'}`}>
+                    <span className={`mt-3 text-xs font-extrabold transition-colors duration-500 ${isCompleted ? 'text-green-700' : 'text-slate-400'}`}>
                       {step.label}
                     </span>
                   </div>
@@ -271,77 +285,76 @@ const OrderTracking: React.FC = () => {
               })}
             </div>
 
-            {/* Items */}
-            <div className="mt-8 bg-slate-50 p-4 rounded-2xl border border-slate-100">
-              <h3 className="font-bold text-sm mb-3 text-slate-900">{t('orderSummary') ?? 'Order summary'}</h3>
+            {/* Items Summary */}
+            <div className="mt-8 bg-slate-50 p-5 rounded-2xl border border-slate-100 shadow-inner">
+              <h3 className="font-extrabold text-sm mb-4 text-slate-900">{tt('orderSummary', 'ملخص الطلب', 'Order summary')}</h3>
 
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {(order as any).items.map((item: any, i: number) => {
-                  const title =
-                    typeof getProductTitle === 'function'
-                      ? getProductTitle(item) || item.name
-                      : item.name;
+                  const title = typeof getProductTitle === 'function' ? getProductTitle(item) || item.name : item.name;
 
                   return (
-                    <div key={i} className="flex justify-between text-sm text-slate-700 gap-3">
-                      <span className="line-clamp-1">
-                        {item.quantity}× {title}
+                    <div key={i} className="flex justify-between items-center text-sm text-slate-700 gap-4">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-bold text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-md text-xs" dir="ltr">
+                          x{item.quantity}
+                        </span>
+                        <span className="font-semibold line-clamp-1">{title}</span>
+                      </div>
+                      <span className="font-bold text-slate-900 whitespace-nowrap" dir="ltr">
+                        {formatMoney(item.price * item.quantity)}
                       </span>
-                      <span className="font-semibold whitespace-nowrap">{formatMoney(item.price * item.quantity)}</span>
                     </div>
                   );
                 })}
               </div>
 
-              <div className="mt-3 pt-3 border-t border-slate-200 flex justify-between font-bold text-slate-900">
-                <span>{t('total') ?? 'Total'}</span>
-                <span>{formatMoney((order as any).total)}</span>
+              <div className="mt-4 pt-4 border-t border-slate-200/80 flex justify-between items-center">
+                <span className="font-extrabold text-slate-600">{tt('total', 'الإجمالي', 'Total')}</span>
+                <span className="font-black text-lg text-slate-900" dir="ltr">{formatMoney((order as any).total)}</span>
               </div>
             </div>
 
-            {/* ✅ Order Note (رسمي) */}
+            {/* Order Note */}
             {orderNote && (
-              <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 text-slate-800">
-                    <StickyNote size={16} className="text-secondary-DEFAULT" />
-                    <p className="text-sm font-bold">{t('orderNote') ?? 'Order note'}</p>
+              <div className="mt-5 rounded-2xl border border-yellow-200/60 bg-yellow-50/50 p-5">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div className="flex items-center gap-2 text-yellow-800">
+                    <StickyNote size={18} className="text-yellow-600 shrink-0" />
+                    <p className="text-sm font-extrabold">{tt('orderNote', 'ملاحظة الطلب', 'Order note')}</p>
                   </div>
 
                   <button
                     type="button"
                     onClick={() => copyText(orderNote)}
-                    className="inline-flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 px-3 py-2 rounded-2xl transition"
-                    aria-label="Copy order note"
-                    title={t('copy') ?? 'Copy'}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-yellow-700 hover:text-yellow-900 bg-yellow-100/50 hover:bg-yellow-200 px-2.5 py-1.5 rounded-lg transition-colors shrink-0"
+                    title={tt('copy', 'نسخ', 'Copy')}
                   >
-                    <Copy size={14} /> {t('copy') ?? 'Copy'}
+                    <Copy size={14} /> {tt('copy', 'نسخ', 'Copy')}
                   </button>
                 </div>
 
-                <div className="mt-3 rounded-2xl bg-white border border-slate-100 p-3 max-h-44 overflow-auto">
-                  <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words">
-                    {orderNote}
-                  </p>
-                </div>
+                <p className="text-sm font-medium text-yellow-900/80 leading-relaxed whitespace-pre-wrap break-words">
+                  {orderNote}
+                </p>
               </div>
             )}
 
             {/* Actions */}
-            <div className="mt-6 flex flex-col sm:flex-row gap-3">
+            <div className="mt-8 flex flex-col sm:flex-row gap-4">
               <Button
                 variant="outline"
-                className="w-full flex items-center justify-center gap-2"
+                className="flex-1 py-3.5 flex items-center justify-center gap-2 bg-slate-50 hover:bg-slate-100 border-slate-200"
                 onClick={() => trackById((order as any).id)}
                 disabled={status === 'loading'}
                 type="button"
               >
-                <RefreshCw size={16} />
-                {t('refreshStatus') ?? 'Refresh status'}
+                <RefreshCw size={18} className={status === 'loading' ? 'animate-spin' : ''} />
+                {tt('refreshStatus', 'تحديث الحالة', 'Refresh status')}
               </Button>
 
-              <Button className="w-full" onClick={() => navigate('/')} type="button">
-                {t('backToHome') ?? 'Back to home'}
+              <Button className="flex-1 py-3.5 shadow-md" onClick={() => navigate('/')} type="button">
+                {tt('backToHome', 'العودة للرئيسية', 'Back to home')}
               </Button>
             </div>
           </div>

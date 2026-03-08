@@ -76,29 +76,17 @@ const Header: React.FC = () => {
   }, []);
 
   // =========================================================
-  // ✅ World-Class Scroll Behavior (ثابت 100%)
+  // ✅ World-Class Scroll Behavior
   // =========================================================
-  /**
-   * ✅ ملاحظة:
-   * - استخدام "auto" بدل "smooth" لأن smooth أحيانًا يعطي إحساس تأخير
-   * - إذا تحب smooth: غيّر behavior إلى 'smooth'
-   */
   const scrollToTopInstant = useCallback(() => {
-    // إذا كان هناك hash في الرابط (#section) لا نجبره يرجع للأعلى
     if (location.hash) return;
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }, [location.hash]);
 
-  /**
-   * ✅ هذا هو الحل الأهم:
-   * أي تغيير Route (pathname/search) → ارجع للأعلى مباشرة
-   * هذا يحل مشاكل فتح الصفحة من أسفل، وأيضًا Back/Forward
-   */
   useEffect(() => {
     scrollToTopInstant();
   }, [location.pathname, location.search, scrollToTopInstant]);
 
-  // ✅ تجميع كل "إغلاق UI" في مكان واحد لتفادي الأخطاء
   const closeAllOverlays = useCallback(() => {
     setShowSuggestions(false);
     setIsMenuOpen(false);
@@ -117,15 +105,14 @@ const Header: React.FC = () => {
     userMenuCloseTimer.current = setTimeout(() => setIsUserMenuOpen(false), 140);
   };
 
-  // ✅ Games MegaMenu constants
   const GAMES_MENU_ID = 'games-mega-menu';
 
   // ----------------------------
-  // ✅ Styles (مركّزة ومصدر واحد)
+  // ✅ Styles (مركّزة ومصدر واحد - تم تحسين الخصائص المنطقية هنا)
   // ----------------------------
   const megaMenuClass = useMemo(
     () => `
-      absolute top-full left-0 rtl:left-auto rtl:right-0 mt-3
+      absolute top-full start-0 mt-3
       w-[420px] lg:w-[720px]
       rounded-2xl overflow-hidden z-50
       border border-slate-200/70
@@ -138,7 +125,7 @@ const Header: React.FC = () => {
 
   const megaItemClass = useMemo(
     () => `
-      w-full text-right rtl:text-right ltr:text-left
+      w-full text-start
       px-3 py-2.5 rounded-xl
       text-sm font-bold text-slate-800
       hover:bg-slate-100 focus:bg-slate-100
@@ -152,7 +139,6 @@ const Header: React.FC = () => {
   // ✅ Dropdown Data
   // ----------------------------
   const NAV = useMemo(() => {
-    // ✅ SINGLE SOURCE: from config/nav.ts
     const gamesSub = GAMES_SUBCATEGORIES;
 
     const stationerySub = [
@@ -179,7 +165,6 @@ const Header: React.FC = () => {
         labelEn: 'Games',
         icon: Gamepad2,
         items: gamesSub,
-        // ✅ exact same routing function everywhere
         to: (sub: string) => gamesTo(sub),
       },
       stationery: {
@@ -199,38 +184,27 @@ const Header: React.FC = () => {
     };
   }, [t]);
 
-  // Debounce search input
   useEffect(() => {
     const handler = setTimeout(() => setDebouncedQuery(searchQuery), 500);
     return () => clearTimeout(handler);
   }, [searchQuery]);
 
-  // Lock Body Scroll on mobile menu
   useEffect(() => {
-  const prev = document.body.style.overflow;
+    const prev = document.body.style.overflow;
+    if (isMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = prev || 'unset';
+    }
+    return () => {
+      document.body.style.overflow = prev || 'unset';
+    }
+  }, [isMenuOpen]);
 
-  if (isMenuOpen) {
-    document.body.style.overflow = 'hidden';
-  } else {
-    document.body.style.overflow = prev || 'unset';
-  }
-
-  return () => {
-    document.body.style.overflow = prev || 'unset';
-  };
-}, [isMenuOpen]);
-  /**
-   * ✅ goTo = انتقال موحّد “World-Class”
-   * - يغلق كل الـoverlays
-   * - يعمل navigate
-   * - والـscroll للأعلى يتم تلقائيًا عبر useEffect (Route change)
-   */
   const goTo = useCallback(
     (path: string) => {
       closeAllOverlays();
       navigate(path);
-      // لا نعمل scroll هنا لأننا نعتمد على Route-change effect
-      // هذا يقلل الـglitches ويضمن سلوك ثابت
     },
     [closeAllOverlays, navigate]
   );
@@ -246,7 +220,6 @@ const Header: React.FC = () => {
     goTo('/wishlist');
   };
 
-  // Close suggestions on click outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
@@ -257,7 +230,6 @@ const Header: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Close desktop dropdown on click outside
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       if (!desktopNavRef.current) return;
@@ -269,7 +241,6 @@ const Header: React.FC = () => {
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
-  // Close user menu on click outside + ESC
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       if (!userMenuRef.current) return;
@@ -287,11 +258,9 @@ const Header: React.FC = () => {
     };
   }, []);
 
-  // ✅ Suggestions محسوبة بـ useMemo (أسرع + أقل رندر)
   const suggestions = useMemo(() => {
     if (debouncedQuery.length <= 1) return [];
     const q = debouncedQuery.toLowerCase();
-
     return products
       .filter((p) => (p.name || '').toLowerCase().includes(q) || (p.nameEn || '').toLowerCase().includes(q))
       .slice(0, 5);
@@ -316,11 +285,10 @@ const Header: React.FC = () => {
     return Array.from({ length: colCount }, (_, i) => items.slice(i * perCol, (i + 1) * perCol));
   };
 
-  // ✅ الهاتف (غيّر اسم الحقل إذا عندك مختلف)
   const userPhone = (user as any)?.phone || (user as any)?.phoneNumber || '';
 
   // =========================================================
-  // ✅ (1) Dynamic Top Bar (multiple messages + autoplay + buttons + swipe)
+  // ✅ Dynamic Top Bar
   // =========================================================
   const topBarItems = useMemo(
     () => [
@@ -374,21 +342,11 @@ const Header: React.FC = () => {
           isScrolled ? 'shadow-xl' : 'shadow-lg',
         ].join(' ')}
       >
-        {/* ✅ Top Bar (Dynamic + High Contrast) */}
         <div className="border-b border-white/15 bg-black/15">
           <div className="w-full max-w-[1550px] mx-auto px-5 sm:px-6 lg:px-14">
             <div className="h-10 flex items-center justify-between gap-3">
-              {/* Left: Dynamic message (clickable + swipe) */}
               <div
-                className="
-                  flex-1 min-w-0
-                  inline-flex items-center gap-2
-                  px-2 sm:px-3 py-1.5
-                  rounded-full
-                  bg-white/15 border border-white/25
-                  backdrop-blur-sm
-                  select-none
-                "
+                className="flex-1 min-w-0 inline-flex items-center gap-2 px-2 sm:px-3 py-1.5 rounded-full bg-white/15 border border-white/25 backdrop-blur-sm select-none"
                 onPointerDown={onTopBarPointerDown}
                 onPointerUp={onTopBarPointerUp}
                 onPointerCancel={onTopBarPointerCancel}
@@ -406,17 +364,7 @@ const Header: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => goTo(activeTop.to)}
-                  className="
-                    flex-1 min-w-0
-                    text-[13px] sm:text-[14px]
-                    font-bold
-                    text-white
-                    drop-shadow-[0_1px_1px_rgba(0,0,0,0.55)]
-                    truncate
-                    text-center
-                    hover:opacity-95
-                    transition-opacity
-                  "
+                  className="flex-1 min-w-0 text-[13px] sm:text-[14px] font-bold text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.55)] truncate text-center hover:opacity-95 transition-opacity"
                   aria-label="Open top message"
                 >
                   <span className="me-1">{activeTop.icon}</span>
@@ -433,17 +381,9 @@ const Header: React.FC = () => {
                 </button>
               </div>
 
-              {/* Right: Language switch */}
               <button
                 onClick={() => setLanguage(language === 'ar' ? 'en' : 'ar')}
-                className="
-                  inline-flex items-center gap-2
-                  px-3 py-1.5 rounded-full
-                  bg-white/15 border border-white/25
-                  hover:bg-white/25 transition-colors
-                  text-white font-extrabold text-[12px]
-                  drop-shadow-[0_1px_1px_rgba(0,0,0,0.55)]
-                "
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/15 border border-white/25 hover:bg-white/25 transition-colors text-white font-extrabold text-[12px] drop-shadow-[0_1px_1px_rgba(0,0,0,0.55)]"
                 type="button"
                 aria-label="Switch Language"
               >
@@ -454,7 +394,6 @@ const Header: React.FC = () => {
           </div>
         </div>
 
-        {/* ✅ Main Header */}
         <div
           className={[
             'w-full max-w-[1550px] mx-auto grid grid-cols-[auto,1fr,auto] items-center',
@@ -462,49 +401,30 @@ const Header: React.FC = () => {
             'px-5 sm:px-6 lg:px-14 gap-3',
           ].join(' ')}
         >
-          {/* ✅ شعار/لوغو */}
           <Link
             to="/"
             className="flex items-center group shrink-0 min-w-0 ps-2 sm:ps-4"
             aria-label="Home"
-            title="Home"
-            onClick={() => {
-              // ✅ إغلاق القوائم + السماح للـroute effect يعمل scroll للأعلى
-              closeAllOverlays();
-            }}
+            onClick={closeAllOverlays}
           >
             <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center text-white font-extrabold text-xl shadow-lg group-hover:rotate-12 transition-transform duration-300 backdrop-blur-sm border border-white/30 shrink-0">
               A
             </div>
-
             <div className="flex flex-col ms-3 min-w-0">
-              <span
-                className={[
-                  'text-[18px] sm:text-[20px] font-heading font-extrabold tracking-tight',
-                  'text-slate-900 group-hover:text-white transition-colors duration-300',
-                  'truncate',
-                ].join(' ')}
-              >
+              <span className="text-[18px] sm:text-[20px] font-heading font-extrabold tracking-tight text-slate-900 group-hover:text-white transition-colors duration-300 truncate">
                 Dair Sharaf
               </span>
-
-              <span
-                className={[
-                  'text-[10px] sm:text-[11px] font-semibold tracking-[0.18em] uppercase',
-                  'text-slate-800/90 group-hover:text-slate-100 transition-colors duration-300',
-                  'truncate',
-                ].join(' ')}
-              >
+              <span className="text-[10px] sm:text-[11px] font-semibold tracking-[0.18em] uppercase text-slate-800/90 group-hover:text-slate-100 transition-colors duration-300 truncate">
                 TECH & ART
               </span>
             </div>
           </Link>
 
           {/* Desktop Navigation */}
-          <nav ref={desktopNavRef} className="hidden md:flex items-center space-x-reverse space-x-3 rtl:space-x-reverse">
+          <nav ref={desktopNavRef} className="hidden md:flex items-center space-s-3">
             <Link
               to="/"
-              onClick={() => closeAllOverlays()}
+              onClick={closeAllOverlays}
               className={`text-sm font-bold transition-colors duration-300 ease-in-out relative py-2 px-3 rounded-lg group flex items-center gap-2 ${
                 isActivePath('/')
                   ? 'text-slate-900 bg-white/30 shadow-sm'
@@ -515,12 +435,10 @@ const Header: React.FC = () => {
               <span>{t('home')}</span>
             </Link>
 
-            {/* ✅ Games Mega Menu */}
+            {/* Games */}
             <div className="relative" onMouseEnter={() => openDropdownSafe('games')} onMouseLeave={closeDropdownDelayed}>
               <button
                 type="button"
-                aria-haspopup="menu"
-                aria-controls="games-mega-menu"
                 aria-expanded={openDropdown === 'games'}
                 onClick={() => setOpenDropdown((p) => (p === 'games' ? null : 'games'))}
                 className="text-sm font-bold text-slate-900 hover:bg-white/20 hover:shadow-sm transition-all py-2 px-3 rounded-lg flex items-center gap-2"
@@ -533,7 +451,6 @@ const Header: React.FC = () => {
               {openDropdown === 'games' && (
                 <div id={GAMES_MENU_ID} role="menu" className={megaMenuClass}>
                   <div className="h-2 bg-transparent" />
-
                   <div className="p-4 lg:p-5">
                     <div className="flex items-center justify-between gap-3 mb-4">
                       <div className="flex items-center gap-2">
@@ -543,53 +460,25 @@ const Header: React.FC = () => {
                           <p className="text-xs text-slate-500">{L('اختر القسم المناسب', 'Pick a category')}</p>
                         </div>
                       </div>
-
                       <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => goTo(gamesTo('all'))}
-                          className="text-xs font-bold px-3 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition-colors"
-                        >
+                        <button type="button" onClick={() => goTo(gamesTo('all'))} className="text-xs font-bold px-3 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition-colors">
                           {L('عرض كل الألعاب', 'View All')}
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => goTo('/shop?filter=Games&sort=new')}
-                          className="text-xs font-bold px-3 py-2 rounded-xl bg-slate-100 text-slate-800 hover:bg-slate-200 transition-colors"
-                        >
+                        <button type="button" onClick={() => goTo('/shop?filter=Games&sort=new')} className="text-xs font-bold px-3 py-2 rounded-xl bg-slate-100 text-slate-800 hover:bg-slate-200 transition-colors">
                           {L('الجديد', 'New')}
                         </button>
                       </div>
                     </div>
-
                     <div className="grid grid-cols-2 xl:grid-cols-3 gap-2">
-                      {(() => {
-                        const items = NAV.games.items;
-                        const colCount = 3;
-                        const cols = splitToColumns(items, colCount);
-                        return cols.map((col, idx) => (
-                          <div key={idx} className="max-h-[360px] overflow-auto pr-1 rtl:pr-0 rtl:pl-1">
-                            {col.map((it) => (
-                              <button
-                                key={it.sub}
-                                type="button"
-                                role="menuitem"
-                                onClick={() => goTo(NAV.games.to(it.sub))}
-                                className={megaItemClass}
-                              >
-                                {L(it.labelAr, it.labelEn)}
-                              </button>
-                            ))}
-                          </div>
-                        ));
-                      })()}
-                    </div>
-
-                    <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                      <span>{L('نصيحة: استخدم البحث للوصول للمنتج بسرعة', 'Tip: Use search to find products faster')}</span>
-                      <button type="button" onClick={() => setOpenDropdown(null)} className="font-bold text-slate-700 hover:text-slate-900">
-                        {L('إغلاق', 'Close')}
-                      </button>
+                      {splitToColumns(NAV.games.items, 3).map((col, idx) => (
+                        <div key={idx} className="max-h-[360px] overflow-auto pe-1">
+                          {col.map((it) => (
+                            <button key={it.sub} type="button" role="menuitem" onClick={() => goTo(NAV.games.to(it.sub))} className={megaItemClass}>
+                              {L(it.labelAr, it.labelEn)}
+                            </button>
+                          ))}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -609,9 +498,8 @@ const Header: React.FC = () => {
               </button>
 
               {openDropdown === 'stationery' && (
-                <div role="menu" onMouseEnter={() => openDropdownSafe('stationery')} onMouseLeave={closeDropdownDelayed} className={megaMenuClass}>
+                <div role="menu" className={megaMenuClass}>
                   <div className="h-2 bg-transparent" />
-
                   <div className="p-4 lg:p-5">
                     <div className="flex items-center justify-between gap-3 mb-4">
                       <div className="flex items-center gap-2">
@@ -623,48 +511,22 @@ const Header: React.FC = () => {
                           <p className="text-xs text-slate-600">{L('اختر القسم المناسب', 'Pick a category')}</p>
                         </div>
                       </div>
-
                       <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => goTo('/shop?filter=Stationery')}
-                          className="text-xs font-bold px-3 py-2 rounded-xl bg-white/15 text-white border border-white/20 hover:bg-white/20 transition-colors"
-                        >
+                        <button type="button" onClick={() => goTo('/shop?filter=Stationery')} className="text-xs font-bold px-3 py-2 rounded-xl bg-white/15 text-white border border-white/20 hover:bg-white/20 transition-colors">
                           {L('عرض الكل', 'View All')}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => setOpenDropdown(null)}
-                          className="text-xs font-bold px-3 py-2 rounded-xl bg-black/20 text-white border border-white/20 hover:bg-black/30 transition-colors"
-                        >
-                          {L('إغلاق', 'Close')}
                         </button>
                       </div>
                     </div>
-
                     <div className="grid grid-cols-2 xl:grid-cols-3 gap-2">
-                      {(() => {
-                        const items = NAV.stationery.items;
-                        const colCount = 3;
-                        const cols = splitToColumns(items, colCount);
-                        return cols.map((col, idx) => (
-                          <div key={idx} className="max-h-[320px] overflow-auto pr-1 rtl:pr-0 rtl:pl-1">
-                            {col.map((it) => (
-                              <button key={it.sub} type="button" role="menuitem" onClick={() => goTo(NAV.stationery.to(it.sub))} className={megaItemClass}>
-                                {L(it.labelAr, it.labelEn)}
-                              </button>
-                            ))}
-                          </div>
-                        ));
-                      })()}
-                    </div>
-
-                    <div className="mt-4 pt-4 border-t border-white/15 flex items-center justify-between text-xs text-white/80">
-                      <span className="drop-shadow">{L('نصيحة: استخدم البحث للوصول للمنتج بسرعة', 'Tip: Use search to find products faster')}</span>
-                      <button type="button" onClick={() => goTo('/shop?filter=Stationery&sort=new')} className="font-bold text-white hover:text-white/90 drop-shadow">
-                        {L('الجديد', 'New')}
-                      </button>
+                      {splitToColumns(NAV.stationery.items, 3).map((col, idx) => (
+                        <div key={idx} className="max-h-[320px] overflow-auto pe-1">
+                          {col.map((it) => (
+                            <button key={it.sub} type="button" role="menuitem" onClick={() => goTo(NAV.stationery.to(it.sub))} className={megaItemClass}>
+                              {L(it.labelAr, it.labelEn)}
+                            </button>
+                          ))}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -682,17 +544,10 @@ const Header: React.FC = () => {
                 <span>{L(NAV.gifts.labelAr, NAV.gifts.labelEn)}</span>
                 <ChevronDown size={16} className={`opacity-70 transition-transform ${openDropdown === 'gifts' ? 'rotate-180 opacity-100' : ''}`} />
               </button>
-
               {openDropdown === 'gifts' && (
                 <div className={megaMenuClass}>
                   {NAV.gifts.items.map((it) => (
-                    <button
-                      key={it.sub}
-                      type="button"
-                      role="menuitem"
-                      onClick={() => goTo(NAV.gifts.to(it.sub))}
-                      className={megaItemClass}
-                    >
+                    <button key={it.sub} type="button" role="menuitem" onClick={() => goTo(NAV.gifts.to(it.sub))} className={megaItemClass}>
                       {L(it.labelAr, it.labelEn)}
                     </button>
                   ))}
@@ -710,21 +565,7 @@ const Header: React.FC = () => {
                   <input
                     type="search"
                     placeholder={t('search')}
-                    className="
-                      w-72 2xl:w-80
-                      pl-4 pr-10 rtl:pl-10 rtl:pr-4
-                      py-2.5
-                      bg-white/90
-                      border border-white/40
-                      rounded-full
-                      text-sm text-slate-800 placeholder:text-slate-400
-                      shadow-sm
-                      outline-none
-                      transition-all duration-300
-                      focus:bg-white
-                      focus:border-white/70
-                      focus:ring-4 focus:ring-white/25
-                    "
+                    className="w-72 2xl:w-80 ps-4 pe-10 py-2.5 bg-white/90 border border-white/40 rounded-full text-sm text-slate-800 placeholder:text-slate-400 shadow-sm outline-none transition-all duration-300 focus:bg-white focus:border-white/70 focus:ring-4 focus:ring-white/25"
                     value={searchQuery}
                     onChange={(e) => {
                       setSearchQuery(e.target.value);
@@ -732,35 +573,25 @@ const Header: React.FC = () => {
                     }}
                     onFocus={() => setShowSuggestions(true)}
                   />
-                  <button
-                    type="submit"
-                    className="absolute right-3 rtl:left-3 rtl:right-auto top-2.5 text-slate-500 group-focus-within:text-slate-900 transition-colors duration-200"
-                    aria-label="Search"
-                  >
+                  <button type="submit" className="absolute end-3 top-2.5 text-slate-500 group-focus-within:text-slate-900 transition-colors duration-200" aria-label="Search">
                     <Search size={18} />
                   </button>
                 </div>
               </form>
 
               {showSuggestions && suggestions.length > 0 && (
-                <div className="absolute top-full mt-2 w-full bg-white rounded-xl shadow-xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-top-2 text-right rtl:text-right ltr:text-left z-50">
+                <div className="absolute top-full mt-2 w-full bg-white rounded-xl shadow-xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-top-2 text-start z-50">
                   {suggestions.map((item) => (
                     <Link
                       key={item.id}
                       to={`/product/${item.id}`}
                       onClick={() => {
-                        // ✅ إغلاق الـUI فقط — والـscroll للأعلى سيحدث تلقائيًا عند تغيير route
                         setSearchQuery('');
                         closeAllOverlays();
                       }}
                       className="flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors border-b border-slate-50 last:border-0"
                     >
-                      <LazyImage
-                        src={item.image}
-                        alt={item.name}
-                        className="w-8 h-8 rounded-md object-cover"
-                        containerClassName="w-8 h-8 bg-slate-100 rounded-md shrink-0"
-                      />
+                      <LazyImage src={item.image} alt={item.name} className="w-8 h-8 rounded-md object-cover" containerClassName="w-8 h-8 bg-slate-100 rounded-md shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-bold text-slate-800 truncate">{getProductTitle(item)}</p>
                         <p className="text-xs text-slate-500">{item.category}</p>
@@ -775,24 +606,14 @@ const Header: React.FC = () => {
 
             {/* Desktop Icons */}
             <div className="hidden md:flex items-center gap-2">
-              <Link
-                to="/tracking"
-                onClick={() => closeAllOverlays()}
-                className="p-2 hover:bg-white/20 rounded-full transition-all duration-300 hover:scale-110 active:scale-95 text-slate-900 hover:shadow-sm"
-                title={t('tracking')}
-              >
+              <Link to="/tracking" onClick={closeAllOverlays} className="p-2 hover:bg-white/20 rounded-full transition-all duration-300 hover:scale-110 active:scale-95 text-slate-900 hover:shadow-sm" title={t('tracking')}>
                 <Truck size={20} />
               </Link>
 
-              <button
-                onClick={() => openWishlist()}
-                className="relative p-2 hover:bg-white/20 rounded-full transition-all duration-300 hover:scale-110 active:scale-95 text-slate-900 hover:shadow-sm"
-                title={t('wishlist')}
-                type="button"
-              >
+              <button onClick={openWishlist} className="relative p-2 hover:bg-white/20 rounded-full transition-all duration-300 hover:scale-110 active:scale-95 text-slate-900 hover:shadow-sm" title={t('wishlist')} type="button">
                 <Heart size={20} />
                 {wishlistCount > 0 && (
-                  <span className="absolute top-0 right-0 w-4 h-4 bg-red-600 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white animate-pulse">
+                  <span className="absolute top-0 end-0 w-4 h-4 bg-red-600 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white animate-pulse">
                     {wishlistCount}
                   </span>
                 )}
@@ -809,92 +630,48 @@ const Header: React.FC = () => {
               >
                 <ShoppingBag size={20} />
                 {cartCount > 0 && (
-                  <span className="absolute top-0 right-0 w-4 h-4 bg-slate-900 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white animate-pulse">
+                  <span className="absolute top-0 end-0 w-4 h-4 bg-slate-900 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white animate-pulse">
                     {cartCount}
                   </span>
                 )}
               </button>
 
-              <div
-                ref={userMenuRef}
-                className="relative"
-                onMouseEnter={user ? openUserMenuSafe : undefined}
-                onMouseLeave={user ? closeUserMenuDelayed : undefined}
-              >
+              <div ref={userMenuRef} className="relative" onMouseEnter={user ? openUserMenuSafe : undefined} onMouseLeave={user ? closeUserMenuDelayed : undefined}>
                 {user ? (
                   <>
                     <button
                       type="button"
-                      aria-haspopup="menu"
                       aria-expanded={isUserMenuOpen}
                       onClick={() => setIsUserMenuOpen((v) => !v)}
-                      className="
-                        flex items-center gap-2 ms-1
-                        px-2 py-1.5 rounded-full
-                        bg-white/80 hover:bg-white
-                        border border-white/60
-                        shadow-sm hover:shadow-md
-                        transition-all
-                        active:scale-[0.98]
-                        focus:outline-none focus:ring-4 focus:ring-white/30
-                      "
+                      className="flex items-center gap-2 ms-1 px-2 py-1.5 rounded-full bg-white/80 hover:bg-white border border-white/60 shadow-sm hover:shadow-md transition-all active:scale-[0.98] focus:outline-none focus:ring-4 focus:ring-white/30"
                     >
                       <div className="w-9 h-9 rounded-xl bg-secondary-DEFAULT text-white flex items-center justify-center shadow-sm">
                         {user.name?.charAt(0)?.toUpperCase()}
                       </div>
-
-                      <div className="flex flex-col leading-tight text-right rtl:text-right ltr:text-left">
-                        <span className="text-xs font-extrabold text-slate-900 truncate max-w-[120px]">
-                          {user.name?.split(' ')?.[0]}
-                        </span>
-                        <span className="text-[10px] font-bold text-slate-500 truncate max-w-[120px]">
-                          {user.role === 'admin' ? L('مسؤول', 'Admin') : L('حسابي', 'My Account')}
-                        </span>
+                      <div className="flex flex-col leading-tight text-start">
+                        <span className="text-xs font-extrabold text-slate-900 truncate max-w-[120px]">{user.name?.split(' ')?.[0]}</span>
+                        <span className="text-[10px] font-bold text-slate-500 truncate max-w-[120px]">{user.role === 'admin' ? L('مسؤول', 'Admin') : L('حسابي', 'My Account')}</span>
                       </div>
-
                       <ChevronDown size={16} className={`text-slate-700 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`} />
                     </button>
 
                     {isUserMenuOpen && (
-                      <div
-                        role="menu"
-                        className="
-                          absolute top-full right-0 rtl:right-auto rtl:left-0 mt-2
-                          w-64 bg-white rounded-2xl shadow-2xl
-                          border border-slate-100 overflow-hidden
-                          animate-in fade-in slide-in-from-top-2 z-50
-                        "
-                      >
+                      <div role="menu" className="absolute top-full end-0 mt-2 w-64 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-top-2 z-50">
                         <div className="h-2 bg-transparent" />
-
                         <div className="px-4 py-3 border-b border-slate-100">
                           <p className="text-xs font-extrabold text-slate-900 truncate">{user.name}</p>
                           <p className="text-[11px] text-slate-500 truncate">{user.email}</p>
-                          <p className="text-[11px] text-slate-500 truncate">
-                            {L('الهاتف: ', 'Phone: ')}
-                            <span className="font-bold text-slate-700">{userPhone || L('غير متوفر', 'N/A')}</span>
-                          </p>
                         </div>
-
                         <Link to="/account" role="menuitem" className="flex items-center gap-2 px-4 py-3 hover:bg-slate-50 text-sm font-bold text-slate-700" onClick={() => setIsUserMenuOpen(false)}>
                           <UserIcon size={16} /> {L('حسابي', 'My Account')}
                         </Link>
-
                         {user.role === 'admin' && (
                           <Link to="/admin" role="menuitem" className="flex items-center gap-2 px-4 py-3 hover:bg-slate-50 text-sm font-bold text-slate-700" onClick={() => setIsUserMenuOpen(false)}>
                             <LayoutDashboard size={16} /> {t('dashboard')}
                           </Link>
                         )}
-
-                        <Link to="/my-orders" role="menuitem" className="flex items-center gap-2 px-4 py-3 hover:bg-slate-50 text-sm font-bold text-slate-700" onClick={() => setIsUserMenuOpen(false)}>
-                          <Package size={16} /> {t('myOrders')}
-                        </Link>
-
                         <button
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            logout();
-                          }}
+                          onClick={() => { setIsUserMenuOpen(false); logout(); }}
                           className="w-full flex items-center gap-2 px-4 py-3 hover:bg-red-50 text-sm font-bold text-red-600"
                           type="button"
                           role="menuitem"
@@ -905,63 +682,24 @@ const Header: React.FC = () => {
                     )}
                   </>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => goTo('/login')}
-                    className="
-                      ms-1 p-2.5 rounded-full
-                      bg-white/85 hover:bg-white
-                      border border-white/60
-                      shadow-sm hover:shadow-md
-                      transition-all duration-300
-                      text-slate-900
-                      active:scale-[0.98]
-                      focus:outline-none focus:ring-4 focus:ring-white/30
-                      inline-flex items-center justify-center
-                    "
-                    aria-label={t('login')}
-                    title={t('login')}
-                  >
+                  <button type="button" onClick={() => goTo('/login')} className="ms-1 p-2.5 rounded-full bg-white/85 hover:bg-white border border-white/60 shadow-sm hover:shadow-md transition-all duration-300 text-slate-900 active:scale-[0.98] focus:outline-none inline-flex items-center justify-center">
                     <LogIn size={20} />
                   </button>
                 )}
               </div>
             </div>
 
-            {/* Mobile */}
+            {/* Mobile Actions */}
             <div className="flex md:hidden items-center gap-2">
-              <button onClick={openWishlist} className="relative p-2 text-slate-900" aria-label="Open Wishlist" type="button">
+              <button onClick={openWishlist} className="relative p-2 text-slate-900" type="button">
                 <Heart size={24} />
-                {wishlistCount > 0 && (
-                  <span className="absolute top-0 right-0 w-4 h-4 bg-red-600 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">
-                    {wishlistCount}
-                  </span>
-                )}
+                {wishlistCount > 0 && <span className="absolute top-0 end-0 w-4 h-4 bg-red-600 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">{wishlistCount}</span>}
               </button>
-
-              <button
-                onClick={() => {
-                  closeAllOverlays();
-                  setIsCartOpen(true);
-                }}
-                className="relative p-2 text-slate-900"
-                aria-label="Open Cart"
-                type="button"
-              >
+              <button onClick={() => { closeAllOverlays(); setIsCartOpen(true); }} className="relative p-2 text-slate-900" type="button">
                 <ShoppingBag size={24} />
-                {cartCount > 0 && (
-                  <span className="absolute top-0 right-0 w-4 h-4 bg-slate-900 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">
-                    {cartCount}
-                  </span>
-                )}
+                {cartCount > 0 && <span className="absolute top-0 end-0 w-4 h-4 bg-slate-900 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">{cartCount}</span>}
               </button>
-
-              <button
-                onClick={() => setIsMenuOpen((v) => !v)}
-                className="p-2 text-slate-900 hover:bg-white/20 rounded-full transition-colors active:scale-90"
-                aria-label="Open Menu"
-                type="button"
-              >
+              <button onClick={() => setIsMenuOpen((v) => !v)} className="p-2 text-slate-900 hover:bg-white/20 rounded-full transition-colors active:scale-90" type="button">
                 <Menu size={28} />
               </button>
             </div>
@@ -969,109 +707,45 @@ const Header: React.FC = () => {
         </div>
       </header>
 
-      {/* Mobile Menu (كما هو عندك — بدون تغيير منطقي كبير) */}
-     {isMenuOpen && (
-  <div className="fixed inset-0 z-[9999]">
-    {/* Backdrop */}
-    <button
-      type="button"
-      onClick={() => setIsMenuOpen(false)}
-      className="absolute inset-0 bg-black/40"
-      aria-label="Close menu backdrop"
-    />
-
-    {/* Drawer */}
-    <div
-      className="
-        absolute top-0 bottom-0
-        right-0 rtl:right-auto rtl:left-0
-        w-[86%] max-w-sm
-        bg-white
-        shadow-2xl
-        flex flex-col
-      "
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-slate-100">
-        <div className="font-extrabold text-slate-900">{L('القائمة', 'Menu')}</div>
-        <button
-          type="button"
-          onClick={() => setIsMenuOpen(false)}
-          className="p-2 rounded-full hover:bg-slate-100 text-slate-900"
-          aria-label="Close menu"
-        >
-          <X size={22} />
-        </button>
-      </div>
-
-      {/* Content */}
-      <div className="p-4 overflow-y-auto">
-        <button
-          type="button"
-          onClick={() => goTo('/')}
-          className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2"
-        >
-          <Home size={18} /> {t('home')}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => goTo(gamesTo('all'))}
-          className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2"
-        >
-          <Gamepad2 size={18} /> {L('ألعاب', 'Games')}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => goTo('/shop?filter=Stationery')}
-          className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2"
-        >
-          <PencilRuler size={18} /> {L('قرطاسية', 'Stationery')}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => goTo('/shop?filter=Offers')}
-          className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2"
-        >
-          <Gift size={18} /> {L('عروض', 'Offers')}
-        </button>
-
-        <div className="my-3 h-px bg-slate-100" />
-
-        <button
-          type="button"
-          onClick={() => goTo('/tracking')}
-          className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2"
-        >
-          <Truck size={18} /> {t('tracking')}
-        </button>
-
-        {!user ? (
-          <button
-            type="button"
-            onClick={() => goTo('/login')}
-            className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2"
-          >
-            <LogIn size={18} /> {t('login')}
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              closeAllOverlays();
-              logout();
-            }}
-            className="w-full text-right rtl:text-right ltr:text-left px-3 py-3 rounded-xl hover:bg-red-50 font-bold text-red-600 flex items-center gap-2"
-          >
-            <LogOut size={18} /> {t('logout')}
-          </button>
-        )}
-      </div>
-    </div>
-  </div>
-)}
+      {/* Mobile Drawer Menu */}
+      {isMenuOpen && (
+        <div className="fixed inset-0 z-[9999]">
+          <button type="button" onClick={() => setIsMenuOpen(false)} className="absolute inset-0 bg-black/40" />
+          <div className="absolute top-0 bottom-0 end-0 w-[86%] max-w-sm bg-white shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100">
+              <div className="font-extrabold text-slate-900">{L('القائمة', 'Menu')}</div>
+              <button type="button" onClick={() => setIsMenuOpen(false)} className="p-2 rounded-full hover:bg-slate-100 text-slate-900">
+                <X size={22} />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto">
+              {[
+                { label: t('home'), icon: Home, action: () => goTo('/') },
+                { label: L('ألعاب', 'Games'), icon: Gamepad2, action: () => goTo(gamesTo('all')) },
+                { label: L('قرطاسية', 'Stationery'), icon: PencilRuler, action: () => goTo('/shop?filter=Stationery') },
+                { label: L('عروض', 'Offers'), icon: Gift, action: () => goTo('/shop?filter=Offers') },
+              ].map((item, i) => (
+                <button key={i} type="button" onClick={item.action} className="w-full text-start px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2">
+                  <item.icon size={18} /> {item.label}
+                </button>
+              ))}
+              <div className="my-3 h-px bg-slate-100" />
+              <button type="button" onClick={() => goTo('/tracking')} className="w-full text-start px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2">
+                <Truck size={18} /> {t('tracking')}
+              </button>
+              {!user ? (
+                <button type="button" onClick={() => goTo('/login')} className="w-full text-start px-3 py-3 rounded-xl hover:bg-slate-50 font-bold text-slate-900 flex items-center gap-2">
+                  <LogIn size={18} /> {t('login')}
+                </button>
+              ) : (
+                <button type="button" onClick={() => { closeAllOverlays(); logout(); }} className="w-full text-start px-3 py-3 rounded-xl hover:bg-red-50 font-bold text-red-600 flex items-center gap-2">
+                  <LogOut size={18} /> {t('logout')}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };
