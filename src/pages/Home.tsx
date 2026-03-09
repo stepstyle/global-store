@@ -675,19 +675,9 @@ const Home: React.FC = () => {
               <div className="flex items-center justify-center md:justify-start gap-2 text-white font-bold mb-4">
                 <Sparkles size={18} /> {String(t('specialOffer') ?? 'Special Offer')}
               </div>
-              <h2 className="text-3xl lg:text-4xl font-bold mb-4 text-white">{String(t('offerTitle') ?? '')}</h2>
-              <p className="text-white/85 mb-8 font-medium">{String(t('offerDesc') ?? '')}</p>
-              <Link to="/shop?filter=Offers" aria-label="Browse offers">
-                <Button variant="primary" className="bg-white text-slate-900 hover:bg-slate-100 border-none shadow-xl w-full sm:w-auto">
-                  {String(t('browseCourses') ?? 'Browse')}
-                </Button>
-              </Link>
+              
             </div>
-            <div className="relative z-10">
-              <div className="w-48 h-32 lg:w-64 lg:h-40 bg-white/20 backdrop-blur-md rounded-2xl border border-white/30 flex items-center justify-center rotate-6 shadow-2xl">
-                <Zap fill="currentColor" className="text-white w-12 h-12" />
-              </div>
-            </div>
+            
           </div>
         </div>
       </section>

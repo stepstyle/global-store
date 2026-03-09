@@ -1,6 +1,8 @@
 // src/pages/OrderSuccess.tsx
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import * as ReactRouterDOM from 'react-router-dom';
+import { doc, getDoc } from 'firebase/firestore';
+import { getFirestoreDb } from '../services/firebase';
 import {
   CheckCircle,
   Package,
@@ -155,7 +157,8 @@ const OrderSuccess: React.FC = () => {
     return stateOrder;
   }, [location, safeId]);
 
-  const loadOrder = useCallback(() => {
+  // 🚀 النظام العالمي: جلب لحظي + تحقق من الخادم (Optimistic UI + Firebase Fetch)
+  const loadOrder = useCallback(async () => {
     if (!safeId) {
       setOrder(null);
       setStatus('error');
@@ -167,39 +170,54 @@ const OrderSuccess: React.FC = () => {
     setErrorMsg('');
 
     try {
+      // 1. العرض الفوري السريع من الذاكرة أو التوجيه (Optimistic Load)
       const stateOrder = resolveOrderFromState();
-      if (stateOrder) {
-        setOrder(stateOrder);
-        cacheOrder(stateOrder);
-        setStatus('success');
-        return;
-      }
-
       const cachedOrder = getCachedOrder(safeId);
-      if (cachedOrder) {
-        setOrder(cachedOrder);
+      const initialOrder = stateOrder || cachedOrder;
+
+      if (initialOrder) {
+        setOrder(initialOrder);
         setStatus('success');
-        return;
       }
 
-      setOrder(null);
-      setStatus('error');
-      setErrorMsg(
-        tr(
-          'تعذر تحميل بيانات الطلب من الجلسة الحالية. إذا فتحت الرابط مباشرة، استخدم صفحة التتبع.',
-          'Unable to load the order from the current session. If you opened this link directly, please use the tracking page.'
-        )
-      );
+      // 2. التحقق من المصدر الأساسي (Firebase Firestore)
+      const firestoreDb = await getFirestoreDb();
+      const docRef = doc(firestoreDb, 'orders', safeId);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        const freshOrder = { id: docSnap.id, ...docSnap.data() } as Order;
+        setOrder(freshOrder);
+        cacheOrder(freshOrder); // تحديث الذاكرة بالبيانات الجديدة
+        setStatus('success');
+      } else {
+        // الطلب غير موجود في قاعدة البيانات
+        if (!initialOrder) {
+          setOrder(null);
+          setStatus('error');
+          setErrorMsg(
+            tr(
+              'لم نتمكن من العثور على هذا الطلب في النظام.',
+              'We could not find this order in the system.'
+            )
+          );
+        }
+      }
     } catch (error) {
       console.error('OrderSuccess loadOrder failed:', error, { safeId });
-      setOrder(null);
-      setStatus('error');
-      setErrorMsg(
-        tr(
-          'حدث خطأ أثناء تحميل بيانات الطلب. حاول مرة أخرى.',
-          'An error occurred while loading the order. Please try again.'
-        )
-      );
+      // في حالة فشل الاتصال، إذا كان لدينا نسخة في الذاكرة نظهرها، وإلا نظهر خطأ
+      setOrder((prev) => {
+        if (!prev) {
+          setStatus('error');
+          setErrorMsg(
+            tr(
+              'حدث خطأ أثناء تحميل بيانات الطلب. حاول مرة أخرى.',
+              'An error occurred while loading the order. Please try again.'
+            )
+          );
+        }
+        return prev;
+      });
     }
   }, [safeId, tr, resolveOrderFromState, getCachedOrder, cacheOrder]);
 
@@ -312,7 +330,6 @@ const OrderSuccess: React.FC = () => {
             </p>
 
             <div className="bg-slate-50/50 rounded-3xl p-6 sm:p-8 mb-8 text-start border border-slate-200/60 shadow-sm relative overflow-hidden">
-              {/* تزيين للخلفية يشبه الفاتورة */}
               <div className="absolute top-0 left-0 w-full h-1.5 bg-sky-400 opacity-80" />
               
               {/* Order ID & Date */}
