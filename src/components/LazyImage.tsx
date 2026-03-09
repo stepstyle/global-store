@@ -162,7 +162,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
   alt = '',
   className = '',
   containerClassName = '',
-  placeholderClassName = 'bg-slate-100',
+  placeholderClassName = 'bg-slate-200/60', // تم التحديث ليتطابق مع الـ Skeletons
   fallbackSrc,
   fetchPriority = 'auto',
   style,
@@ -323,11 +323,11 @@ const LazyImage: React.FC<LazyImageProps> = ({
       )}
 
       {noSrc ? (
-        <div className={`absolute inset-0 flex items-center justify-center text-slate-300 ${placeholderClassName}`}>
-          <ImageOff size={24} />
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-50/80 backdrop-blur-sm text-slate-300">
+          <ImageOff size={28} strokeWidth={1.5} className="opacity-60" />
         </div>
       ) : hasError ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-50 text-slate-300">
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-50/80 backdrop-blur-sm text-slate-300">
           {showFallback ? (
             <img
               src={String(fallbackSrc)}
@@ -338,7 +338,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
               decoding="async"
             />
           ) : (
-            <ImageOff size={24} strokeWidth={1.5} />
+            <ImageOff size={28} strokeWidth={1.5} className="opacity-60" />
           )}
         </div>
       ) : inView ? (
@@ -358,7 +358,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
             setHasError(true);
             onError?.(e);
           }}
-          className={`w-full h-full block transition-opacity duration-300 ease-out ${
+          className={`w-full h-full block transition-opacity duration-500 ease-out ${
             isLoaded ? 'opacity-100' : 'opacity-0'
           } ${className}`}
           style={{ width: '100%', height: '100%', display: 'block', ...style }}

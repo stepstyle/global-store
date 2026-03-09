@@ -1,8 +1,8 @@
+// src/pages/Login.tsx
 import React, { useMemo, useState } from 'react';
-import { Facebook, Eye, EyeOff, Mail, Lock, User as UserIcon } from 'lucide-react';
+import { Facebook, Eye, EyeOff, Mail, Lock, User as UserIcon, Loader2 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
 
-import Button from '../components/Button';
 import SEO from '../components/SEO';
 import { useCart } from '../App';
 import { db } from '../services/storage';
@@ -184,25 +184,27 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="min-h-[calc(100vh-80px)] bg-slate-50 flex items-center justify-center p-4">
+    <div className="min-h-[calc(100vh-80px)] bg-slate-50 flex items-center justify-center p-4 py-12">
       <SEO title={title} description={desc} />
 
-      <div className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden flex flex-col border border-slate-100">
+      <div className="bg-white rounded-[2rem] shadow-xl shadow-slate-200/50 w-full max-w-md overflow-hidden flex flex-col border border-slate-100 animate-in fade-in zoom-in-95 duration-500">
         <div className="w-full p-8 md:p-10">
           <div className="text-center mb-8">
-            <h2 className="text-2xl font-heading font-bold text-slate-900 mb-2">
+            <h2 className="text-2xl lg:text-3xl font-heading font-black text-slate-900 mb-2 tracking-tight">
               {isLoginMode ? t('welcomeBack') : t('createAccount')}
             </h2>
-            <p className="text-slate-500 text-sm">{desc}</p>
+            <p className="text-slate-500 text-sm font-medium">{desc}</p>
           </div>
 
-          {/* Mode Switch */}
-          <div className="flex gap-2 mb-8 bg-slate-100 p-1 rounded-2xl">
+          {/* Mode Switch Tabs */}
+          <div className="flex gap-2 mb-8 bg-slate-100 p-1.5 rounded-2xl">
             <button
               type="button"
               onClick={() => setIsLoginMode(true)}
-              className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${
-                isLoginMode ? 'bg-white shadow-sm text-secondary-DEFAULT' : 'text-slate-500 hover:text-slate-700'
+              className={`flex-1 py-2.5 text-sm rounded-xl transition-all duration-300 ${
+                isLoginMode 
+                  ? 'bg-white shadow-sm text-slate-900 font-extrabold' 
+                  : 'text-slate-500 font-bold hover:text-slate-800 hover:bg-slate-200/50'
               }`}
               disabled={isLoading}
             >
@@ -211,8 +213,10 @@ const Login: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsLoginMode(false)}
-              className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${
-                !isLoginMode ? 'bg-white shadow-sm text-secondary-DEFAULT' : 'text-slate-500 hover:text-slate-700'
+              className={`flex-1 py-2.5 text-sm rounded-xl transition-all duration-300 ${
+                !isLoginMode 
+                  ? 'bg-white shadow-sm text-slate-900 font-extrabold' 
+                  : 'text-slate-500 font-bold hover:text-slate-800 hover:bg-slate-200/50'
               }`}
               disabled={isLoading}
             >
@@ -220,61 +224,61 @@ const Login: React.FC = () => {
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4.5">
             {!isLoginMode && (
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-1">{t('fullName')}</label>
+              <div className="mb-4">
+                <label className="block text-sm font-bold text-slate-700 mb-1.5">{t('fullName')}</label>
                 <div className="relative">
                   <input
                     name="name"
                     value={formData.name}
                     onChange={handleInputChange}
                     type="text"
-                    className="w-full pl-12 pr-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 focus:ring-2 focus:ring-secondary-light outline-none"
+                    className="w-full ltr:pl-12 ltr:pr-4 rtl:pr-12 rtl:pl-4 py-3.5 rounded-2xl bg-slate-50 border border-slate-200 focus:ring-2 focus:ring-sky-400/30 focus:border-sky-400 outline-none transition-all font-medium text-slate-900"
                     placeholder={t('fullName')}
                     disabled={isLoading}
                     autoComplete="name"
                   />
-                  <UserIcon className="absolute left-4 top-3.5 text-slate-400" size={20} />
+                  <UserIcon className="absolute ltr:left-4 rtl:right-4 top-4 text-slate-400" size={20} />
                 </div>
               </div>
             )}
 
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">{t('emailPlaceholder')}</label>
+            <div className="mb-4">
+              <label className="block text-sm font-bold text-slate-700 mb-1.5">{t('emailPlaceholder')}</label>
               <div className="relative">
                 <input
                   name="email"
                   value={formData.email}
                   onChange={handleInputChange}
                   type="email"
-                  className="w-full pl-12 pr-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 focus:ring-2 focus:ring-secondary-light outline-none"
+                  className="w-full ltr:pl-12 ltr:pr-4 rtl:pr-12 rtl:pl-4 py-3.5 rounded-2xl bg-slate-50 border border-slate-200 focus:ring-2 focus:ring-sky-400/30 focus:border-sky-400 outline-none transition-all font-medium text-slate-900"
                   placeholder="example@email.com"
                   disabled={isLoading}
                   autoComplete="email"
                 />
-                <Mail className="absolute left-4 top-3.5 text-slate-400" size={20} />
+                <Mail className="absolute ltr:left-4 rtl:right-4 top-4 text-slate-400" size={20} />
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">{t('password')}</label>
+            <div className="mb-4">
+              <label className="block text-sm font-bold text-slate-700 mb-1.5">{t('password')}</label>
               <div className="relative">
                 <input
                   name="password"
                   value={formData.password}
                   onChange={handleInputChange}
                   type={showPass ? 'text' : 'password'}
-                  className="w-full pl-12 pr-12 py-3 rounded-2xl bg-slate-50 border border-slate-200 focus:ring-2 focus:ring-secondary-light outline-none"
+                  className="w-full ltr:pl-12 rtl:pr-12 ltr:pr-12 rtl:pl-12 py-3.5 rounded-2xl bg-slate-50 border border-slate-200 focus:ring-2 focus:ring-sky-400/30 focus:border-sky-400 outline-none transition-all font-medium text-slate-900 tracking-wide"
                   placeholder="••••••••"
                   disabled={isLoading}
                   autoComplete={isLoginMode ? 'current-password' : 'new-password'}
                 />
-                <Lock className="absolute left-4 top-3.5 text-slate-400" size={20} />
+                <Lock className="absolute ltr:left-4 rtl:right-4 top-4 text-slate-400" size={20} />
                 <button
                   type="button"
                   onClick={() => setShowPass((s) => !s)}
-                  className="absolute right-3 top-2.5 p-2 rounded-xl hover:bg-slate-100 text-slate-500"
+                  className="absolute ltr:right-3 rtl:left-3 top-2.5 p-1.5 rounded-xl hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-colors"
                   aria-label="toggle password"
                   disabled={isLoading}
                 >
@@ -284,11 +288,11 @@ const Login: React.FC = () => {
             </div>
 
             {isLoginMode && (
-              <div className="flex justify-end">
+              <div className="flex justify-end mb-6">
                 <button
                   type="button"
                   onClick={handleForgotPassword}
-                  className="text-xs font-bold text-secondary-DEFAULT hover:underline"
+                  className="text-xs font-extrabold text-sky-500 hover:text-sky-600 hover:underline transition-colors"
                   disabled={isLoading}
                 >
                   {t('forgotPassword')}
@@ -296,9 +300,15 @@ const Login: React.FC = () => {
               </div>
             )}
 
-            <Button type="submit" className="w-full shadow-lg shadow-secondary-light/30" isLoading={isLoading}>
+            {/* Main Submit Button - Sky Blue */}
+            <button 
+              type="submit" 
+              disabled={isLoading}
+              className="mt-6 w-full py-4 text-base font-extrabold rounded-2xl bg-sky-400 hover:bg-sky-500 text-white shadow-lg shadow-sky-400/30 flex justify-center items-center gap-2 transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {isLoading && <Loader2 size={18} className="animate-spin" />}
               {isLoginMode ? t('login') : t('createAccount')}
-            </Button>
+            </button>
           </form>
 
           {/* Divider */}
@@ -307,32 +317,38 @@ const Login: React.FC = () => {
               <div className="w-full border-t border-slate-200"></div>
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-white text-slate-500">{t('orContinueWith')}</span>
+              <span className="px-4 bg-white text-slate-400 font-medium">{t('orContinueWith')}</span>
             </div>
           </div>
 
-          {/* Social Buttons */}
-          <div className="grid grid-cols-2 gap-4">
+          {/* Social Buttons - Elegant Black/Outline */}
+          <div className="grid grid-cols-2 gap-3">
             <button
               type="button"
               onClick={handleGoogleLogin}
-              className="flex items-center justify-center gap-2 py-2.5 border border-slate-200 rounded-2xl hover:bg-slate-50 transition-colors text-sm font-bold text-slate-700"
+              className="flex items-center justify-center gap-2 py-3 border-2 border-slate-100 rounded-xl hover:border-slate-300 hover:bg-slate-50 transition-all text-sm font-bold text-slate-700"
               disabled={isLoading}
             >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+              </svg>
               Google
             </button>
 
             <button
               type="button"
-              className="flex items-center justify-center gap-2 py-2.5 border border-slate-200 rounded-2xl hover:bg-slate-50 transition-colors text-sm font-bold text-slate-700"
+              className="flex items-center justify-center gap-2 py-3 border-2 border-slate-100 rounded-xl hover:border-slate-300 hover:bg-slate-50 transition-all text-sm font-bold text-slate-700"
               disabled={isLoading}
             >
-              <Facebook size={20} className="text-blue-600" />
+              <Facebook size={18} className="text-[#1877F2]" fill="currentColor" stroke="none" />
               Facebook
             </button>
           </div>
 
-          <p className="text-xs text-slate-400 mt-6 text-center">
+          <p className="text-[11px] text-slate-400 mt-8 text-center font-medium px-4">
             {t('privacyHint') ?? 'By continuing, you agree to our privacy policy and terms.'}
           </p>
         </div>

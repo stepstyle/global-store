@@ -10,9 +10,9 @@ import {
   AlertTriangle,
   Copy,
   RefreshCw,
-  StickyNote
+  StickyNote,
+  Home
 } from 'lucide-react';
-import Button from '../components/Button';
 import { Order } from '../types';
 import { useCart } from '../App';
 import { db } from '../services/storage';
@@ -26,7 +26,6 @@ const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(mi
 
 const sanitizeOrderId = (raw: string) => {
   const s = String(raw ?? '').trim();
-  // حماية بسيطة: لا تسمح بسلسلة طويلة جدًا
   return s.slice(0, 64);
 };
 
@@ -177,68 +176,79 @@ const OrderTracking: React.FC = () => {
   const orderNote = useMemo(() => safeText((order as any)?.note), [order]);
 
   return (
-    <div className="min-h-screen bg-slate-50 py-12 lg:py-16">
+    <div className="min-h-screen bg-slate-50 py-12 lg:py-20 relative overflow-hidden">
+      {/* Background Decor */}
+      <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-sky-200/20 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-slate-200/40 rounded-full blur-3xl pointer-events-none" />
+
       <SEO title={seoTitle} />
-      <div className="container mx-auto px-4 max-w-2xl">
-        <h1 className="text-3xl font-heading font-extrabold text-center mb-8 text-slate-900">
+      
+      <div className="container mx-auto px-4 max-w-2xl relative z-10">
+        <h1 className="text-3xl md:text-4xl font-heading font-black text-center mb-8 text-slate-900 tracking-tight">
           {tt('trackYourOrder', 'تتبع طلبك', 'Track your order')}
         </h1>
 
         {/* Search Card */}
-        <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-sm border border-slate-200/60 mb-8 animate-in fade-in zoom-in duration-300">
+        <div className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-xl shadow-slate-200/40 border border-slate-100 mb-8 animate-in fade-in zoom-in-95 duration-500">
           <form onSubmit={handleTrack} className="flex flex-col sm:flex-row gap-4">
             <div className="relative flex-1 group">
-              {/* 🌍 استخدام start-4 بدلاً من isRTL ? right : left */}
-              <span className="absolute inset-y-0 start-4 flex items-center text-slate-400 group-focus-within:text-secondary-DEFAULT transition-colors">
-                <Search size={18} strokeWidth={2.5} />
+              <span className="absolute inset-y-0 start-4 flex items-center text-slate-400 group-focus-within:text-sky-500 transition-colors">
+                <Search size={20} strokeWidth={2.5} />
               </span>
 
-              {/* 🌍 استخدام ps-12 pe-4 للـ Padding المتجاوب مع الاتجاه */}
               <input
                 type="text"
                 inputMode="text"
                 placeholder={tt('enterOrderId', 'أدخل رقم الطلب هنا...', 'Enter your order ID...')}
                 value={orderId}
                 onChange={(e) => setOrderId(sanitizeOrderId(e.target.value))}
-                className="w-full py-3.5 ps-11 pe-4 bg-slate-50 rounded-2xl border border-slate-200 focus:bg-white focus:ring-2 focus:ring-secondary-DEFAULT/50 outline-none transition-all font-bold text-slate-800 placeholder:font-normal placeholder:text-slate-400"
+                className="w-full py-4 ps-12 pe-4 bg-slate-50 rounded-2xl border border-slate-200 focus:bg-white focus:ring-2 focus:ring-sky-400/30 focus:border-sky-400 outline-none transition-all font-bold text-slate-800 placeholder:font-medium placeholder:text-slate-400"
                 aria-label={tt('enterOrderId', 'أدخل رقم الطلب', 'Enter order ID')}
-                dir="ltr" // يفضل إدخال رقم الطلب من اليسار لليمين دائماً
+                dir="ltr"
               />
             </div>
 
-            <Button type="submit" isLoading={status === 'loading'} disabled={!sanitizeOrderId(orderId)} className="px-8 shadow-md">
+            <button 
+              type="submit" 
+              disabled={!sanitizeOrderId(orderId) || status === 'loading'} 
+              className="px-8 py-4 bg-black hover:bg-slate-800 text-white font-extrabold rounded-2xl shadow-lg shadow-black/20 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {status === 'loading' && <RefreshCw size={18} className="animate-spin" />}
               {tt('track', 'تتبع', 'Track')}
-            </Button>
+            </button>
           </form>
 
           {status === 'error' && (
-            <div className="mt-5 flex items-start gap-2.5 text-red-700 bg-red-50 border border-red-100 p-4 rounded-2xl animate-in slide-in-from-top-2">
-              <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+            <div className="mt-5 flex items-start gap-3 text-red-600 bg-red-50 border border-red-100 p-4 rounded-2xl animate-in slide-in-from-top-2">
+              <AlertTriangle size={20} className="shrink-0 mt-0.5" />
               <p className="text-sm font-bold leading-relaxed">{error}</p>
             </div>
           )}
 
           {status === 'idle' && !queryOrderId && (
-            <p className="mt-5 text-sm font-medium text-slate-500 text-center">
-              {tt('trackHint', 'أدخل رقم الطلب في الحقل أعلاه ثم اضغط "تتبع" لمعرفة حالة طلبك.', 'Enter your order ID above then press "Track" to see its status.')}
-            </p>
+            <div className="mt-6 flex flex-col items-center justify-center text-center p-6 bg-slate-50 border border-slate-100 border-dashed rounded-2xl">
+              <Package size={40} className="text-slate-300 mb-3" />
+              <p className="text-sm font-bold text-slate-500 max-w-xs">
+                {tt('trackHint', 'أدخل رقم الطلب في الحقل أعلاه ثم اضغط "تتبع" لمعرفة حالة طلبك وتاريخ الوصول المتوقع.', 'Enter your order ID above then press "Track" to see its status.')}
+              </p>
+            </div>
           )}
         </div>
 
         {/* Result */}
         {status === 'success' && order && (
-          <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-lg border border-slate-200/60 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-xl shadow-slate-200/40 border border-slate-100 animate-in fade-in slide-in-from-bottom-4 duration-500 overflow-hidden relative">
             
             {/* Header */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-10 pb-6 border-b border-slate-100">
               <div className="w-full">
-                <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">{tt('orderNumber', 'رقم الطلب', 'Order number')}</p>
+                <p className="text-slate-400 text-xs font-black uppercase tracking-widest mb-1.5">{tt('orderNumber', 'رقم الطلب', 'Order number')}</p>
                 <div className="flex items-center justify-between sm:justify-start gap-4">
-                  <p className="font-black text-xl text-slate-900 break-all" dir="ltr">{(order as any).id}</p>
+                  <p className="font-black text-2xl text-slate-900 break-all" dir="ltr">#{(order as any).id}</p>
 
                   <button
                     onClick={() => copyText(String((order as any).id))}
-                    className="inline-flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-50 border border-slate-200 hover:bg-slate-100 px-3 py-1.5 rounded-xl transition-colors shrink-0"
+                    className="inline-flex items-center gap-2 text-xs font-bold text-sky-600 hover:text-sky-700 bg-sky-50 border border-sky-100 hover:bg-sky-100 px-3 py-1.5 rounded-xl transition-colors shrink-0"
                     type="button"
                     title={tt('copy', 'نسخ', 'Copy')}
                   >
@@ -247,37 +257,40 @@ const OrderTracking: React.FC = () => {
                 </div>
               </div>
 
-              <div className="text-start sm:text-end w-full sm:w-auto shrink-0">
-                <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">{tt('orderDate', 'تاريخ الطلب', 'Order date')}</p>
-                <p className="font-bold text-slate-800" dir="ltr">{safeText((order as any).date)}</p>
+              <div className="text-start sm:text-end w-full sm:w-auto shrink-0 bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">{tt('orderDate', 'تاريخ الطلب', 'Order date')}</p>
+                <p className="font-extrabold text-slate-800 text-sm" dir="ltr">{safeText((order as any).date)}</p>
               </div>
             </div>
 
             {/* Progress */}
-            <div className="relative flex justify-between px-2 sm:px-4 mb-12">
-              <div className="absolute top-5 start-0 w-full h-1.5 bg-slate-100 -z-0 rounded-full" />
+            <div className="relative flex justify-between px-2 sm:px-6 mb-12">
+              <div className="absolute top-5 start-0 w-full h-2 bg-slate-100 -z-0 rounded-full" />
 
-              {/* 🌍 استخدام start-0 لشريط التقدم لكي يملأ من الجهة الصحيحة بناءً على اللغة */}
+              {/* شريط التقدم باللون الأزرق الفاتح */}
               <div
-                className="absolute top-5 h-1.5 bg-green-500 transition-all duration-1000 ease-out -z-0 rounded-full start-0"
+                className="absolute top-5 h-2 bg-sky-400 transition-all duration-1000 ease-out -z-0 rounded-full start-0 shadow-[0_0_10px_rgba(56,189,248,0.5)]"
                 style={{ width: `${progressPct}%` }}
               />
 
               {steps.map((step, idx) => {
                 const currentIdx = getCurrentStepIndex((order as any).status);
                 const isCompleted = idx <= currentIdx;
+                const isCurrent = idx === currentIdx;
                 const Icon = isCompleted ? CheckCircle : step.icon;
 
                 return (
-                  <div key={step.status} className="flex flex-col items-center relative z-10">
+                  <div key={step.status} className="flex flex-col items-center relative z-10 group">
                     <div
-                      className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-500 border-4 border-white shadow-sm ${
-                        isCompleted ? 'bg-green-500 text-white scale-110' : 'bg-slate-100 text-slate-400'
-                      }`}
+                      className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-500 border-4 border-white ${
+                        isCompleted 
+                          ? 'bg-sky-400 text-white shadow-lg shadow-sky-400/30 scale-110' 
+                          : 'bg-slate-100 text-slate-300'
+                      } ${isCurrent ? 'ring-4 ring-sky-100' : ''}`}
                     >
-                      <Icon size={18} strokeWidth={isCompleted ? 2.5 : 2} />
+                      <Icon size={20} strokeWidth={isCompleted ? 2.5 : 2} className={isCurrent && !isCompleted ? 'animate-pulse text-sky-400' : ''} />
                     </div>
-                    <span className={`mt-3 text-xs font-extrabold transition-colors duration-500 ${isCompleted ? 'text-green-700' : 'text-slate-400'}`}>
+                    <span className={`mt-3 text-xs font-black transition-colors duration-500 text-center ${isCompleted ? 'text-sky-600' : 'text-slate-400'}`}>
                       {step.label}
                     </span>
                   </div>
@@ -286,22 +299,23 @@ const OrderTracking: React.FC = () => {
             </div>
 
             {/* Items Summary */}
-            <div className="mt-8 bg-slate-50 p-5 rounded-2xl border border-slate-100 shadow-inner">
-              <h3 className="font-extrabold text-sm mb-4 text-slate-900">{tt('orderSummary', 'ملخص الطلب', 'Order summary')}</h3>
+            <div className="mt-8 bg-white p-6 rounded-3xl border border-slate-200/70 shadow-sm relative overflow-hidden">
+              <div className="absolute left-0 top-0 w-1.5 h-full bg-slate-800" />
+              <h3 className="font-black text-sm mb-5 text-slate-900 uppercase tracking-widest">{tt('orderSummary', 'ملخص الطلب', 'Order summary')}</h3>
 
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {(order as any).items.map((item: any, i: number) => {
                   const title = typeof getProductTitle === 'function' ? getProductTitle(item) || item.name : item.name;
 
                   return (
-                    <div key={i} className="flex justify-between items-center text-sm text-slate-700 gap-4">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="font-bold text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-md text-xs" dir="ltr">
+                    <div key={i} className="flex justify-between items-center text-sm text-slate-700 gap-4 group">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="font-extrabold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg text-xs" dir="ltr">
                           x{item.quantity}
                         </span>
-                        <span className="font-semibold line-clamp-1">{title}</span>
+                        <span className="font-bold line-clamp-1 group-hover:text-sky-600 transition-colors">{title}</span>
                       </div>
-                      <span className="font-bold text-slate-900 whitespace-nowrap" dir="ltr">
+                      <span className="font-black text-slate-900 whitespace-nowrap bg-slate-50 px-2 py-1 rounded-lg" dir="ltr">
                         {formatMoney(item.price * item.quantity)}
                       </span>
                     </div>
@@ -309,53 +323,58 @@ const OrderTracking: React.FC = () => {
                 })}
               </div>
 
-              <div className="mt-4 pt-4 border-t border-slate-200/80 flex justify-between items-center">
-                <span className="font-extrabold text-slate-600">{tt('total', 'الإجمالي', 'Total')}</span>
-                <span className="font-black text-lg text-slate-900" dir="ltr">{formatMoney((order as any).total)}</span>
+              <div className="mt-5 pt-5 border-t border-slate-100 flex justify-between items-center">
+                <span className="font-black text-slate-400 uppercase tracking-widest text-xs">{tt('total', 'الإجمالي', 'Total')}</span>
+                <span className="font-black text-2xl text-sky-500" dir="ltr">{formatMoney((order as any).total)}</span>
               </div>
             </div>
 
             {/* Order Note */}
             {orderNote && (
-              <div className="mt-5 rounded-2xl border border-yellow-200/60 bg-yellow-50/50 p-5">
+              <div className="mt-5 rounded-3xl border border-slate-200/70 bg-white p-6 shadow-sm relative overflow-hidden">
+                <div className="absolute left-0 top-0 w-1.5 h-full bg-yellow-400" />
                 <div className="flex items-center justify-between gap-3 mb-3">
-                  <div className="flex items-center gap-2 text-yellow-800">
-                    <StickyNote size={18} className="text-yellow-600 shrink-0" />
-                    <p className="text-sm font-extrabold">{tt('orderNote', 'ملاحظة الطلب', 'Order note')}</p>
+                  <div className="flex items-center gap-2 text-slate-800">
+                    <StickyNote size={18} className="text-yellow-500 shrink-0" />
+                    <p className="text-sm font-black uppercase tracking-widest">{tt('orderNote', 'ملاحظة الطلب', 'Order note')}</p>
                   </div>
 
                   <button
                     type="button"
                     onClick={() => copyText(orderNote)}
-                    className="inline-flex items-center gap-1.5 text-xs font-bold text-yellow-700 hover:text-yellow-900 bg-yellow-100/50 hover:bg-yellow-200 px-2.5 py-1.5 rounded-lg transition-colors shrink-0"
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-100 px-3 py-1.5 rounded-xl transition-colors shrink-0"
                     title={tt('copy', 'نسخ', 'Copy')}
                   >
                     <Copy size={14} /> {tt('copy', 'نسخ', 'Copy')}
                   </button>
                 </div>
 
-                <p className="text-sm font-medium text-yellow-900/80 leading-relaxed whitespace-pre-wrap break-words">
+                <p className="text-sm font-semibold text-slate-600 leading-relaxed whitespace-pre-wrap break-words bg-slate-50 p-4 rounded-2xl">
                   {orderNote}
                 </p>
               </div>
             )}
 
             {/* Actions */}
-            <div className="mt-8 flex flex-col sm:flex-row gap-4">
-              <Button
-                variant="outline"
-                className="flex-1 py-3.5 flex items-center justify-center gap-2 bg-slate-50 hover:bg-slate-100 border-slate-200"
+            <div className="mt-8 flex flex-col sm:flex-row gap-3">
+              <button
+                className="flex-1 py-4 flex items-center justify-center gap-2 bg-black hover:bg-slate-800 text-white font-extrabold rounded-2xl transition-all shadow-md shadow-black/20 disabled:opacity-50"
                 onClick={() => trackById((order as any).id)}
                 disabled={status === 'loading'}
                 type="button"
               >
                 <RefreshCw size={18} className={status === 'loading' ? 'animate-spin' : ''} />
                 {tt('refreshStatus', 'تحديث الحالة', 'Refresh status')}
-              </Button>
+              </button>
 
-              <Button className="flex-1 py-3.5 shadow-md" onClick={() => navigate('/')} type="button">
+              <button 
+                className="flex-1 py-4 bg-sky-400 hover:bg-sky-500 text-white font-extrabold rounded-2xl shadow-lg shadow-sky-400/30 transition-all flex items-center justify-center gap-2" 
+                onClick={() => navigate('/')} 
+                type="button"
+              >
+                <Home size={18} />
                 {tt('backToHome', 'العودة للرئيسية', 'Back to home')}
-              </Button>
+              </button>
             </div>
           </div>
         )}

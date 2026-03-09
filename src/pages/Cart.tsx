@@ -102,9 +102,12 @@ const Cart: React.FC = () => {
           <p className="text-slate-500 mb-8 text-sm leading-relaxed">
             {L('تصفح منتجاتنا وأضف ما يعجبك إلى السلة للبدء بالتسوق.', 'Browse products and add items to your cart to get started.')}
           </p>
-          <Button onClick={() => navigate('/shop')} className="w-full rounded-full py-3.5 shadow-md">
+          <button 
+            onClick={() => navigate('/shop')} 
+            className="w-full rounded-full py-3.5 bg-black hover:bg-slate-800 text-white font-bold transition-all shadow-md"
+          >
             {L('تصفح المنتجات', 'Browse products')}
-          </Button>
+          </button>
         </div>
       </div>
     );
@@ -130,7 +133,7 @@ const Cart: React.FC = () => {
           <button
             type="button"
             onClick={() => navigate('/shop')}
-            className="inline-flex items-center gap-2 text-sm font-bold text-slate-600 hover:text-secondary-DEFAULT transition-colors"
+            className="inline-flex items-center gap-2 text-sm font-bold text-slate-600 hover:text-sky-500 transition-colors"
           >
             <ArrowRight size={16} className="rtl:rotate-0 ltr:rotate-180" />
             {L('متابعة التسوق', 'Continue shopping')}
@@ -148,7 +151,7 @@ const Cart: React.FC = () => {
                   key={item.id}
                   item={item}
                   title={getProductTitle(item)}
-                  t={t} // نمرر t لضمان عدم كسر أي شيء بالداخل إن كانت تُستخدم
+                  t={t}
                   formatMoney={formatMoney}
                   onRemove={(id) => removeFromCart(id)}
                   onSetQty={onSetQty}
@@ -172,7 +175,7 @@ const Cart: React.FC = () => {
                 value={orderNote}
                 onChange={(e) => setOrderNote(e.target.value)}
                 placeholder={L('اكتب ملاحظة للبائع (تغليف هدية، وقت التوصيل المفضل، إلخ)...', 'Write a note for the seller (gift wrap, time, etc.)')}
-                className="w-full min-h-[110px] resize-none p-3.5 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-secondary-DEFAULT focus:ring-2 focus:ring-secondary-DEFAULT/20 text-sm text-slate-700 transition-all placeholder:text-slate-400"
+                className="w-full min-h-[110px] resize-none p-3.5 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20 text-sm text-slate-700 transition-all placeholder:text-slate-400"
               />
 
               {safeTrim(orderNote) && (
@@ -224,17 +227,22 @@ const Cart: React.FC = () => {
               </div>
 
               <div className="mt-6 space-y-3">
-                <Button
+                {/* زر إتمام الطلب - أزرق فاتح */}
+                <button
                   onClick={() => navigate('/checkout')}
-                  className="w-full py-4 text-base rounded-2xl shadow-xl shadow-secondary-DEFAULT/25 flex justify-center items-center gap-2 group hover:-translate-y-0.5 transition-all"
+                  className="w-full py-4 text-base font-extrabold rounded-xl bg-sky-400 hover:bg-sky-500 text-white shadow-lg shadow-sky-400/30 flex justify-center items-center gap-2 group transition-all duration-300"
                 >
                   {L('إتمام الطلب', 'Proceed to Checkout')}
                   <ArrowLeft size={18} className="rtl:rotate-0 ltr:rotate-180 group-hover:-translate-x-1 rtl:group-hover:translate-x-1 transition-transform" />
-                </Button>
+                </button>
 
-                <Button variant="outline" onClick={() => navigate('/shop')} className="w-full py-3.5 rounded-2xl border-slate-200 text-slate-600 hover:bg-slate-50">
+                {/* زر متابعة التسوق - أسود */}
+                <button 
+                  onClick={() => navigate('/shop')} 
+                  className="w-full py-3.5 text-base font-extrabold rounded-xl bg-black hover:bg-slate-800 text-white shadow-lg shadow-black/20 transition-all duration-300"
+                >
                   {L('متابعة التسوق', 'Continue Shopping')}
-                </Button>
+                </button>
               </div>
             </div>
           </div>

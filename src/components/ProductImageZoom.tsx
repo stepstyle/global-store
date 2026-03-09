@@ -1,8 +1,8 @@
 // src/components/ProductImageZoom.tsx
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { X, ZoomIn, ZoomOut } from 'lucide-react';
+import { X, ZoomIn, ZoomOut, Search } from 'lucide-react';
 import LazyImage from './LazyImage';
-import { useCart } from '../App'; // ✅ استدعاء حالة التطبيق لجلب اللغة
+import { useCart } from '../App';
 
 type Props = {
   src: string;
@@ -175,7 +175,7 @@ const ProductImageZoom: React.FC<Props> = ({
 
   if (!ok) {
     return (
-      <div className={`w-full aspect-square rounded-3xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 ${containerClassName}`}>
+      <div className={`w-full aspect-square rounded-[2rem] bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400 ${containerClassName}`}>
         {alt || L('لا توجد صورة', 'No image')}
       </div>
     );
@@ -187,7 +187,7 @@ const ProductImageZoom: React.FC<Props> = ({
       <div
         ref={wrapRef}
         className={[
-          'relative w-full aspect-square rounded-3xl bg-white border border-slate-200 overflow-hidden',
+          'relative w-full aspect-square rounded-[2rem] bg-white border border-slate-100 overflow-hidden shadow-sm group cursor-pointer',
           'select-none',
           containerClassName,
         ].join(' ')}
@@ -207,9 +207,9 @@ const ProductImageZoom: React.FC<Props> = ({
             alt={alt}
             containerClassName="w-full h-full"
             className={[
-              'w-full h-full object-contain',
+              'w-full h-full object-contain p-4 mix-blend-multiply',
               hover ? 'md:opacity-0' : 'opacity-100',
-              'transition-opacity duration-200',
+              'transition-opacity duration-300',
               imageClassName,
             ].join(' ')}
             loading={priority ? 'eager' : 'lazy'}
@@ -221,9 +221,9 @@ const ProductImageZoom: React.FC<Props> = ({
         {/* Desktop hover zoom layer (md+) */}
         <div
           className={[
-            'hidden md:block absolute inset-0',
+            'hidden md:block absolute inset-0 bg-white',
             hover ? 'opacity-100' : 'opacity-0 pointer-events-none',
-            'transition-opacity duration-150',
+            'transition-opacity duration-200 ease-out',
           ].join(' ')}
           aria-hidden="true"
         >
@@ -234,70 +234,78 @@ const ProductImageZoom: React.FC<Props> = ({
               backgroundRepeat: 'no-repeat',
               backgroundSize: `${hoverZoom * 100}% ${hoverZoom * 100}%`,
               backgroundPosition: `${pos.x}% ${pos.y}%`,
-              filter: 'contrast(1.03) saturate(1.02)',
+              filter: 'contrast(1.02) saturate(1.02)',
+              mixBlendMode: 'multiply'
             }}
           />
-          {/* 🌍 استخدام start-3 بدلاً من الكلاسات المكررة للـ RTL */}
-          <div className="absolute bottom-3 start-3 bg-slate-900/70 text-white text-[11px] font-bold px-3 py-1.5 rounded-full backdrop-blur">
-            {L('تكبير', 'Zoom')}
-          </div>
+        </div>
+
+        {/* Floating Zoom Icon Hint (Desktop) */}
+        <div className="absolute bottom-4 right-4 rtl:left-4 rtl:right-auto bg-white/90 backdrop-blur shadow-md p-2 rounded-xl text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none hidden md:block">
+          <Search size={18} strokeWidth={2.5} />
         </div>
       </div>
 
       {/* Modal */}
       {open && (
-        <div className="fixed inset-0 z-[100]">
-          <div className="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" onClick={close} />
-          <div className="absolute inset-0 p-3 sm:p-6 flex items-center justify-center">
-            <div className="relative w-full max-w-5xl h-[88vh] bg-white rounded-3xl shadow-2xl overflow-hidden border border-white/10">
+        <div className="fixed inset-0 z-[100] animate-in fade-in duration-300">
+          <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-md" onClick={close} />
+          
+          <div className="absolute inset-0 p-4 sm:p-6 md:p-12 flex items-center justify-center pointer-events-none">
+            <div className="relative w-full max-w-6xl h-full max-h-[90vh] bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-white/20 pointer-events-auto flex flex-col animate-in zoom-in-95 duration-500">
               
               {/* Top bar */}
-              <div className="absolute top-0 start-0 w-full z-10 flex items-center justify-between gap-2 p-3 sm:p-4 bg-white/85 backdrop-blur border-b border-slate-100">
-                <div className="min-w-0">
-                  <div className="text-xs text-slate-500 truncate">{alt || L('معاينة الصورة', 'Image preview')}</div>
-                  <div className="text-[11px] text-slate-400 tabular-nums" dir="ltr">{`×${Math.round(scale * 100)}%`}</div>
+              <div className="absolute top-0 left-0 w-full z-20 flex items-center justify-between gap-4 p-4 sm:p-5 bg-gradient-to-b from-white/90 to-white/0 backdrop-blur-sm pointer-events-none">
+                <div className="min-w-0 bg-white/80 backdrop-blur-md px-4 py-2 rounded-2xl border border-slate-100 shadow-sm pointer-events-auto">
+                  <div className="text-xs sm:text-sm font-bold text-slate-800 truncate max-w-[200px] sm:max-w-md">{alt || L('معاينة الصورة', 'Image preview')}</div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={resetModalView}
-                    className="hidden sm:inline-flex px-3 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm font-bold"
-                  >
-                    {L('إعادة ضبط', 'Reset')}
-                  </button>
+                <div className="flex items-center gap-2 bg-white/90 backdrop-blur-md p-1.5 rounded-2xl border border-slate-100 shadow-sm pointer-events-auto">
+                  <div className="text-[11px] font-black text-slate-400 tabular-nums px-2 hidden sm:block" dir="ltr">{`×${Math.round(scale * 100)}%`}</div>
+                  
+                  <div className="w-px h-5 bg-slate-200 mx-1 hidden sm:block" />
 
                   <button
                     type="button"
                     onClick={zoomOut}
-                    className="p-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50"
+                    className="p-2 sm:p-2.5 rounded-xl text-slate-500 hover:text-sky-500 hover:bg-sky-50 transition-colors"
                     aria-label={L('تصغير', 'Zoom out')}
                   >
-                    <ZoomOut size={18} />
+                    <ZoomOut size={18} strokeWidth={2.5} />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={resetModalView}
+                    className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors"
+                  >
+                    {L('إعادة', 'RESET')}
                   </button>
 
                   <button
                     type="button"
                     onClick={zoomIn}
-                    className="p-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50"
+                    className="p-2 sm:p-2.5 rounded-xl text-slate-500 hover:text-sky-500 hover:bg-sky-50 transition-colors"
                     aria-label={L('تكبير', 'Zoom in')}
                   >
-                    <ZoomIn size={18} />
+                    <ZoomIn size={18} strokeWidth={2.5} />
                   </button>
+
+                  <div className="w-px h-5 bg-slate-200 mx-1" />
 
                   <button
                     type="button"
                     onClick={close}
-                    className="p-2 rounded-xl hover:bg-red-50 text-slate-700 hover:text-red-500 transition-colors"
+                    className="p-2 sm:p-2.5 rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all focus:outline-none focus:ring-2 focus:ring-red-100"
                     aria-label={L('إغلاق', 'Close')}
                   >
-                    <X size={20} />
+                    <X size={20} strokeWidth={2.5} />
                   </button>
                 </div>
               </div>
 
               {/* Canvas area */}
-              <div className="absolute inset-0 pt-14 sm:pt-16 bg-slate-50" onWheel={onWheel}>
+              <div className="flex-1 w-full bg-slate-50/50 relative overflow-hidden" onWheel={onWheel}>
                 <div
                   className="w-full h-full touch-none"
                   onPointerDown={onPointerDown}
@@ -305,12 +313,12 @@ const ProductImageZoom: React.FC<Props> = ({
                   onPointerUp={onPointerUp}
                   onPointerCancel={onPointerUp}
                 >
-                  <div className="w-full h-full flex items-center justify-center">
+                  <div className="w-full h-full flex items-center justify-center p-8">
                     <img
                       src={safeSrc}
                       alt={alt}
                       draggable={false}
-                      className="max-w-none select-none"
+                      className="max-w-none select-none mix-blend-multiply drop-shadow-sm"
                       style={{
                         transform: `translate3d(${tx}px, ${ty}px, 0) scale(${scale})`,
                         transformOrigin: 'center center',
@@ -322,8 +330,8 @@ const ProductImageZoom: React.FC<Props> = ({
                   </div>
                 </div>
 
-                {/* 🌍 استخدام start-3 */}
-                <div className="absolute bottom-3 start-3 text-[11px] font-bold text-white bg-slate-900/60 px-3 py-1.5 rounded-full backdrop-blur">
+                {/* Mobile Hint */}
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-[10px] font-black tracking-widest uppercase text-slate-500 bg-white/80 border border-slate-100 shadow-sm px-4 py-2 rounded-full backdrop-blur pointer-events-none md:hidden">
                   {L('اسحب للتنقل / كبّر', 'Pinch / Drag')}
                 </div>
               </div>

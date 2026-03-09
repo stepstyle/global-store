@@ -5,7 +5,6 @@ import { useCart } from '../App';
 import { db } from '../services/storage';
 import { Order } from '../types';
 import SEO from '../components/SEO';
-import Button from '../components/Button';
 import * as ReactRouterDOM from 'react-router-dom';
 import LazyImage from '../components/LazyImage';
 import { OrderSkeleton } from '../components/Skeleton';
@@ -21,13 +20,13 @@ const maskPhone = (phone?: string) => {
   return `${p.slice(0, 4)} **** ${p.slice(-3)}`;
 };
 
-// 🎨 ألوان حالات الطلب (متوافقة مع التصميم الحديث)
+// 🎨 ألوان حالات الطلب (متوافقة مع التصميم الحديث الراقي)
 const statusBadge = (status?: string) => {
   const s = safeText(status);
-  if (s === 'delivered') return 'bg-green-50 text-green-700 border-green-200';
-  if (s === 'shipped') return 'bg-blue-50 text-blue-700 border-blue-200';
-  if (s === 'cancelled') return 'bg-red-50 text-red-700 border-red-200';
-  return 'bg-yellow-50 text-yellow-700 border-yellow-200'; // processing / new
+  if (s === 'delivered') return 'bg-emerald-50 text-emerald-600 border-emerald-100';
+  if (s === 'shipped') return 'bg-sky-50 text-sky-600 border-sky-100';
+  if (s === 'cancelled') return 'bg-red-50 text-red-600 border-red-100';
+  return 'bg-orange-50 text-orange-600 border-orange-100'; // processing / new
 };
 
 const NOTE_PREVIEW_CHARS = 140;
@@ -130,20 +129,22 @@ const MyOrders: React.FC = () => {
   // ==========================================
   if (!user) {
     return (
-      <div className="min-h-[80vh] flex flex-col items-center justify-center p-4 bg-slate-50">
+      <div className="min-h-[80vh] flex flex-col items-center justify-center p-4 bg-slate-50 py-12">
         <SEO title={tt('myOrders', 'طلباتي', 'My Orders')} noIndex={true} />
-        <div className="w-full max-w-md bg-white rounded-3xl border border-slate-100 shadow-sm p-8 text-center animate-in fade-in zoom-in duration-500">
-          <div className="mx-auto w-20 h-20 rounded-full bg-slate-50 flex items-center justify-center text-slate-300 mb-6">
+        <div className="w-full max-w-md bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 p-8 sm:p-10 text-center animate-in fade-in zoom-in-95 duration-500">
+          <div className="mx-auto w-20 h-20 rounded-full bg-sky-50 flex items-center justify-center text-sky-500 mb-6 shadow-inner">
             <Package size={40} strokeWidth={1.5} />
           </div>
-          <h2 className="text-2xl font-heading font-extrabold mb-2 text-slate-900">
+          <h2 className="text-2xl font-heading font-black mb-3 text-slate-900 tracking-tight">
             {tt('loginRequired', 'تسجيل الدخول مطلوب', 'Login Required')}
           </h2>
-          <p className="text-slate-500 mb-8 text-sm leading-relaxed">
+          <p className="text-slate-500 mb-8 text-sm font-medium leading-relaxed">
             {tt('loginToSeeOrders', 'يرجى تسجيل الدخول لعرض وتتبع طلباتك السابقة.', 'Please login to view and track your previous orders.')}
           </p>
           <Link to="/login" className="block w-full">
-            <Button className="w-full py-3.5 rounded-2xl shadow-md">{tt('login', 'تسجيل الدخول', 'Login')}</Button>
+            <button className="w-full py-4 rounded-2xl bg-sky-400 hover:bg-sky-500 text-white font-extrabold shadow-lg shadow-sky-400/30 transition-all duration-300">
+              {tt('login', 'تسجيل الدخول', 'Login')}
+            </button>
           </Link>
         </div>
       </div>
@@ -154,55 +155,57 @@ const MyOrders: React.FC = () => {
   // 📦 صفحة الطلبات الأساسية
   // ==========================================
   return (
-    <div className="min-h-screen bg-slate-50 py-10 lg:py-14">
+    <div className="min-h-screen bg-slate-50 py-10 lg:py-16">
       <SEO title={tt('myOrders', 'طلباتي', 'My Orders')} noIndex={true} />
       <div className="container mx-auto px-4 lg:px-8 max-w-5xl">
         
         {/* رأس الصفحة */}
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-10">
           <div>
-            <h1 className="text-3xl font-heading font-extrabold text-slate-900">
+            <h1 className="text-3xl md:text-4xl font-heading font-black text-slate-900 tracking-tight">
               {tt('myOrders', 'طلباتي', 'My Orders')}
             </h1>
             <p className="text-slate-500 mt-2 text-sm font-medium">
               {tt('myOrdersHint', 'تابع وتصفح مشترياتك السابقة.', 'Track and review your recent purchases.')}
             </p>
           </div>
-          <Link to="/shop" className="inline-flex items-center gap-1.5 text-sm font-bold text-secondary-DEFAULT hover:text-secondary-dark transition-colors">
+          <Link to="/shop" className="inline-flex items-center gap-1.5 text-sm font-extrabold text-sky-500 hover:text-sky-600 transition-colors group bg-white px-4 py-2.5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md">
             {tt('continueShopping', 'متابعة التسوق', 'Continue shopping')}
-            <ChevronRight size={16} className="rtl:rotate-180 ltr:rotate-0 mt-0.5" />
+            <ChevronRight size={16} className="rtl:rotate-180 ltr:rotate-0 mt-0.5 group-hover:translate-x-1 rtl:group-hover:-translate-x-1 transition-transform" />
           </Link>
         </div>
 
         {/* الحالات (Loading / Error / Empty / Data) */}
         {isLoading ? (
-          <div className="space-y-5">
+          <div className="space-y-6">
             {[...Array(3)].map((_, i) => <OrderSkeleton key={i} />)}
           </div>
         ) : errorMsg ? (
-          <div className="bg-white rounded-3xl p-10 text-center border border-slate-100 shadow-sm animate-in fade-in">
-            <p className="text-red-600 font-bold mb-5">{errorMsg}</p>
-            <Button onClick={() => window.location.reload()} variant="outline" className="px-8">
+          <div className="bg-white rounded-[2rem] p-10 text-center border border-slate-100 shadow-sm animate-in fade-in">
+            <p className="text-red-600 font-bold mb-6">{errorMsg}</p>
+            <button onClick={() => window.location.reload()} className="px-8 py-3.5 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 transition-all">
               {tt('retry', 'إعادة المحاولة', 'Retry')}
-            </Button>
+            </button>
           </div>
         ) : orders.length === 0 ? (
-          <div className="bg-white rounded-3xl p-14 text-center border border-slate-100 shadow-sm animate-in fade-in zoom-in">
-            <ShoppingBag size={56} className="mx-auto text-slate-300 mb-5" strokeWidth={1.5} />
-            <h3 className="text-xl font-extrabold text-slate-800 mb-2">
+          <div className="bg-white rounded-[2rem] p-12 sm:p-16 text-center border border-slate-100 shadow-xl shadow-slate-200/40 animate-in fade-in zoom-in-95">
+            <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6">
+              <ShoppingBag size={48} className="text-slate-300" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-2xl font-black text-slate-900 mb-3 tracking-tight">
               {tt('noOrders', 'لا توجد طلبات', 'No orders found')}
             </h3>
-            <p className="text-slate-500 text-sm mb-8">
-              {tt('noOrdersHint', 'لم تقم بعمل أي طلب حتى الآن. اكتشف منتجاتنا الرائعة!', 'You have not placed any orders yet. Discover our amazing products!')}
+            <p className="text-slate-500 text-sm font-medium mb-8 max-w-sm mx-auto">
+              {tt('noOrdersHint', 'لم تقم بعمل أي طلب حتى الآن. اكتشف منتجاتنا الرائعة وابدأ التسوق!', 'You have not placed any orders yet. Discover our amazing products!')}
             </p>
             <Link to="/shop">
-              <Button className="px-8 rounded-full shadow-md">
+              <button className="px-10 py-4 rounded-2xl bg-black hover:bg-slate-800 text-white font-extrabold shadow-lg shadow-black/20 transition-all duration-300">
                 {tt('startShopping', 'ابدأ التسوق', 'Start shopping')}
-              </Button>
+              </button>
             </Link>
           </div>
         ) : (
-          <div className="space-y-6">
+          <div className="space-y-6 md:space-y-8">
             {orders.map((order: any) => {
               const itemsCount = (order.items || []).reduce((sum: number, it: any) => sum + (it.quantity || 0), 0);
               const firstItems = (order.items || []).slice(0, 3);
@@ -214,38 +217,41 @@ const MyOrders: React.FC = () => {
               return (
                 <div
                   key={order.id}
-                  className="bg-white rounded-3xl p-6 lg:p-7 border border-slate-200/60 shadow-sm hover:shadow-lg transition-all duration-300 animate-in fade-in slide-in-from-bottom-4"
+                  className="bg-white rounded-[2rem] p-6 sm:p-8 border border-slate-100 shadow-sm hover:shadow-xl hover:shadow-slate-200/50 transition-all duration-500 animate-in fade-in slide-in-from-bottom-4 group/card relative overflow-hidden"
                 >
+                  {/* شريط زينة جانبي مخفي يظهر عند التمرير */}
+                  <div className="absolute top-0 ltr:left-0 rtl:right-0 w-1.5 h-0 bg-sky-400 group-hover/card:h-full transition-all duration-500 ease-out" />
+
                   {/* === Header (Order ID & Status) === */}
-                  <div className="flex flex-col md:flex-row justify-between md:items-start mb-6 gap-5 border-b border-slate-100 pb-5">
+                  <div className="flex flex-col md:flex-row justify-between md:items-start mb-6 gap-5 border-b border-slate-100 pb-6">
                     <div className="min-w-0">
-                      <div className="flex items-center gap-3 mb-3 flex-wrap">
+                      <div className="flex items-center gap-3 mb-3.5 flex-wrap">
                         {/* 🌍 استخدام dir="ltr" لضمان قراءة رقم الطلب بشكل صحيح */}
-                        <span className="font-black text-xl text-slate-900 tracking-tight" dir="ltr">
+                        <span className="font-black text-2xl text-slate-900 tracking-tight" dir="ltr">
                           #{safeText(order.id)}
                         </span>
 
-                        <span className={`px-3 py-1 rounded-lg border text-xs font-extrabold uppercase tracking-wide ${statusBadge(order.status)}`}>
+                        <span className={`px-3 py-1.5 rounded-lg border text-xs font-black uppercase tracking-widest ${statusBadge(order.status)}`}>
                           {statusLabel(order.status)}
                         </span>
 
-                        <span className="text-xs bg-slate-100 border border-slate-200 text-slate-600 px-3 py-1 rounded-lg font-bold">
+                        <span className="text-xs bg-slate-50 border border-slate-200 text-slate-600 px-3 py-1.5 rounded-lg font-bold">
                           {itemsCount} {tt('items', 'منتجات', 'items')}
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-4 text-sm font-medium text-slate-500 flex-wrap">
+                      <div className="flex items-center gap-4 text-sm font-semibold text-slate-500 flex-wrap">
                         <span className="flex items-center gap-1.5">
                           <Calendar size={16} className="text-slate-400" />
                           <span dir="ltr">{safeText(order.date) || '—'}</span>
                         </span>
-                        <span className="hidden sm:inline-block w-1 h-1 bg-slate-300 rounded-full" />
+                        <span className="hidden sm:inline-block w-1.5 h-1.5 bg-slate-200 rounded-full" />
                         <span className="flex items-center gap-1.5">
                           <DollarSign size={16} className="text-slate-400" /> 
                           {/* 🌍 استخدام dir="ltr" للسعر */}
-                          <span className="font-bold text-slate-700" dir="ltr">{money(order.total)}</span>
+                          <span className="font-extrabold text-slate-800" dir="ltr">{money(order.total)}</span>
                         </span>
-                        <span className="hidden sm:inline-block w-1 h-1 bg-slate-300 rounded-full" />
+                        <span className="hidden sm:inline-block w-1.5 h-1.5 bg-slate-200 rounded-full" />
                         <span className="flex items-center gap-1.5">
                           <Truck size={16} className="text-slate-400" /> {safeText(order.shippingMethod) || tt('shipping', 'الشحن', 'Shipping')}
                         </span>
@@ -253,64 +259,65 @@ const MyOrders: React.FC = () => {
                     </div>
 
                     {/* Track Button */}
-                    <Link to={`/tracking?orderId=${encodeURIComponent(safeText(order.id))}`} className="shrink-0">
-                      <Button size="sm" className="w-full md:w-auto flex items-center justify-center gap-2 rounded-xl shadow-md bg-slate-900 hover:bg-slate-800 text-white border-none">
+                    <Link to={`/tracking?orderId=${encodeURIComponent(safeText(order.id))}`} className="shrink-0 w-full md:w-auto">
+                      <button className="w-full md:w-auto flex items-center justify-center gap-2 rounded-xl shadow-md shadow-black/10 bg-black hover:bg-slate-800 text-white font-extrabold px-6 py-3.5 transition-all">
                         {tt('track', 'تتبع الطلب', 'Track Order')}
-                        <ChevronRight size={16} className="rtl:rotate-180 ltr:rotate-0" />
-                      </Button>
+                        <ChevronRight size={18} className="rtl:rotate-180 ltr:rotate-0" />
+                      </button>
                     </Link>
                   </div>
 
                   {/* === Order Note === */}
                   {note && (
-                    <div className="mb-6 rounded-2xl border border-yellow-100 bg-yellow-50/50 p-4">
+                    <div className="mb-8 rounded-2xl bg-slate-50 border border-slate-100 p-5 relative overflow-hidden">
+                      <div className="absolute ltr:left-0 rtl:right-0 top-0 w-1.5 h-full bg-sky-400" />
                       <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-2 text-yellow-800">
-                          <StickyNote size={18} className="text-yellow-600" />
-                          <p className="text-sm font-extrabold">{tt('orderNote', 'ملاحظات الطلب', 'Order note')}</p>
+                        <div className="flex items-center gap-2 text-slate-800">
+                          <StickyNote size={18} className="text-slate-400" />
+                          <p className="text-sm font-black uppercase tracking-widest">{tt('orderNote', 'ملاحظات الطلب', 'Order note')}</p>
                         </div>
 
                         {noteNeedsToggle && (
                           <button
                             type="button"
                             onClick={() => toggleNote(safeText(order.id))}
-                            className="text-xs font-bold text-yellow-700 hover:text-yellow-900 transition whitespace-nowrap bg-yellow-100 px-2 py-1 rounded-md"
+                            className="text-xs font-bold text-sky-600 hover:text-sky-700 transition whitespace-nowrap bg-sky-50 px-3 py-1.5 rounded-lg border border-sky-100"
                           >
                             {isExpanded ? tt('showLess', 'عرض أقل', 'Show less') : tt('showMore', 'عرض المزيد', 'Show more')}
                           </button>
                         )}
                       </div>
-                      <p className="mt-2 text-sm text-yellow-900/80 leading-relaxed whitespace-pre-wrap break-words">
+                      <p className="mt-3 text-sm text-slate-600 font-medium leading-relaxed whitespace-pre-wrap break-words">
                         {isExpanded ? note : notePreview}
                       </p>
                     </div>
                   )}
 
                   {/* === Items & Address Grid === */}
-                  <div className="flex flex-col lg:flex-row gap-6">
+                  <div className="flex flex-col lg:flex-row gap-8 lg:gap-12">
                     {/* Items List */}
                     <div className="flex-1 space-y-4">
                       {firstItems.map((item: any, idx: number) => (
-                        <div key={idx} className="flex items-center gap-4">
+                        <div key={idx} className="flex items-center gap-4 group">
                           <LazyImage
                             src={item.image}
                             alt={safeText(item.name)}
-                            className="w-14 h-14 rounded-xl object-cover border border-slate-100"
-                            containerClassName="w-14 h-14 shrink-0 bg-slate-50 rounded-xl"
+                            className="w-16 h-16 rounded-2xl object-cover border border-slate-100 group-hover:border-sky-200 transition-colors"
+                            containerClassName="w-16 h-16 shrink-0 bg-slate-50 rounded-2xl"
                           />
                           <div className="min-w-0 flex-1">
-                            <p className="font-extrabold text-sm text-slate-800 line-clamp-1">{safeText(item.name)}</p>
-                            <div className="flex items-center justify-between mt-1 text-xs font-medium text-slate-500">
-                              <span dir="ltr">x{item.quantity}</span>
-                              <span className="font-bold text-slate-700" dir="ltr">{money(item.price)}</span>
+                            <p className="font-bold text-sm text-slate-800 line-clamp-1 group-hover:text-sky-600 transition-colors">{safeText(item.name)}</p>
+                            <div className="flex items-center justify-between mt-1.5 text-xs font-semibold text-slate-500">
+                              <span dir="ltr" className="bg-slate-100 px-2 py-0.5 rounded-md text-slate-600">x{item.quantity}</span>
+                              <span className="font-black text-slate-900" dir="ltr">{money(item.price)}</span>
                             </div>
                           </div>
                         </div>
                       ))}
 
                       {(order.items || []).length > 3 && (
-                        <div className="pt-2">
-                          <Link to={`/tracking?orderId=${encodeURIComponent(safeText(order.id))}`} className="text-xs font-extrabold text-secondary-DEFAULT hover:underline">
+                        <div className="pt-3 border-t border-slate-100">
+                          <Link to={`/tracking?orderId=${encodeURIComponent(safeText(order.id))}`} className="text-xs font-black text-sky-500 hover:text-sky-600 hover:underline transition-colors">
                             + {(order.items || []).length - 3} {tt('moreItems', 'منتجات أخرى (انقر للتفاصيل)', 'more items (click for details)')}
                           </Link>
                         </div>
@@ -318,15 +325,16 @@ const MyOrders: React.FC = () => {
                     </div>
 
                     {/* Shipping Address Card */}
-                    <div className="lg:w-72 bg-slate-50 rounded-2xl p-5 text-sm h-fit border border-slate-100">
-                      <p className="font-extrabold text-slate-800 mb-3 flex items-center gap-2">
-                        <MapPin size={16} className="text-slate-400" /> {tt('shippingAddress', 'عنوان الاستلام', 'Shipping Address')}
+                    <div className="lg:w-80 bg-white rounded-3xl p-6 text-sm h-fit border border-slate-200/80 shadow-sm relative overflow-hidden group">
+                      <div className="absolute left-0 top-0 w-full h-1 bg-slate-200 group-hover:bg-slate-800 transition-colors" />
+                      <p className="font-black text-slate-400 text-xs uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <MapPin size={16} className="text-sky-500" /> {tt('shippingAddress', 'عنوان الاستلام', 'Shipping Address')}
                       </p>
-                      <div className="space-y-1 text-slate-600 font-medium leading-relaxed">
-                        <p className="font-bold text-slate-900">{safeText(order.address?.fullName) || '—'}</p>
+                      <div className="space-y-1.5 text-slate-600 font-medium leading-relaxed">
+                        <p className="font-black text-slate-900 text-base">{safeText(order.address?.fullName) || '—'}</p>
                         <p>{safeText(order.address?.city) || '—'}, {safeText(order.address?.street) || '—'}</p>
                         {/* 🌍 استخدام dir="ltr" لرقم الهاتف لضمان ظهور الـ + والمفاتيح بشكل سليم */}
-                        <p className="mt-1 font-bold text-slate-700" dir="ltr">{maskPhone(order.address?.phone)}</p>
+                        <p className="mt-3 font-extrabold text-slate-500 bg-slate-50 px-3 py-1.5 rounded-xl inline-block" dir="ltr">{maskPhone(order.address?.phone)}</p>
                       </div>
                     </div>
                   </div>

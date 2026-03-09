@@ -3,13 +3,13 @@ import React, { useEffect, useMemo, useState, useCallback, useDeferredValue } fr
 import { useSearchParams } from 'react-router-dom';
 import { 
   Filter, SlidersHorizontal, ChevronLeft, ChevronRight, 
-  Star, X, Tag, Search, LayoutGrid, List, Sparkles, ShoppingBag 
+  X, Search, ShoppingBag 
 } from 'lucide-react';
 
 import ProductCard from '../components/ProductCard';
 import { CATEGORIES } from '../constants';
 import { useCart } from '../App';
-import { Category, SortOption, Product } from '../types';
+import { Category, SortOption } from '../types';
 import { ProductSkeletonGrid } from '../components/Skeleton';
 import SEO from '../components/SEO';
 import Button from '../components/Button';
@@ -113,8 +113,6 @@ const getIdTimestamp = (id: unknown): number => {
 
 const getSubValue = (p: any) => String((p?.subcategory ?? p?.subCategory ?? '') as any).trim();
 
-const ALL_SUB_OPTIONS: SubOption[] = Object.values(CATEGORY_SUBCATEGORIES).flatMap((v) => (v || []) as SubOption[]);
-
 // ✅ Debounce Hook (لضمان سلاسة البحث في القوائم الضخمة)
 function useDebouncedValue<T>(value: T, delayMs: number) {
   const [debounced, setDebounced] = useState(value);
@@ -149,7 +147,7 @@ const Shop: React.FC = () => {
   // ✅ Stable Mobile Detection
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 640);
+    const checkMobile = () => setIsMobile(window.innerWidth < 1024);
     checkMobile();
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
@@ -298,6 +296,7 @@ const Shop: React.FC = () => {
     setMinRating(0);
     setSortBy('newest');
     setCurrentPage(1);
+    setIsFilterOpen(false);
   };
 
   // ✅ UI Helpers
@@ -325,16 +324,20 @@ const Shop: React.FC = () => {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
           <div className="animate-in fade-in duration-700">
             <h1 className="text-4xl font-heading font-black text-slate-900 tracking-tight flex items-center gap-3">
-              <ShoppingBag className="text-secondary-DEFAULT" size={32} />
+              <ShoppingBag className="text-sky-500" size={32} />
               {t('shop')}
             </h1>
-            <div className="flex items-center gap-3 mt-2 text-slate-500 font-medium">
+            <div className="flex items-center gap-3 mt-3 text-slate-500 font-medium flex-wrap">
                <span>{filteredProducts.length} {t('productsAvailable')}</span>
-               {activeChips.length > 0 && <span className="w-1 h-1 rounded-full bg-slate-300" />}
-               <div className="flex gap-2">
+               {activeChips.length > 0 && <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />}
+               <div className="flex flex-wrap gap-2">
                  {activeChips.map(c => (
-                   <button key={c.key} onClick={c.onRemove} className="flex items-center gap-1 bg-white border px-2 py-0.5 rounded-full text-[10px] hover:text-red-500 transition-colors">
-                     {c.label} <X size={10} />
+                   <button 
+                     key={c.key} 
+                     onClick={c.onRemove} 
+                     className="flex items-center gap-1.5 bg-white border border-slate-200 px-3 py-1 rounded-full text-[11px] font-bold text-slate-600 hover:text-red-500 hover:bg-red-50 hover:border-red-100 transition-all shadow-sm"
+                   >
+                     {c.label} <X size={12} strokeWidth={3} />
                    </button>
                  ))}
                </div>
@@ -347,103 +350,124 @@ const Shop: React.FC = () => {
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as SortOption)}
-                className="w-full appearance-none bg-white px-10 py-4 rounded-2xl border border-slate-200 shadow-sm font-bold text-sm focus:ring-2 focus:ring-secondary-DEFAULT outline-none transition-all"
+                className="w-full appearance-none bg-white px-10 py-4 rounded-2xl border border-slate-200 shadow-sm font-bold text-sm focus:ring-2 focus:ring-sky-400/30 focus:border-sky-400 outline-none transition-all cursor-pointer text-slate-800"
               >
                 <option value="newest">{t('newest')}</option>
                 <option value="price-asc">{t('priceLowHigh')}</option>
                 <option value="price-desc">{t('priceHighLow')}</option>
                 <option value="rating">{t('ratingHigh')}</option>
               </select>
-              <SlidersHorizontal className="absolute left-3 rtl:right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
+              <SlidersHorizontal className="absolute left-4 rtl:right-4 top-1/2 -translate-y-1/2 text-sky-500 pointer-events-none" size={18} />
             </div>
 
+            {/* Mobile Filter Toggle */}
             <button
               onClick={() => setIsFilterOpen(true)}
-              className="md:hidden flex items-center justify-center p-4 bg-slate-900 text-white rounded-2xl shadow-xl hover:bg-secondary-DEFAULT transition-all"
+              className="lg:hidden flex items-center justify-center p-4 bg-black text-white rounded-2xl shadow-lg shadow-black/20 hover:bg-slate-800 transition-all shrink-0"
+              aria-label="Open Filters"
             >
               <Filter size={24} />
             </button>
           </div>
         </div>
 
-        <div className="flex flex-col md:flex-row gap-8 lg:gap-12">
+        <div className="flex flex-col lg:flex-row gap-8 lg:gap-12">
           {/* Sidebar - نظام الفلترة الاحترافي */}
           <aside className={`
-            fixed inset-0 z-[100] bg-white/95 backdrop-blur-md p-8 transition-transform duration-500 md:relative md:inset-auto md:z-0 md:bg-transparent md:p-0 md:translate-x-0 md:w-80
-            ${isFilterOpen ? 'translate-x-0' : (isRTL ? 'translate-x-full' : '-translate-x-full')}
+            fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300 lg:relative lg:inset-auto lg:z-0 lg:bg-transparent lg:p-0 lg:w-[300px] xl:w-[320px] shrink-0
+            ${isFilterOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none lg:opacity-100 lg:pointer-events-auto'}
           `}>
-            <div className="sticky top-28 bg-white md:p-10 md:rounded-[3rem] md:border md:shadow-2xl md:shadow-slate-200/50">
-              <div className="flex justify-between items-center mb-10 md:hidden border-b pb-4">
-                <h2 className="text-2xl font-black">{t('filter')}</h2>
-                <button onClick={() => setIsFilterOpen(false)} className="p-2 bg-slate-100 rounded-full"><X size={24} /></button>
-              </div>
-
-              {/* Categories */}
-              <div className="mb-10">
-                <h3 className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 mb-6">{t('categories')}</h3>
-                <div className="space-y-1.5 max-h-[400px] overflow-y-auto custom-scrollbar">
-                  <button
-                    onClick={() => handleCategoryChange('All')}
-                    className={`w-full text-start px-5 py-3.5 rounded-2xl text-sm font-bold transition-all ${selectedCategory === 'All' ? 'bg-slate-900 text-white shadow-xl' : 'text-slate-600 hover:bg-slate-50'}`}
-                  >
-                    {t('allProducts')}
+            {/* Filter Drawer */}
+            <div className={`
+              absolute top-0 bottom-0 w-[85%] max-w-sm bg-white shadow-2xl overflow-y-auto transition-transform duration-500 ease-out lg:relative lg:w-full lg:max-w-none lg:shadow-none lg:overflow-visible lg:translate-x-0
+              ${isRTL ? 'right-0' : 'left-0'}
+              ${isFilterOpen ? 'translate-x-0' : (isRTL ? 'translate-x-full' : '-translate-x-full')}
+            `}>
+              <div className="lg:sticky lg:top-28 lg:bg-white lg:p-8 lg:rounded-[2.5rem] lg:border lg:border-slate-100 lg:shadow-xl lg:shadow-slate-200/40 min-h-full p-6">
+                
+                {/* Mobile Header */}
+                <div className="flex justify-between items-center mb-8 lg:hidden border-b border-slate-100 pb-5">
+                  <h2 className="text-2xl font-black text-slate-900">{t('filter')}</h2>
+                  <button onClick={() => setIsFilterOpen(false)} className="p-2.5 bg-slate-50 hover:bg-red-50 hover:text-red-500 rounded-full transition-colors text-slate-400">
+                    <X size={20} strokeWidth={3} />
                   </button>
-                  {CATEGORIES.map(cat => (
+                </div>
+
+                {/* Categories */}
+                <div className="mb-10">
+                  <h3 className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 mb-5 pl-2 rtl:pl-0 rtl:pr-2">{t('categories')}</h3>
+                  <div className="space-y-1.5 max-h-[50vh] lg:max-h-[400px] overflow-y-auto custom-scrollbar pr-1 rtl:pr-0 rtl:pl-1">
                     <button
-                      key={cat.id}
-                      onClick={() => handleCategoryChange(cat.id)}
-                      className={`w-full text-start px-5 py-3.5 rounded-2xl text-sm font-bold transition-all ${selectedCategory === cat.id ? 'bg-secondary-DEFAULT text-white shadow-xl' : 'text-slate-600 hover:bg-slate-50'}`}
+                      onClick={() => handleCategoryChange('All')}
+                      className={`w-full text-start px-5 py-3.5 rounded-2xl text-sm font-bold transition-all duration-300 ${
+                        selectedCategory === 'All' 
+                          ? 'bg-black text-white shadow-lg shadow-black/20' 
+                          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                      }`}
                     >
-                      {isRTL ? cat.label : cat.labelEn}
+                      {t('allProducts')}
                     </button>
-                  ))}
+                    {CATEGORIES.map(cat => (
+                      <button
+                        key={cat.id}
+                        onClick={() => handleCategoryChange(cat.id)}
+                        className={`w-full text-start px-5 py-3.5 rounded-2xl text-sm font-bold transition-all duration-300 ${
+                          selectedCategory === cat.id 
+                            ? 'bg-sky-400 text-white shadow-lg shadow-sky-400/30' 
+                            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                        }`}
+                      >
+                        {isRTL ? cat.label : cat.labelEn}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
 
-              {/* SubCategories - تظهر فقط عند اختيار قسم */}
-              {selectedCategory !== 'All' && subCategoryOptions.length > 0 && (
-                <div className="mb-10 pt-8 border-t">
-                  <h3 className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 mb-6">{t('subCategory')}</h3>
-                  <select
-                    value={selectedSubCategory}
-                    onChange={(e) => handleSubCategoryChange(e.target.value)}
-                    className="w-full bg-slate-50 border-none p-4 rounded-2xl font-bold text-sm outline-none focus:ring-2 focus:ring-secondary-DEFAULT/20"
-                  >
-                    <option value="">{isRTL ? '— الكل —' : '— All —'}</option>
-                    {subCategoryOptions.map(s => <option key={s.value} value={s.value}>{isRTL ? s.labelAr : s.labelEn}</option>)}
-                  </select>
+                {/* SubCategories - تظهر فقط عند اختيار قسم */}
+                {selectedCategory !== 'All' && subCategoryOptions.length > 0 && (
+                  <div className="mb-10 pt-8 border-t border-slate-100">
+                    <h3 className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 mb-5 pl-2 rtl:pl-0 rtl:pr-2">{t('subCategory')}</h3>
+                    <select
+                      value={selectedSubCategory}
+                      onChange={(e) => handleSubCategoryChange(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-100 px-5 py-4 rounded-2xl font-bold text-sm outline-none focus:ring-2 focus:ring-sky-400/30 focus:border-sky-400 transition-all cursor-pointer text-slate-700 appearance-none"
+                    >
+                      <option value="">{isRTL ? '— الكل —' : '— All —'}</option>
+                      {subCategoryOptions.map(s => <option key={s.value} value={s.value}>{isRTL ? s.labelAr : s.labelEn}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                {/* Price Range */}
+                <div className="mb-10 pt-8 border-t border-slate-100">
+                   <h3 className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 mb-6 pl-2 rtl:pl-0 rtl:pr-2">{t('price')}</h3>
+                   <input
+                     type="range" min={PRICE_MIN} max={PRICE_MAX} step={5} value={priceRange[1]}
+                     onChange={(e) => setPriceRange([0, Number(e.target.value)])}
+                     className="w-full h-1.5 accent-sky-500 cursor-pointer bg-slate-100 rounded-full appearance-none"
+                   />
+                   <div className="flex justify-between mt-6 text-[11px] font-black text-slate-900">
+                      <span className="bg-slate-50 px-3 py-2 rounded-xl border border-slate-100 text-slate-400">Min: 0</span>
+                      <span className="bg-sky-50 text-sky-600 px-4 py-2 rounded-xl border border-sky-100 shadow-sm">Max: {priceRange[1]} JOD</span>
+                   </div>
                 </div>
-              )}
 
-              {/* Price Range */}
-              <div className="mb-10 pt-8 border-t">
-                 <h3 className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 mb-8">{t('price')}</h3>
-                 <input
-                   type="range" min={PRICE_MIN} max={PRICE_MAX} step={5} value={priceRange[1]}
-                   onChange={(e) => setPriceRange([0, Number(e.target.value)])}
-                   className="w-full h-1.5 accent-slate-900 cursor-pointer"
-                 />
-                 <div className="flex justify-between mt-6 text-[10px] font-black text-slate-900">
-                    <span className="bg-slate-50 px-3 py-1.5 rounded-lg border italic">Min: 0</span>
-                    <span className="bg-secondary-light/10 text-secondary-DEFAULT px-3 py-1.5 rounded-lg border border-secondary-DEFAULT shadow-sm">Max: {priceRange[1]} JOD</span>
-                 </div>
+                <button
+                  onClick={clearFilters}
+                  className="w-full py-4 text-xs font-black uppercase tracking-widest text-red-500 border-2 border-red-50 rounded-2xl hover:bg-red-50 hover:border-red-100 transition-all active:scale-95"
+                >
+                  {t('clearAll')}
+                </button>
               </div>
-
-              <button
-                onClick={clearFilters}
-                className="w-full py-5 text-[10px] font-black uppercase tracking-widest text-red-500 border border-red-50 rounded-3xl hover:bg-red-50 transition-all active:scale-95"
-              >
-                {t('clearAll')}
-              </button>
             </div>
           </aside>
 
           {/* Product Feed - عرض الصور الاحترافي */}
-          <main className="flex-1">
+          <main className="flex-1 w-full min-w-0">
             {isLoading ? (
-              <ProductSkeletonGrid count={9} />
+              <ProductSkeletonGrid count={12} />
             ) : paginatedProducts.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 lg:gap-10 animate-in fade-in slide-in-from-bottom-6 duration-1000">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6 lg:gap-8 animate-in fade-in slide-in-from-bottom-6 duration-1000">
                 {paginatedProducts.map((p: any, idx: number) => (
                   <ProductCard
                     key={p.id}
@@ -457,39 +481,46 @@ const Shop: React.FC = () => {
                 ))}
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center py-40 bg-white rounded-[4rem] border border-dashed border-slate-200">
-                <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center mb-8 shadow-inner animate-bounce">
-                  <Search className="text-slate-200" size={48} />
+              <div className="flex flex-col items-center justify-center py-20 lg:py-32 bg-white rounded-[3rem] border border-dashed border-slate-200 text-center px-4">
+                <div className="w-24 h-24 bg-sky-50 rounded-full flex items-center justify-center mb-6 shadow-inner animate-bounce">
+                  <Search className="text-sky-400" size={40} strokeWidth={2.5} />
                 </div>
-                <h2 className="text-3xl font-black text-slate-900 mb-4">{t('noProducts')}</h2>
-                <p className="text-slate-500 mb-8 max-w-xs text-center">{t('noProductsDesc') || 'Try changing your search filters'}</p>
-                <Button onClick={clearFilters} className="px-12 rounded-2xl shadow-xl shadow-secondary-light/30">{t('resetFilters')}</Button>
+                <h2 className="text-2xl lg:text-3xl font-black text-slate-900 mb-3">{t('noProducts')}</h2>
+                <p className="text-slate-500 mb-8 max-w-sm font-medium leading-relaxed">{t('noProductsDesc') || 'We couldn\'t find any products matching your current filters. Try adjusting them or clear all filters.'}</p>
+                <button 
+                  onClick={clearFilters} 
+                  className="px-8 py-4 bg-black hover:bg-slate-800 text-white font-extrabold rounded-2xl shadow-lg shadow-black/20 transition-all"
+                >
+                  {t('resetFilters')}
+                </button>
               </div>
             )}
 
-            {/* Pagination - تصميم أمازون المطور */}
+            {/* Pagination - تصميم أمازون/عالمي المطور */}
             {totalPages > 1 && (
-              <div className="mt-24 flex justify-center items-center gap-4">
+              <div className="mt-16 lg:mt-24 flex justify-center items-center gap-3 sm:gap-4">
                  <button
                    onClick={() => handlePageChange(currentPage - 1)}
                    disabled={currentPage === 1}
-                   className="w-16 h-16 flex items-center justify-center bg-white border border-slate-100 rounded-[1.5rem] disabled:opacity-20 hover:border-secondary-DEFAULT hover:shadow-xl transition-all"
+                   className="w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center bg-white border border-slate-200 text-slate-600 rounded-2xl disabled:opacity-30 disabled:hover:border-slate-200 disabled:hover:text-slate-600 hover:border-sky-400 hover:text-sky-500 hover:shadow-lg hover:shadow-sky-400/10 transition-all focus:outline-none focus:ring-2 focus:ring-sky-400/30"
+                   aria-label="Previous Page"
                  >
-                   <ChevronRight className={isRTL ? "" : "rotate-180"} size={20} />
+                   <ChevronRight className={isRTL ? "" : "rotate-180"} size={24} strokeWidth={2.5} />
                  </button>
 
-                 <div className="flex items-center gap-3 px-8 py-4 bg-white border border-slate-100 rounded-[1.5rem] shadow-sm">
-                   <span className="text-sm font-black tabular-nums">{currentPage}</span>
-                   <span className="text-xs font-bold text-slate-300">/</span>
-                   <span className="text-sm font-bold text-slate-400 tabular-nums">{totalPages}</span>
+                 <div className="flex items-center gap-2 px-6 sm:px-8 py-4 sm:py-5 bg-white border border-slate-200 rounded-2xl shadow-sm">
+                   <span className="text-sm sm:text-base font-black text-slate-900 tabular-nums">{currentPage}</span>
+                   <span className="text-xs sm:text-sm font-bold text-slate-300 mx-1">/</span>
+                   <span className="text-sm sm:text-base font-bold text-slate-400 tabular-nums">{totalPages}</span>
                  </div>
 
                  <button
                    onClick={() => handlePageChange(currentPage + 1)}
                    disabled={currentPage === totalPages}
-                   className="w-16 h-16 flex items-center justify-center bg-white border border-slate-100 rounded-[1.5rem] disabled:opacity-20 hover:border-secondary-DEFAULT hover:shadow-xl transition-all"
+                   className="w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center bg-white border border-slate-200 text-slate-600 rounded-2xl disabled:opacity-30 disabled:hover:border-slate-200 disabled:hover:text-slate-600 hover:border-sky-400 hover:text-sky-500 hover:shadow-lg hover:shadow-sky-400/10 transition-all focus:outline-none focus:ring-2 focus:ring-sky-400/30"
+                   aria-label="Next Page"
                  >
-                   <ChevronLeft className={isRTL ? "" : "rotate-180"} size={20} />
+                   <ChevronLeft className={isRTL ? "" : "rotate-180"} size={24} strokeWidth={2.5} />
                  </button>
               </div>
             )}

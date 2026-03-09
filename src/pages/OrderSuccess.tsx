@@ -9,8 +9,9 @@ import {
   CreditCard,
   Truck,
   StickyNote,
+  ArrowRight,
+  Home
 } from 'lucide-react';
-import Button from '../components/Button';
 import { useCart } from '../App';
 import { Order } from '../types';
 import SEO from '../components/SEO';
@@ -242,21 +243,21 @@ const OrderSuccess: React.FC = () => {
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 py-12">
       <SEO title={tt('orderSuccess', 'تأكيد الطلب', 'Order confirmed')} noIndex={true} />
 
-      <div className="bg-white max-w-lg w-full rounded-3xl shadow-xl border border-slate-100 p-8 text-center animate-in zoom-in slide-in-from-bottom-4 duration-500">
+      <div className="bg-white max-w-xl w-full rounded-[2.5rem] shadow-xl shadow-slate-200/50 border border-slate-100 p-8 sm:p-10 text-center animate-in zoom-in-95 duration-500">
         
         {/* Status Icon */}
         {status === 'error' ? (
-          <div className="w-20 h-20 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
-            <AlertTriangle size={40} />
+          <div className="w-24 h-24 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mx-auto mb-6 rotate-12 transition-transform">
+            <AlertTriangle size={48} strokeWidth={2} />
           </div>
         ) : (
-          <div className="w-20 h-20 bg-green-50 text-green-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
-            <CheckCircle size={40} strokeWidth={2.5} />
+          <div className="w-24 h-24 bg-green-50 text-green-500 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner border border-green-100">
+            <CheckCircle size={48} strokeWidth={2.5} />
           </div>
         )}
 
-        <h1 className="text-3xl font-black text-slate-900 mb-3 tracking-tight">
-          {tt('thankYou', 'شكرًا لك!', 'Thank you!')}
+        <h1 className="text-3xl sm:text-4xl font-black text-slate-900 mb-3 tracking-tight">
+          {status === 'error' ? tt('error', 'عذراً!', 'Oops!') : tt('thankYou', 'شكرًا لك!', 'Thank you!')}
         </h1>
 
         {/* Loading State */}
@@ -265,11 +266,10 @@ const OrderSuccess: React.FC = () => {
             <p className="text-slate-500 font-medium mb-6">
               {tt('loading', 'جاري تحميل بيانات الطلب...', 'Loading your order...')}
             </p>
-            <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 text-start space-y-4">
+            <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100 text-start space-y-4">
               <div className="h-4 w-2/3 bg-slate-200 rounded animate-pulse" />
               <div className="h-4 w-1/2 bg-slate-200 rounded animate-pulse" />
               <div className="h-4 w-3/4 bg-slate-200 rounded animate-pulse" />
-              <div className="h-4 w-1/3 bg-slate-200 rounded animate-pulse" />
             </div>
           </div>
         )}
@@ -277,18 +277,24 @@ const OrderSuccess: React.FC = () => {
         {/* Error State */}
         {status === 'error' && (
           <div className="mt-4">
-            <p className="text-red-600 font-bold mb-8 px-4 leading-relaxed">{errorMsg}</p>
+            <p className="text-slate-600 font-bold mb-8 px-4 leading-relaxed">{errorMsg}</p>
             <div className="flex flex-col gap-3">
-              <Button className="w-full py-3.5 shadow-md" onClick={retryLoad}>
+              <button 
+                className="w-full py-4 rounded-2xl bg-sky-400 hover:bg-sky-500 text-white font-extrabold shadow-lg shadow-sky-400/30 transition-all" 
+                onClick={retryLoad}
+              >
                 {tt('retry', 'إعادة المحاولة', 'Retry')}
-              </Button>
-              <Button className="w-full py-3.5 bg-slate-800 hover:bg-slate-900 shadow-md text-white" onClick={goToTracking}>
+              </button>
+              <button 
+                className="w-full py-4 rounded-2xl bg-black hover:bg-slate-800 text-white font-extrabold shadow-md shadow-black/20 transition-all" 
+                onClick={goToTracking}
+              >
                 {tt('trackYourOrder', 'تتبع الطلب', 'Track your order')}
-              </Button>
-              <Link to="/">
-                <Button variant="outline" className="w-full py-3.5">
+              </button>
+              <Link to="/" className="block">
+                <button className="w-full py-4 rounded-2xl border-2 border-slate-100 text-slate-700 font-bold hover:bg-slate-50 transition-all">
                   {tt('backToHome', 'العودة للرئيسية', 'Back to home')}
-                </Button>
+                </button>
               </Link>
             </div>
           </div>
@@ -305,56 +311,57 @@ const OrderSuccess: React.FC = () => {
               )}
             </p>
 
-            <div className="bg-slate-50 rounded-3xl p-6 sm:p-7 mb-8 text-start border border-slate-200/60 shadow-sm">
+            <div className="bg-slate-50/50 rounded-3xl p-6 sm:p-8 mb-8 text-start border border-slate-200/60 shadow-sm relative overflow-hidden">
+              {/* تزيين للخلفية يشبه الفاتورة */}
+              <div className="absolute top-0 left-0 w-full h-1.5 bg-sky-400 opacity-80" />
               
               {/* Order ID & Date */}
-              <div className="flex justify-between items-center mb-5 border-b border-slate-200 pb-4 gap-3">
+              <div className="flex justify-between items-center mb-5 border-b border-slate-200/80 pb-5 gap-3">
                 <div className="min-w-0">
                   <span className="text-slate-500 text-xs font-bold uppercase tracking-wider block mb-1">
                     {tt('orderNumber', 'رقم الطلب', 'Order number')}
                   </span>
-                  {/* 🌍 استخدام dir="ltr" لضمان ظهور الـ # والترتيب بشكل سليم */}
-                  <span className="font-black text-slate-900 text-lg break-all" dir="ltr">
+                  <span className="font-black text-slate-900 text-xl break-all" dir="ltr">
                     #{safeId}
                   </span>
                 </div>
                 <button
                   type="button"
                   onClick={copyOrderId}
-                  className="shrink-0 inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 hover:border-slate-300 transition-colors text-slate-700 font-bold text-xs shadow-sm"
+                  className="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 hover:border-sky-400 hover:text-sky-500 transition-colors text-slate-700 font-bold text-xs shadow-sm group"
                   aria-label={tt('copyOrderId', 'نسخ رقم الطلب', 'Copy order id')}
                 >
-                  <Copy size={16} className="text-slate-400" />
+                  <Copy size={16} className="text-slate-400 group-hover:text-sky-500 transition-colors" />
                   {tt('copy', 'نسخ', 'Copy')}
                 </button>
               </div>
 
-              <div className="flex justify-between items-center mb-3 gap-3">
-                <span className="text-slate-500 font-medium text-sm">
+              <div className="flex justify-between items-center mb-4 gap-3">
+                <span className="text-slate-500 font-bold text-sm">
                   {tt('orderDate', 'تاريخ الطلب', 'Order date')}
                 </span>
-                <span className="font-bold text-slate-800 text-end" dir="ltr">
+                <span className="font-extrabold text-slate-800 text-end" dir="ltr">
                   {getDisplayDate(order)}
                 </span>
               </div>
 
-              <div className="flex justify-between items-center mb-2 gap-3">
-                <span className="text-slate-500 font-medium text-sm">
+              <div className="flex justify-between items-center mb-4 gap-3">
+                <span className="text-slate-500 font-bold text-sm">
                   {tt('total', 'الإجمالي', 'Total')}
                 </span>
-                <span className="font-black text-slate-900 text-lg" dir="ltr">
+                <span className="font-black text-sky-600 text-xl drop-shadow-sm" dir="ltr">
                   {formatMoney((order as any)?.total)}
                 </span>
               </div>
 
               {/* Payment & Shipping Methods Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-6">
-                <div className="rounded-2xl bg-white border border-slate-200/70 p-4 flex items-center gap-3 shadow-sm">
-                  <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                    <CreditCard size={18} />
+                <div className="rounded-2xl bg-white border border-slate-200/70 p-4 flex items-center gap-3 shadow-sm hover:border-sky-200 transition-colors">
+                  <div className="w-10 h-10 rounded-xl bg-sky-50 text-sky-500 flex items-center justify-center shrink-0">
+                    <CreditCard size={20} />
                   </div>
                   <div className="text-sm min-w-0">
-                    <p className="text-slate-500 text-xs mb-0.5 font-bold">
+                    <p className="text-slate-400 text-xs mb-0.5 font-bold">
                       {tt('paymentMethod', 'طريقة الدفع', 'Payment')}
                     </p>
                     <p className="font-extrabold text-slate-800 break-words line-clamp-1">
@@ -363,12 +370,12 @@ const OrderSuccess: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="rounded-2xl bg-white border border-slate-200/70 p-4 flex items-center gap-3 shadow-sm">
-                  <div className="w-10 h-10 rounded-full bg-secondary-light/20 text-secondary-DEFAULT flex items-center justify-center shrink-0">
-                    <Truck size={18} />
+                <div className="rounded-2xl bg-white border border-slate-200/70 p-4 flex items-center gap-3 shadow-sm hover:border-slate-300 transition-colors">
+                  <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                    <Truck size={20} />
                   </div>
                   <div className="text-sm min-w-0">
-                    <p className="text-slate-500 text-xs mb-0.5 font-bold">
+                    <p className="text-slate-400 text-xs mb-0.5 font-bold">
                       {tt('shipping', 'الشحن', 'Shipping')}
                     </p>
                     <p className="font-extrabold text-slate-800 break-words line-clamp-1">
@@ -379,45 +386,44 @@ const OrderSuccess: React.FC = () => {
               </div>
 
               {/* Delivery Address */}
-              <div className="mt-6 pt-5 border-t border-slate-200">
-                <span className="text-slate-500 text-xs font-bold uppercase tracking-wider block mb-2">
+              <div className="mt-6 pt-5 border-t border-slate-200/80">
+                <span className="text-slate-400 text-xs font-extrabold uppercase tracking-widest block mb-3">
                   {tt('deliveryAddress', 'عنوان التوصيل', 'Delivery address')}
                 </span>
-                <div className="text-sm font-semibold text-slate-800 leading-relaxed break-words bg-white p-4 rounded-2xl border border-slate-200/70 shadow-sm">
-                  {safeText((order as any)?.address?.fullName) || '—'}
-                  <br />
-                  <span className="text-slate-600">
+                <div className="text-sm font-semibold text-slate-800 leading-relaxed break-words bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm relative overflow-hidden group">
+                  <div className="absolute left-0 top-0 w-1 h-full bg-slate-300 group-hover:bg-slate-800 transition-colors" />
+                  <p className="font-black text-slate-900 mb-1">{safeText((order as any)?.address?.fullName) || '—'}</p>
+                  <p className="text-slate-600">
                     {safeText((order as any)?.address?.city) || '—'}
                     {safeText((order as any)?.address?.street) ? `, ${safeText((order as any)?.address?.street)}` : ''}
-                  </span>
-                  <br />
-                  <span dir="ltr" className="inline-block mt-1 font-extrabold text-slate-700">
+                  </p>
+                  <p dir="ltr" className="inline-block mt-2 font-extrabold text-slate-500 bg-slate-50 px-2 py-1 rounded-lg">
                     {maskPhone((order as any)?.address?.phone)}
-                  </span>
+                  </p>
                 </div>
               </div>
 
               {/* Order Note */}
               {safeText((order as any)?.note) && (
-                <div className="mt-5 rounded-2xl bg-yellow-50/50 border border-yellow-100 p-4">
+                <div className="mt-5 rounded-2xl bg-white border border-slate-200/70 p-5 shadow-sm">
                   <div className="flex items-center justify-between gap-3 mb-3">
                     <div className="flex items-center gap-2 text-slate-800 min-w-0">
-                      <StickyNote size={18} className="text-yellow-600 shrink-0" />
-                      <p className="text-sm font-extrabold text-yellow-900">
+                      <StickyNote size={18} className="text-slate-400 shrink-0" />
+                      <p className="text-sm font-extrabold text-slate-900">
                         {tt('orderNote', 'ملاحظة الطلب', 'Order note')}
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={copyOrderNote}
-                      className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-yellow-100/50 hover:bg-yellow-200 transition-colors text-yellow-800 font-bold text-xs"
+                      className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors text-slate-600 font-bold text-xs border border-slate-200"
                       aria-label={tt('copyOrderNote', 'نسخ ملاحظة الطلب', 'Copy order note')}
                     >
                       <Copy size={14} />
                       {tt('copy', 'نسخ', 'Copy')}
                     </button>
                   </div>
-                  <p className="text-sm text-yellow-800/80 leading-relaxed whitespace-pre-wrap break-words font-medium">
+                  <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap break-words font-medium bg-slate-50/50 p-3 rounded-xl">
                     {safeText((order as any)?.note)}
                   </p>
                 </div>
@@ -426,20 +432,20 @@ const OrderSuccess: React.FC = () => {
 
             {/* Actions */}
             <div className="flex flex-col sm:flex-row gap-3">
-              <Link
-                to={safeId ? `/tracking?orderId=${encodeURIComponent(safeId)}` : '/tracking'}
-                className="flex-1"
+              <button 
+                onClick={goToTracking}
+                disabled={!safeId}
+                className="flex-1 py-4 text-base font-extrabold rounded-2xl bg-sky-400 hover:bg-sky-500 text-white shadow-lg shadow-sky-400/30 flex justify-center items-center gap-2 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed group"
               >
-                <Button className="w-full py-4 shadow-lg flex items-center justify-center gap-2" disabled={!safeId}>
-                  <Package size={20} />
-                  <span>{tt('trackYourOrder', 'تتبع الطلب', 'Track your order')}</span>
-                </Button>
-              </Link>
+                <Package size={20} className="group-hover:scale-110 transition-transform" />
+                <span>{tt('trackYourOrder', 'تتبع الطلب', 'Track your order')}</span>
+              </button>
 
               <Link to="/" className="flex-1">
-                <Button variant="outline" className="w-full py-4 border-slate-200 hover:bg-slate-50">
+                <button className="w-full py-4 text-base font-extrabold rounded-2xl bg-black hover:bg-slate-800 text-white shadow-md shadow-black/20 flex justify-center items-center gap-2 transition-all duration-300 group">
+                  <Home size={20} className="text-slate-400 group-hover:text-white transition-colors" />
                   {tt('backToHome', 'العودة للرئيسية', 'Back to home')}
-                </Button>
+                </button>
               </Link>
             </div>
           </div>

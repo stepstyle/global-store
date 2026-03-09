@@ -31,12 +31,12 @@ const resolveRating = (p: Product) => {
   };
 };
 
-// ⭐ دالة رسم النجوم (مفصولة للحفاظ على نظافة المكون الأساسي)
+// ⭐ دالة رسم النجوم
 const renderStars = (avg: number) => {
   const full = Math.floor(avg);
   const hasHalf = avg - full >= 0.5;
   return (
-    <div className="flex items-center gap-0.5 text-yellow-400" aria-hidden="true">
+    <div className="flex items-center gap-0.5 text-yellow-400 drop-shadow-sm" aria-hidden="true">
       {[0, 1, 2, 3, 4].map((i) => {
         const isFull = i < full;
         const isHalf = i === full && hasHalf;
@@ -89,7 +89,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const { t, getProductTitle, language } = useCart();
   const navigate = useNavigate();
   
-  // 🌍 دالة مساعدة لتبسيط الترجمة داخل الـ JSX وتصغير حجم الكود
+  // 🌍 دالة مساعدة لتبسيط الترجمة
   const L = useCallback((ar: string, en: string) => (language === 'ar' ? ar : en), [language]);
 
   const rating = useMemo(() => resolveRating(product), [product]);
@@ -108,7 +108,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const categoryLabel = useMemo(() => String(product.category ?? '').trim(), [product.category]);
   const [hovered, setHovered] = useState(false);
 
-  // 🖼️ تحميل الصورة الثانية (الخلفية) مسبقاً عند المرور بالماوس لتحسين تجربة المستخدم
+  // 🖼️ تحميل الصورة الثانية (الخلفية) مسبقاً
   useEffect(() => {
     if (!hovered) return;
     if (!image2) return;
@@ -176,61 +176,61 @@ const ProductCard: React.FC<ProductCardProps> = ({
   return (
     <div
       className={[
-        'group relative bg-white rounded-xl',
+        'group relative bg-white rounded-[2rem]',
         'border border-slate-100 shadow-sm',
-        'hover:shadow-xl transition-all duration-300',
+        'hover:shadow-2xl hover:shadow-slate-200/50 hover:border-slate-200 transition-all duration-500',
         'flex flex-col h-full',
         'transform-gpu will-change-transform',
-        disableLift ? 'overflow-visible' : 'overflow-hidden hover:-translate-y-1',
+        disableLift ? 'overflow-visible' : 'overflow-hidden hover:-translate-y-1.5',
       ].join(' ')}
       data-product-id={product.id}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* 🏷️ شارة الخصم أو المنتج الجديد (استخدام start-2 لدعم اللغتين) */}
+      {/* 🏷️ شارة الخصم أو المنتج الجديد */}
       {badge && (
         <div
           className={[
-            'absolute top-2 start-2 z-30 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md',
-            (product as any).originalPrice ? 'bg-red-500' : 'bg-secondary-DEFAULT',
+            'absolute top-4 start-4 z-30 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full shadow-lg',
+            (product as any).originalPrice ? 'bg-rose-500 shadow-rose-500/30' : 'bg-black shadow-black/30',
           ].join(' ')}
         >
           {badge}
         </div>
       )}
 
-      {/* 🔘 أزرار التفاعل السريعة (تظهر عند المرور بالماوس - استخدام end-2 لدعم اللغتين) */}
-      <div className="absolute top-2 end-2 z-30 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300">
+      {/* 🔘 أزرار التفاعل السريعة */}
+      <div className="absolute top-4 end-4 z-30 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-x-4 rtl:-translate-x-4 group-hover:translate-x-0 rtl:group-hover:translate-x-0">
         <button
           onClick={onClickWishlist}
-          className={`p-2 rounded-full shadow-sm transition ${isLiked ? 'bg-red-50 text-red-600' : 'bg-white/90 text-slate-600 hover:text-red-600'}`}
+          className={`p-2.5 rounded-2xl shadow-md transition-all duration-300 ${isLiked ? 'bg-rose-50 text-rose-500' : 'bg-white/90 backdrop-blur text-slate-400 hover:text-rose-500 hover:bg-white hover:scale-110'}`}
           aria-label={isLiked ? L('إزالة من المفضلة', 'Remove from wishlist') : L('إضافة للمفضلة', 'Add to wishlist')}
           type="button"
         >
-          <Heart size={16} fill={isLiked ? 'currentColor' : 'none'} />
+          <Heart size={18} fill={isLiked ? 'currentColor' : 'none'} strokeWidth={2.5} />
         </button>
 
         {onQuickView && (
           <button
             onClick={onClickQuickView}
-            className="p-2 rounded-full bg-white/90 text-slate-600 hover:text-secondary-DEFAULT shadow-sm transition"
+            className="p-2.5 rounded-2xl bg-white/90 backdrop-blur text-slate-400 hover:text-sky-500 hover:bg-white hover:scale-110 shadow-md transition-all duration-300"
             aria-label={L('عرض سريع', 'Quick view')}
             type="button"
           >
-            <Eye size={16} />
+            <Eye size={18} strokeWidth={2.5} />
           </button>
         )}
       </div>
 
       {/* 📸 صورة المنتج */}
-      <Link to={productLink} className="block relative" aria-label={productTitle}>
-        <div className="relative w-full aspect-square bg-slate-50 overflow-hidden p-3">
+      <Link to={productLink} className="block relative bg-slate-50/50" aria-label={productTitle}>
+        <div className="relative w-full aspect-square overflow-hidden p-6">
           {image1 ? (
             <LazyImage
               src={image1}
               alt={productTitle}
               containerClassName="w-full h-full"
-              className="w-full h-full object-contain pointer-events-none"
+              className="w-full h-full object-contain mix-blend-multiply transition-transform duration-700 ease-out group-hover:scale-110 pointer-events-none"
               loading={priority ? 'eager' : 'lazy'}
               fetchPriority={priority ? 'high' : 'auto'}
               cloudinarySize={mainCloudinarySize}
@@ -238,17 +238,19 @@ const ProductCard: React.FC<ProductCardProps> = ({
               aspectRatioHint="1 / 1"
             />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-slate-300 text-sm">
+            <div className="w-full h-full flex items-center justify-center text-slate-300 text-sm font-bold">
               {L('لا توجد صورة', 'No Image')}
             </div>
           )}
+          
+          {/* صورة التمرير (Hover Image) */}
           {image2 && (
-            <div className="absolute inset-0 p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-250">
+            <div className="absolute inset-0 p-6 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-white">
               <LazyImage
                 src={image2}
                 alt={productTitle}
                 containerClassName="w-full h-full"
-                className="w-full h-full object-contain pointer-events-none"
+                className="w-full h-full object-contain mix-blend-multiply transition-transform duration-700 ease-out group-hover:scale-110 pointer-events-none"
                 loading="lazy"
                 fetchPriority="low"
                 cloudinarySize={460}
@@ -261,42 +263,51 @@ const ProductCard: React.FC<ProductCardProps> = ({
       </Link>
 
       {/* 📝 تفاصيل المنتج */}
-      <div className="p-3 flex flex-col flex-1 text-sm">
-        <div className="mb-1 flex items-center justify-between gap-2">
-          <span className="text-[9px] text-secondary-DEFAULT font-bold uppercase tracking-wider bg-secondary-light/10 px-2 py-0.5 rounded-md truncate max-w-[55%]" title={categoryLabel}>
+      <div className="p-5 sm:p-6 flex flex-col flex-1 bg-white">
+        <div className="mb-2.5 flex items-center justify-between gap-2">
+          {/* التصنيف (Badge) */}
+          <span className="text-[9px] text-sky-500 font-black uppercase tracking-widest bg-sky-50 border border-sky-100 px-2.5 py-1 rounded-lg truncate max-w-[55%]" title={categoryLabel}>
             {categoryLabel}
           </span>
 
+          {/* التقييم */}
           <button
             type="button"
             onClick={onClickReviews}
-            className="flex items-center gap-1 hover:opacity-90 active:scale-[0.99]"
+            className="flex items-center gap-1.5 hover:opacity-80 active:scale-[0.99] transition-opacity"
             title={L('عرض التقييمات', 'Open reviews')}
             aria-label={L('عرض التقييمات', 'Open reviews')}
           >
             {renderStars(rating.avg)}
-            <span className="text-xs text-slate-700 font-bold tabular-nums">{rating.avg || 0}</span>
-            <span className="text-[10px] text-slate-400 tabular-nums">({rating.count})</span>
+            <span className="text-[11px] text-slate-400 font-bold tabular-nums">({rating.count})</span>
           </button>
         </div>
 
-        <Link to={productLink} className="block mb-1 transition-colors group-hover:text-secondary-DEFAULT">
-          <h3 className="font-bold text-slate-800 line-clamp-1 text-sm">{productTitle}</h3>
+        {/* عنوان المنتج */}
+        <Link to={productLink} className="block mb-2 transition-colors group-hover:text-sky-500">
+          <h3 className="font-black text-slate-900 line-clamp-2 text-sm sm:text-base leading-snug">{productTitle}</h3>
         </Link>
 
-        {/* 🔢 أزرار اختيار الكمية والمخزون (تم تحسين العرض للموبايل) */}
-        <div className="mb-2 flex items-center justify-between gap-1 sm:gap-2">
-          <div className="flex flex-col">
-            <span className="text-[10px] text-slate-500 font-semibold">{L('الكمية', 'Qty')}</span>
-            <div className="mt-1 flex items-center gap-1">
+        {/* 🔢 أزرار اختيار الكمية والمخزون */}
+        <div className="mb-4 mt-auto flex flex-col gap-1.5">
+          <div className="text-[10px] font-bold text-slate-400">
+            {isInStock ? (
+              <span className="text-emerald-500">{L(`متوفر: ${stock}`, `In stock: ${stock}`)}</span>
+            ) : (
+              <span className="text-red-500">{L('غير متوفر', 'Out of stock')}</span>
+            )}
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <div className="flex items-center bg-slate-50 border border-slate-100 rounded-xl p-1">
               <button
                 type="button"
                 onClick={decQty}
                 disabled={!isInStock || qty <= 1}
-                className="p-1.5 sm:p-2 rounded-lg border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-all disabled:opacity-30 disabled:hover:bg-transparent shadow-sm"
                 aria-label={L('تقليل الكمية', 'Decrease quantity')}
               >
-                <Minus size={14} />
+                <Minus size={14} strokeWidth={3} />
               </button>
 
               <input
@@ -305,7 +316,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
                 inputMode="numeric"
                 pattern="[0-9]*"
                 disabled={!isInStock}
-                className="w-8 sm:w-12 text-center rounded-lg border border-slate-200 py-1 text-sm font-bold tabular-nums focus:outline-none focus:ring-2 focus:ring-secondary-DEFAULT/30 disabled:opacity-50"
+                className="w-8 sm:w-10 text-center bg-transparent text-sm font-black tabular-nums focus:outline-none disabled:opacity-50 text-slate-800"
                 aria-label={L('الكمية', 'Quantity')}
               />
 
@@ -313,28 +324,24 @@ const ProductCard: React.FC<ProductCardProps> = ({
                 type="button"
                 onClick={incQty}
                 disabled={!isInStock || qty >= stock}
-                className="p-1.5 sm:p-2 rounded-lg border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-all disabled:opacity-30 disabled:hover:bg-transparent shadow-sm"
                 aria-label={L('زيادة الكمية', 'Increase quantity')}
               >
-                <Plus size={14} />
+                <Plus size={14} strokeWidth={3} />
               </button>
             </div>
-          </div>
-
-          <div className="text-[10px] text-slate-500 font-semibold text-end">
-            {isInStock ? L(`متوفر: ${stock}`, `In stock: ${stock}`) : L('غير متوفر', 'Out of stock')}
           </div>
         </div>
 
         {/* 💰 قسم السعر وزر الإضافة للسلة */}
-        <div className="mt-auto pt-3 flex items-end justify-between border-t border-slate-100 gap-2">
+        <div className="pt-4 flex items-center justify-between border-t border-slate-100 border-dashed gap-2">
           <div className="flex flex-col">
-            <span className="font-extrabold text-base text-slate-900 tabular-nums leading-none">
+            <span className="font-black text-lg text-slate-900 tabular-nums leading-none">
               {Number(product.price ?? 0)}
-              <span className="text-[10px] font-bold ms-1 text-slate-500 uppercase">JOD</span>
+              <span className="text-[10px] font-black ms-1 text-slate-400 uppercase">JOD</span>
             </span>
             {(product as any).originalPrice && (
-              <span className="text-[11px] text-slate-400 line-through tabular-nums mt-1">
+              <span className="text-[11px] text-slate-400 font-bold line-through decoration-slate-300 decoration-2 tabular-nums mt-1">
                 {Number((product as any).originalPrice)} <span className="ms-0.5 uppercase">JOD</span>
               </span>
             )}
@@ -343,14 +350,13 @@ const ProductCard: React.FC<ProductCardProps> = ({
           <button
             onClick={onClickCart}
             disabled={!isInStock}
-            className="flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-xl bg-secondary-DEFAULT hover:bg-secondary-dark text-white text-xs font-semibold shadow-sm hover:shadow-md transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-sky-400 hover:bg-sky-500 text-white text-sm font-extrabold shadow-lg shadow-sky-400/30 transition-all duration-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none group/btn"
             aria-label={isInStock ? L('أضف للسلة', 'Add to cart') : L('غير متوفر', 'Out of stock')}
             type="button"
           >
-            <ShoppingCart size={16} strokeWidth={2.2} />
-            {/* إخفاء النص على الشاشات الصغيرة جداً لتجنب تكسر التصميم، وإظهاره من شاشات sm فما فوق */}
-            <span className="whitespace-nowrap hidden sm:inline-block">
-              {L('أضف للسلة', 'Add')}
+            <ShoppingCart size={18} strokeWidth={2.5} className="group-hover/btn:scale-110 transition-transform" />
+            <span className="hidden sm:inline-block">
+              {L('أضف', 'Add')}
             </span>
           </button>
         </div>

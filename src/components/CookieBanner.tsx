@@ -7,16 +7,7 @@ import { useCart } from '../App';
 
 const { Link } = ReactRouterDOM as any;
 
-/**
- * ✅ World-Class Cookie Banner
- * - لا يستخدم href="#"
- * - يسجّل "accepted" و "declined"
- * - قابل للتحديث بإصدار (versioned key)
- * - A11y: dialog + aria + ESC close
- * - SSR safe
- */
-
-const COOKIE_KEY = 'anta_cookie_consent_v1'; // ✅ غيّر v1 إلى v2 إذا عدّلت سياسة الخصوصية (ليظهر البانر مجددًا)
+const COOKIE_KEY = 'anta_cookie_consent_v1';
 type CookieChoice = 'accepted' | 'declined';
 
 const safeStorage = {
@@ -48,10 +39,8 @@ const scrollToTopInstant = () => {
 
 const CookieBanner: React.FC = () => {
   const { t, language } = useCart() as any;
-
   const [show, setShow] = useState(false);
 
-  // ✅ احترام تقليل الحركة (Accessibility)
   const prefersReducedMotion = useMemo(() => {
     try {
       if (typeof window === 'undefined') return false;
@@ -63,23 +52,18 @@ const CookieBanner: React.FC = () => {
 
   useEffect(() => {
     const choice = safeStorage.get(COOKIE_KEY) as CookieChoice | null;
-
-    // ✅ إذا تم اتخاذ قرار مسبقًا، لا نعرض البانر
     if (choice === 'accepted' || choice === 'declined') return;
 
-    // ✅ تأخير بسيط (لكن بدون مبالغة)
-    const id = window.setTimeout(() => setShow(true), 1200);
+    // تأخير الظهور قليلاً ليعطي فرصة للمحتوى الأساسي بالتحميل
+    const id = window.setTimeout(() => setShow(true), 2500);
     return () => window.clearTimeout(id);
   }, []);
 
-  // ✅ إغلاق بـ ESC (احترافي)
   useEffect(() => {
     if (!show) return;
-
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setShow(false);
     };
-
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [show]);
@@ -90,7 +74,6 @@ const CookieBanner: React.FC = () => {
   }, []);
 
   const decline = useCallback(() => {
-    // ✅ مهم: نسجّل الرفض حتى ما يرجع يظهر كل مرة
     safeStorage.set(COOKIE_KEY, 'declined');
     setShow(false);
   }, []);
@@ -103,58 +86,68 @@ const CookieBanner: React.FC = () => {
       aria-modal="false"
       aria-live="polite"
       className={[
-        'fixed bottom-0 left-0 w-full z-[90] p-4',
-        'bg-slate-900 text-white shadow-up',
-        prefersReducedMotion ? '' : 'animate-in slide-in-from-bottom-full duration-500',
+        'fixed bottom-6 left-4 right-4 md:left-8 md:right-auto md:max-w-md z-[100]',
+        'bg-slate-950/95 backdrop-blur-xl text-white shadow-2xl shadow-black/40 border border-white/10 rounded-[2rem] p-6',
+        prefersReducedMotion ? '' : 'animate-in fade-in slide-in-from-bottom-10 duration-700 ease-out',
       ].join(' ')}
     >
-      <div className="container mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-        {/* Left: Icon + Text */}
-        <div className="flex items-start md:items-center gap-3">
-          <ShieldCheck size={30} className="text-secondary-DEFAULT shrink-0 mt-0.5 md:mt-0" />
+      <div className="flex flex-col gap-5">
+        {/* Header: Icon + Title + Close */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-sky-500/20 flex items-center justify-center text-sky-400 shadow-inner">
+              <ShieldCheck size={24} strokeWidth={2.5} />
+            </div>
+            <h3 className="font-heading font-black text-lg tracking-tight">
+              {language === 'ar' ? 'خصوصيتك تهمنا' : 'Cookie Policy'}
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShow(false)}
+            className="p-2 rounded-xl hover:bg-white/10 transition-colors text-slate-400 hover:text-white"
+            aria-label="Close"
+          >
+            <X size={20} strokeWidth={3} />
+          </button>
+        </div>
 
-          <p className="text-sm md:text-base leading-snug">
+        {/* Content */}
+        <div className="space-y-4">
+          <p className="text-sm font-medium text-slate-300 leading-relaxed">
             {t('cookieText')}{' '}
-            {/* ✅ بدل href="#" */}
             <Link
               to="/privacy"
               onClick={scrollToTopInstant}
-              className="underline text-secondary-light hover:text-white transition-colors"
-              aria-label={String(t('privacyPolicy'))}
+              className="text-sky-400 font-black hover:underline transition-all"
             >
               {t('privacyPolicy')}
             </Link>
             .
           </p>
-        </div>
 
-        {/* Right: Actions */}
-        <div className="flex items-center gap-2 shrink-0">
-          <Button size="sm" onClick={accept}>
-            {t('agree')}
-          </Button>
-
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={decline}
-            className="border-white text-white hover:bg-white/10"
-          >
-            {t('decline')}
-          </Button>
-
-          {/* ✅ زر إغلاق سريع (اختياري) */}
-          <button
-            type="button"
-            onClick={() => setShow(false)}
-            className="p-2 rounded-full hover:bg-white/10 transition-colors"
-            aria-label={language === 'ar' ? 'إغلاق' : 'Close'}
-            title={language === 'ar' ? 'إغلاق' : 'Close'}
-          >
-            <X size={18} />
-          </button>
+          {/* Actions */}
+          <div className="flex flex-row-reverse items-center gap-3">
+            <Button 
+              size="sm" 
+              onClick={accept} 
+              className="flex-1 bg-sky-500 hover:bg-sky-600 shadow-lg shadow-sky-500/20"
+            >
+              {t('agree')}
+            </Button>
+            
+            <button
+              onClick={decline}
+              className="flex-1 px-4 py-2.5 rounded-2xl text-sm font-black text-slate-400 hover:text-white hover:bg-white/5 transition-all"
+            >
+              {t('decline')}
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* لمسة فنية: تدرج لوني خفيف خلف الأيقونة */}
+      <div className="absolute -z-10 top-0 left-0 w-24 h-24 bg-sky-500/10 blur-[50px] rounded-full pointer-events-none" />
     </div>
   );
 };

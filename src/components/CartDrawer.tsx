@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, memo, useCallback } from 'react';
-import { X, Trash2, ShoppingBag, ArrowRight, Tag, Minus, Plus, StickyNote } from 'lucide-react';
+import { X, Trash2, ShoppingBag, ArrowRight, ArrowLeft, Tag, Minus, Plus, StickyNote } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { useCart } from '../App';
@@ -291,22 +291,22 @@ const CartDrawer: React.FC = () => {
       {/* Panel */}
       <div ref={panelRef} className={`relative w-screen max-w-md bg-white shadow-2xl h-full flex flex-col ${drawerAnim}`}>
         {/* Header */}
-        <div className="p-6 border-b border-slate-100 bg-gradient-to-l from-secondary-light/25 to-transparent">
+        <div className="p-6 border-b border-slate-100 bg-gradient-to-l from-slate-50 to-white">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-slate-900">
-              <div className="w-10 h-10 rounded-2xl bg-secondary-light/25 flex items-center justify-center text-secondary-DEFAULT">
-                <ShoppingBag />
+            <div className="flex items-center gap-3 text-slate-900">
+              <div className="w-10 h-10 rounded-2xl bg-sky-50 flex items-center justify-center text-sky-500">
+                <ShoppingBag size={22} />
               </div>
               <div>
                 <h2 id="cart-drawer-title" className="text-xl font-bold font-heading leading-tight">
                   {tt('cart', 'السلة', 'Cart')}
                 </h2>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 mt-0.5">
                   {tt('cartHint', 'راجع المنتجات قبل الدفع', 'Review items before checkout')}
                 </p>
               </div>
               <span
-                className="text-xs bg-slate-200 text-slate-700 px-2 py-1 rounded-full"
+                className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full font-bold ml-2 rtl:mr-2 rtl:ml-0"
                 aria-label={tt('items', 'عدد المنتجات', 'Items count')}
               >
                 {totalItems}
@@ -319,11 +319,11 @@ const CartDrawer: React.FC = () => {
                 e.stopPropagation();
                 setIsCartOpen(false);
               }}
-              className="p-2 text-slate-400 hover:text-red-500 transition-colors rounded-full hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
+              className="p-2 border border-slate-200 text-slate-400 hover:text-red-500 transition-colors rounded-full hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
               aria-label={tt('close', 'إغلاق', 'Close')}
               type="button"
             >
-              <X size={22} />
+              <X size={20} />
             </button>
           </div>
         </div>
@@ -332,18 +332,20 @@ const CartDrawer: React.FC = () => {
         <div className="flex-1 overflow-y-auto p-6 space-y-4" aria-live="polite">
           {safeCart.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center space-y-4 text-slate-400">
-              <ShoppingBag size={64} strokeWidth={1} />
-              <p className="text-lg">{tt('cartEmpty', 'السلة فارغة', 'Your cart is empty')}</p>
+              <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-2">
+                <ShoppingBag size={32} className="text-slate-300" />
+              </div>
+              <p className="text-lg font-bold text-slate-600">{tt('cartEmpty', 'السلة فارغة', 'Your cart is empty')}</p>
 
-              <Button
+              <button
                 onClick={() => {
                   setIsCartOpen(false);
                   navigate('/shop');
                 }}
-                variant="outline"
+                className="mt-4 w-full py-3.5 rounded-xl bg-black hover:bg-slate-800 text-white font-extrabold transition-all duration-300"
               >
                 {tt('browseProducts', 'تصفح المنتجات', 'Browse products')}
-              </Button>
+              </button>
             </div>
           ) : (
             <>
@@ -362,12 +364,12 @@ const CartDrawer: React.FC = () => {
               ))}
 
               {/* Order Note (رسمي) */}
-              <div className="mt-2 bg-white border border-slate-100 rounded-2xl p-4">
-                <div className="flex items-center justify-between gap-3 mb-2 text-slate-900">
+              <div className="mt-4 bg-white border border-slate-100 rounded-2xl p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3 mb-3 text-slate-900">
                   <div className="flex items-center gap-2">
-                    <StickyNote className="text-secondary-DEFAULT" size={18} />
+                    <StickyNote className="text-slate-700" size={18} />
                     <p className="font-bold text-sm">
-                      {tt('orderNote', 'ملاحظة على الطلب (اختياري)', 'Order note (optional)')}
+                      {tt('orderNote', 'ملاحظة الطلب', 'Order note')}
                     </p>
                   </div>
                   <span className="text-xs text-slate-400">
@@ -384,9 +386,9 @@ const CartDrawer: React.FC = () => {
                     'اكتب ملاحظة للبائع (مثال: تغليف هدية / وقت توصيل)...',
                     'Write a note for the seller (e.g., gift wrap, delivery time)...'
                   )}
-                  className="w-full min-h-[92px] resize-none p-3 rounded-2xl bg-slate-50 border border-slate-200 outline-none focus:border-secondary-DEFAULT focus:ring-2 focus:ring-secondary-DEFAULT/30 text-sm"
+                  className="w-full min-h-[92px] resize-none p-3.5 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20 text-sm text-slate-700 transition-all placeholder:text-slate-400"
                 />
-                <p className="text-xs text-slate-400 mt-2">{tt('noteSaved', 'محفوظ تلقائياً.', 'Saved automatically.')}</p>
+                <p className="text-[11px] text-slate-400 mt-2 font-medium">{tt('noteSaved', 'تم الحفظ تلقائياً.', 'Saved automatically.')}</p>
               </div>
             </>
           )}
@@ -394,48 +396,53 @@ const CartDrawer: React.FC = () => {
 
         {/* Footer */}
         {safeCart.length > 0 && (
-          <div className="p-6 bg-white border-t border-slate-100 shadow-upper">
+          <div className="p-6 bg-white border-t border-slate-100 shadow-[0_-10px_40px_rgba(0,0,0,0.03)] z-10">
             {/* Discount Banner */}
             {totalItems > 2 && (
-              <div className="bg-green-50 text-green-700 text-xs font-bold p-2 rounded-xl mb-4 flex items-center gap-2">
-                <Tag size={14} /> {tt('discountApplied', 'تم تطبيق خصم', 'Discount applied')}
+              <div className="bg-green-50 text-green-700 text-xs font-bold p-3 rounded-xl mb-4 flex items-center gap-2 border border-green-100">
+                <Tag size={16} className="text-green-500" /> {tt('discountApplied', 'تم تطبيق خصم 10%', '10% discount applied')}
               </div>
             )}
 
-            <div className="space-y-2 mb-4">
-              <div className="flex justify-between items-center text-sm text-slate-600">
+            <div className="space-y-3 mb-6">
+              <div className="flex justify-between items-center text-sm text-slate-500 font-medium">
                 <span>{tt('subtotal', 'المجموع الفرعي', 'Subtotal')}</span>
-                <span className="font-bold">{formatMoney(subtotal)}</span>
+                <span className="font-bold text-slate-700">{formatMoney(subtotal)}</span>
               </div>
 
               {discountAmount > 0 && (
-                <div className="flex justify-between items-center text-sm text-green-700 font-bold">
+                <div className="flex justify-between items-center text-sm text-green-600 font-bold">
                   <span>{tt('discount', 'الخصم', 'Discount')}</span>
                   <span>-{formatMoney(discountAmount)}</span>
                 </div>
               )}
 
-              <div className="flex justify-between items-center text-lg font-bold text-slate-900 border-t border-slate-100 pt-2">
+              <div className="flex justify-between items-end text-lg font-black text-slate-900 border-t border-slate-100 pt-3">
                 <span>{tt('total', 'الإجمالي', 'Total')}</span>
                 <span>{formatMoney(total)}</span>
               </div>
             </div>
 
             <div className="space-y-3">
-              <Button
+              {/* زر إتمام الطلب الأزرق الفاتح */}
+              <button
                 onClick={() => {
                   setIsCartOpen(false);
                   navigate('/checkout');
                 }}
-                className="w-full py-4 text-lg shadow-xl shadow-secondary-light/20 flex justify-center items-center gap-2"
+                className="w-full py-3.5 text-base font-extrabold rounded-xl bg-sky-400 hover:bg-sky-500 text-white shadow-lg shadow-sky-400/30 flex justify-center items-center gap-2 group transition-all duration-300"
               >
-                {tt('checkout', 'إتمام الشراء', 'Checkout')}{' '}
-                <ArrowRight size={20} className="rtl:rotate-180 ltr:rotate-0" />
-              </Button>
+                {tt('checkout', 'إتمام الطلب', 'Checkout')}
+                <ArrowLeft size={18} className="rtl:rotate-0 ltr:rotate-180 group-hover:-translate-x-1 rtl:group-hover:translate-x-1 transition-transform" />
+              </button>
 
-              <Button variant="ghost" onClick={() => setIsCartOpen(false)} className="w-full text-slate-600">
+              {/* زر متابعة التسوق الأسود */}
+              <button 
+                onClick={() => setIsCartOpen(false)} 
+                className="w-full py-3 text-sm font-extrabold rounded-xl bg-black hover:bg-slate-800 text-white shadow-md shadow-black/20 transition-all duration-300"
+              >
                 {tt('continueShopping', 'متابعة التسوق', 'Continue shopping')}
-              </Button>
+              </button>
             </div>
           </div>
         )}
