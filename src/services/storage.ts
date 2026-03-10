@@ -26,6 +26,7 @@ import {
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
+  sendEmailVerification,
 } from 'firebase/auth';
 
 // Keys for LocalStorage
@@ -572,6 +573,7 @@ export const db = {
     register: async (user: User): Promise<User> => {
       if (firebaseReady()) {
         try {
+          // 1. إنشاء الحساب في فايربيس
           const userCredential = await createUserWithEmailAndPassword(
             auth,
             user.email,
@@ -579,13 +581,24 @@ export const db = {
           );
           const uid = userCredential.user.uid;
 
+          // 2. تحديث الاسم
           await updateProfile(userCredential.user, { displayName: user.name });
 
+          // 🚀 3. الإضافة العالمية: إرسال الإيميل فوراً بعد نجاح الإنشاء
+          try {
+            await sendEmailVerification(userCredential.user);
+            console.log("✅ Verification email sent successfully!");
+          } catch (emailErr) {
+            console.error("⚠️ Failed to send verification email:", emailErr);
+            // لا نوقف عملية التسجيل إذا فشل الإيميل، لكن نسجل الخطأ
+          }
+
+          // 4. حفظ بيانات المستخدم في قاعدة البيانات (Firestore)
           const firestoreUser: any = cleanForFirestore({
             id: uid,
             name: user.name,
             email: user.email,
-            role: user.role,
+            role: user.role || 'customer',
             orders: [],
             createdAt: new Date().toISOString(),
           });
@@ -599,6 +612,7 @@ export const db = {
         }
       }
 
+      // --- Fallback (Mock) ---
       const users: User[] = JSON.parse(localStorage.getItem(KEYS.USERS) || '[]');
       const existing = users.find((u) => u.email === user.email);
       if (existing) throw new Error('Email already exists (Mock)');
