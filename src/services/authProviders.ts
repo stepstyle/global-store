@@ -1,5 +1,11 @@
 // src/services/authProviders.ts
-import { GoogleAuthProvider, FacebookAuthProvider, signInWithPopup, User } from "firebase/auth";
+import { 
+  GoogleAuthProvider, 
+  FacebookAuthProvider, 
+  signInWithPopup, 
+  User,
+  sendEmailVerification 
+} from "firebase/auth";
 import { getFirebaseAuth } from "./firebase";
 
 /**
@@ -14,7 +20,7 @@ export const signInWithGoogle = async (): Promise<User> => {
   if (!auth) {
     throw new Error("خدمة المصادقة غير مهيأة حالياً. يرجى تحديث الصفحة والمحاولة لاحقاً.");
   }
-
+  
   const provider = new GoogleAuthProvider();
   // إجبار المستخدم على اختيار الحساب في كل مرة يضغط فيها على الزر (أفضل لتجربة المستخدم)
   provider.setCustomParameters({ prompt: "select_account" });
@@ -87,5 +93,17 @@ export const signInWithFacebook = async (): Promise<User> => {
       default:
         throw new Error(error.message || "حدث خطأ غير متوقع أثناء تسجيل الدخول بفيسبوك. يرجى المحاولة لاحقاً.");
     }
+  }
+};
+
+/**
+ * 📧 خدمة إرسال رابط التحقق (إضافة قياسية للمستقبل)
+ */
+export const sendUserVerification = async (user: User): Promise<void> => {
+  try {
+    await sendEmailVerification(user);
+  } catch (error) {
+    console.error("Verification error:", error);
+    throw new Error("فشل إرسال رابط التحقق.");
   }
 };

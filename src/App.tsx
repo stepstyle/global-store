@@ -7,7 +7,6 @@ import Header from './components/Header';
 import Footer from './components/Footer';
 import CartDrawer from './components/CartDrawer';
 import QuickViewModal from './components/QuickViewModal';
-import Toast from './components/Toast';
 import CookieBanner from './components/CookieBanner';
 import AdminGuard from './components/AdminGuard';
 
@@ -237,11 +236,6 @@ const App: React.FC = () => {
           <CartDrawer />
           <QuickViewModal product={quickViewProduct} isOpen={!!quickViewProduct} onClose={() => setQuickViewProduct(null)} />
           <CookieBanner />
-
-          {/* Toast System */}
-          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 sm:left-auto sm:right-6 sm:translate-x-0 z-[100] flex flex-col gap-2 pointer-events-none">
-            {toasts.map(toast => <div key={toast.id} className="pointer-events-auto"><Toast toast={toast} onClose={removeToast} /></div>)}
-          </div>
 
           <main className="flex-grow">
             <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-10 h-10 border-4 border-t-secondary-DEFAULT rounded-full animate-spin" /></div>}>
