@@ -10,7 +10,6 @@ import {
   DollarSign,
   Smartphone,
   Upload,
-  Image as ImageIcon,
   ShoppingBag,
   Mail,
   Phone,
@@ -18,7 +17,7 @@ import {
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
 import { db } from '../services/storage';
-import { Order } from '../types';
+import { Order, Product } from '../types';
 import SEO from '../components/SEO';
 import LazyImage from '../components/LazyImage';
 import { uploadToCloudinary } from '../services/cloudinary';
@@ -131,6 +130,7 @@ const makeOrderId = () => {
 const Checkout: React.FC = () => {
   const {
     cart,
+    products, // 🛡️ تم الاستدعاء للمقارنة الأمنية
     t,
     showToast,
     getProductTitle,
@@ -184,7 +184,6 @@ const Checkout: React.FC = () => {
     phoneLocal: '',
     saveInfo: true,
     billingSameAsShipping: true,
-
     billingFullName: '',
     billingCitySlug: '',
     billingStreetAddress: '',
@@ -222,19 +221,35 @@ const Checkout: React.FC = () => {
     [shippingMethodId]
   );
 
+  // ==========================================
+  // 🛡️ حسابات التسعير والأمان الموثوقة (Security Layer)
+  // ==========================================
+  const validatedCart = useMemo(() => {
+    const safeCart = Array.isArray(cart) ? cart : [];
+    return safeCart.map((cartItem: any) => {
+      const realProduct = products.find((p: Product) => p.id === cartItem.id);
+      return {
+        ...cartItem,
+        // نعتمد السعر الأصلي من الداتا بيز لمنع التلاعب
+        price: realProduct ? realProduct.price : cartItem.price,
+        stock: realProduct ? realProduct.stock : cartItem.stock,
+      };
+    });
+  }, [cart, products]);
+
   const subtotal = useMemo(
     () =>
-      cart.reduce((sum: number, item: any) => {
+      validatedCart.reduce((sum: number, item: any) => {
         const price = Number(item.price || 0);
         const qty = clampQty(item.quantity);
         return sum + price * qty;
       }, 0),
-    [cart]
+    [validatedCart]
   );
 
   const totalItems = useMemo(
-    () => cart.reduce((sum: number, item: any) => sum + clampQty(item.quantity), 0),
-    [cart]
+    () => validatedCart.reduce((sum: number, item: any) => sum + clampQty(item.quantity), 0),
+    [validatedCart]
   );
 
   const discountAmount = useMemo(
@@ -270,7 +285,6 @@ const Checkout: React.FC = () => {
 
   const validateStep1 = () => {
     const nextErr: Record<string, string> = {};
-
     const needEmail = !user?.id;
     const e = safeTrim(email);
 
@@ -282,7 +296,7 @@ const Checkout: React.FC = () => {
 
     const name = normalizeName(formData.fullName);
     if (name.length < 5) {
-      nextErr.fullName = tt('nameMin5', 'الاسم لازم يكون 5 أحرف على الأقل', 'Name must be at least 5 characters.');
+      nextErr.fullName = tt('nameMin5', 'الاسم يجب أن يكون 5 أحرف على الأقل', 'Name must be at least 5 characters.');
     }
 
     if (!safeTrim(formData.country)) {
@@ -297,8 +311,8 @@ const Checkout: React.FC = () => {
     if (addr.length < 8) {
       nextErr.streetAddress = tt(
         'addressMin8',
-        'اكتب العنوان بالتفصيل (على الأقل 8 أحرف)',
-        'Write detailed address (at least 8 characters).'
+        'يرجى كتابة العنوان بالتفصيل (8 أحرف على الأقل)',
+        'Please write a detailed address (at least 8 characters).'
       );
     }
 
@@ -321,8 +335,8 @@ const Checkout: React.FC = () => {
     if (!acceptPolicies) {
       nextErr.acceptPolicies = tt(
         'acceptPoliciesRequired',
-        'لازم توافق على السياسات لإتمام الطلب',
-        'You must accept policies to place the order.'
+        'يجب الموافقة على سياسات المتجر لإتمام الطلب',
+        'You must accept the store policies to place the order.'
       );
     }
 
@@ -331,7 +345,7 @@ const Checkout: React.FC = () => {
       if (bn.length < 5) {
         nextErr.billingFullName = tt(
           'billingNameMin5',
-          'اسم الفاتورة لازم يكون 5 أحرف على الأقل',
+          'اسم الفاتورة يجب أن يكون 5 أحرف على الأقل',
           'Billing name must be at least 5 characters.'
         );
       }
@@ -348,7 +362,7 @@ const Checkout: React.FC = () => {
       if (ba.length < 8) {
         nextErr.billingStreetAddress = tt(
           'billingAddressMin8',
-          'عنوان الفاتورة بالتفصيل (على الأقل 8 أحرف)',
+          'عنوان الفاتورة بالتفصيل (8 أحرف على الأقل)',
           'Billing address must be detailed (at least 8 characters).'
         );
       }
@@ -379,14 +393,14 @@ const Checkout: React.FC = () => {
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      showToast(tt('invalidImage', 'الرجاء رفع صورة صحيحة', 'Please upload an image file.'), 'error');
+      showToast(tt('invalidImage', 'الرجاء رفع صورة صالحة', 'Please upload a valid image file.'), 'error');
       return;
     }
 
     const maxBytes = 2.5 * 1024 * 1024;
     if (file.size > maxBytes) {
       showToast(
-        tt('imageTooLarge', 'حجم الصورة كبير جداً، ارفع صورة أصغر', 'Image is too large. Please upload a smaller one.'),
+        tt('imageTooLarge', 'حجم الصورة كبير جداً. الحد الأقصى 2.5MB', 'Image is too large. Maximum size is 2.5MB.'),
         'error'
       );
       return;
@@ -399,17 +413,17 @@ const Checkout: React.FC = () => {
       const url = await uploadToCloudinary(file);
       setCliqReceiptUrl(url);
 
-      showToast(tt('uploaded', 'تم الرفع بنجاح', 'Uploaded successfully.'), 'success');
+      showToast(tt('uploaded', 'تم رفع الإيصال بنجاح', 'Receipt uploaded successfully.'), 'success');
     } catch {
       setCliqReceiptUrl('');
-      showToast(tt('uploadFailed', 'فشل الرفع، حاول مرة أخرى', 'Upload failed. Please try again.'), 'error');
+      showToast(tt('uploadFailed', 'فشل الرفع، يرجى المحاولة مرة أخرى', 'Upload failed. Please try again.'), 'error');
     }
   };
 
   const goToShipping = () => {
     const ok = validateStep1();
     if (!ok) {
-      showToast(tt('fixErrors', 'راجع الحقول المطلوبة', 'Please fix the required fields.'), 'error');
+      showToast(tt('fixErrors', 'يرجى تصحيح الحقول المطلوبة', 'Please fix the required fields.'), 'error');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
@@ -419,21 +433,32 @@ const Checkout: React.FC = () => {
   const handlePlaceOrder = async () => {
     if (isProcessing) return;
 
-    if (!Array.isArray(cart) || cart.length === 0) {
+    if (!Array.isArray(validatedCart) || validatedCart.length === 0) {
       showToast(tt('cartEmpty', 'سلتك فارغة', 'Your cart is empty'), 'error');
+      return;
+    }
+
+    // 🛡️ فحص نهائي للمخزون قبل إرسال الطلب (Final Stock Check)
+    const outOfStockItems = validatedCart.filter(item => item.stock !== undefined && item.quantity > item.stock);
+    if (outOfStockItems.length > 0) {
+      showToast(
+        tr('عذراً، لقد نفدت كمية بعض المنتجات من المخزون للتو. يرجى مراجعة السلة.', 'Sorry, some items just went out of stock. Please check your cart.'),
+        'error'
+      );
+      navigate('/cart');
       return;
     }
 
     const ok = validateStep1();
     if (!ok) {
-      showToast(tt('fixErrors', 'راجع الحقول المطلوبة', 'Please fix the required fields.'), 'error');
+      showToast(tt('fixErrors', 'يرجى تصحيح الحقول المطلوبة', 'Please fix the required fields.'), 'error');
       changeStep(1);
       return;
     }
 
     if (!selectedShipping) {
       showToast(
-        tt('shippingRequired', 'اختر طريقة الشحن أولاً', 'Please select a shipping method first.'),
+        tt('shippingRequired', 'يرجى اختيار طريقة التوصيل أولاً', 'Please select a shipping method first.'),
         'error'
       );
       changeStep(2);
@@ -445,7 +470,7 @@ const Checkout: React.FC = () => {
 
       if (!ref) {
         showToast(
-          tt('enterCliqRef', 'الرجاء إدخال رقم مرجع CliQ', 'Please enter the CliQ reference number.'),
+          tt('enterCliqRef', 'يرجى إدخال الرقم المرجعي لحوالة CliQ', 'Please enter the CliQ reference number.'),
           'error'
         );
         return;
@@ -453,7 +478,7 @@ const Checkout: React.FC = () => {
 
       if (ref.length < 4 || ref.length > 40) {
         showToast(
-          tt('invalidCliqRef', 'رقم مرجع CliQ غير صحيح', 'Invalid CliQ reference number.'),
+          tt('invalidCliqRef', 'الرقم المرجعي غير صالح', 'Invalid CliQ reference number.'),
           'error'
         );
         return;
@@ -463,20 +488,12 @@ const Checkout: React.FC = () => {
     setIsProcessing(true);
 
     try {
-      const shippingPhoneE164 =
-        normalizePhoneGlobal(dialCode, formData.phoneLocal) || safeTrim(formData.phoneLocal);
-
-      const shippingCityName =
-        cityLabel(formData.citySlug) || safeTrim(formData.citySlug);
-
+      const shippingPhoneE164 = normalizePhoneGlobal(dialCode, formData.phoneLocal) || safeTrim(formData.phoneLocal);
+      const shippingCityName = cityLabel(formData.citySlug) || safeTrim(formData.citySlug);
       const shippingStreet = normalizeAddress(formData.streetAddress);
-
-      const billingPhoneE164 =
-        normalizePhoneGlobal(dialCode, formData.billingPhoneLocal) || safeTrim(formData.billingPhoneLocal);
-
-      const billingCityName =
-        cityLabel(formData.billingCitySlug) || safeTrim(formData.billingCitySlug);
-
+      
+      const billingPhoneE164 = normalizePhoneGlobal(dialCode, formData.billingPhoneLocal) || safeTrim(formData.billingPhoneLocal);
+      const billingCityName = cityLabel(formData.billingCitySlug) || safeTrim(formData.billingCitySlug);
       const billingStreet = normalizeAddress(formData.billingStreetAddress);
 
       const now = new Date();
@@ -485,86 +502,43 @@ const Checkout: React.FC = () => {
       const nowMs = now.getTime();
       const orderId = makeOrderId();
 
+      // إنشاء كائن الطلب باستخدام الأسعار الموثقة
       const newOrder: Order & any = {
         id: orderId,
         userId: user ? user.id : 'guest',
-
         status: 'new',
         seenByAdmin: false,
-
         date: nowDate,
         createdAt: nowIso,
         createdAtMs: nowMs,
         updatedAt: nowIso,
-
-        items: cart.map((item: any) => ({
+        items: validatedCart.map((item: any) => ({
           productId: item.id,
           name: item.name,
-          price: Number(item.price || 0),
+          price: Number(item.price || 0), // السعر الحقيقي
           quantity: clampQty(item.quantity),
           image: item.image,
         })),
-
         subtotal,
         discountAmount,
         shippingCost,
         total,
-
         shippingMethodId,
         shippingMethod: isAR ? selectedShipping.nameAr : selectedShipping.nameEn,
         paymentMethod,
-
         customerEmail: safeTrim(email) || safeTrim(user?.email || ''),
         note: safeTrim(orderNote) || undefined,
-
-        deliveryPreference:
-          safeTrim(preferredDeliveryDate) || safeTrim(preferredDeliveryTime)
-            ? {
-                date: safeTrim(preferredDeliveryDate) || undefined,
-                time: safeTrim(preferredDeliveryTime) || undefined,
-              }
-            : undefined,
-
-        paymentDetails:
-          paymentMethod === 'cliq'
-            ? {
-                cliqReference: safeTrim(cliqRef),
-                receiptImage: cliqReceiptUrl || undefined,
-                isPaid: false,
-              }
-            : undefined,
-
-        address: {
-          fullName: normalizeName(formData.fullName) || 'Guest',
-          city: shippingCityName,
-          street: shippingStreet,
-          phone: shippingPhoneE164,
-        },
-
-        addressMeta: {
-          country: JO_COUNTRY.nameEn,
-          countryCode: JO_COUNTRY.code,
-          citySlug: formData.citySlug,
-          postalCode: safeTrim(formData.postalCode) || undefined,
-          saveInfo: !!formData.saveInfo,
-          phoneDial: dialCode,
-          phoneLocal: safeTrim(formData.phoneLocal),
-        },
-
+        deliveryPreference: safeTrim(preferredDeliveryDate) || safeTrim(preferredDeliveryTime)
+          ? { date: safeTrim(preferredDeliveryDate) || undefined, time: safeTrim(preferredDeliveryTime) || undefined }
+          : undefined,
+        paymentDetails: paymentMethod === 'cliq'
+          ? { cliqReference: safeTrim(cliqRef), receiptImage: cliqReceiptUrl || undefined, isPaid: false }
+          : undefined,
+        address: { fullName: normalizeName(formData.fullName) || 'Guest', city: shippingCityName, street: shippingStreet, phone: shippingPhoneE164 },
+        addressMeta: { country: JO_COUNTRY.nameEn, countryCode: JO_COUNTRY.code, citySlug: formData.citySlug, postalCode: safeTrim(formData.postalCode) || undefined, saveInfo: !!formData.saveInfo, phoneDial: dialCode, phoneLocal: safeTrim(formData.phoneLocal) },
         billingAddress: formData.billingSameAsShipping
           ? undefined
-          : {
-              fullName: normalizeName(formData.billingFullName),
-              city: billingCityName,
-              street: billingStreet,
-              phone: billingPhoneE164,
-              meta: {
-                citySlug: formData.billingCitySlug,
-                postalCode: safeTrim(formData.billingPostalCode) || undefined,
-                phoneDial: dialCode,
-                phoneLocal: safeTrim(formData.billingPhoneLocal),
-              },
-            },
+          : { fullName: normalizeName(formData.billingFullName), city: billingCityName, street: billingStreet, phone: billingPhoneE164, meta: { citySlug: formData.billingCitySlug, postalCode: safeTrim(formData.billingPostalCode) || undefined, phoneDial: dialCode, phoneLocal: safeTrim(formData.billingPhoneLocal) } },
       };
 
       const workerUrl = import.meta.env.VITE_WORKER_URL;
@@ -589,10 +563,7 @@ const Checkout: React.FC = () => {
       }
 
       try {
-        sessionStorage.setItem(
-          `order_success_${newOrder.id}`,
-          JSON.stringify(newOrder)
-        );
+        sessionStorage.setItem(`order_success_${newOrder.id}`, JSON.stringify(newOrder));
       } catch (storageError) {
         console.error('Failed to cache order success payload:', storageError);
       }
@@ -606,18 +577,12 @@ const Checkout: React.FC = () => {
         console.error('refreshProducts failed:', refreshError);
       }
 
-      showToast(tt('alertSet', 'تم إنشاء الطلب بنجاح', 'Order placed successfully.'), 'success');
+      showToast(tt('alertSet', 'تم استلام طلبك بنجاح', 'Order placed successfully.'), 'success');
 
-      navigate(`/order-success/${newOrder.id}`, {
-        state: { order: newOrder },
-        replace: true,
-      });
+      navigate(`/order-success/${newOrder.id}`, { state: { order: newOrder }, replace: true });
     } catch (error: any) {
       console.error('Checkout submit failed:', error);
-      showToast(
-        tt('placeOrderFailed', 'فشل إنشاء الطلب، حاول مرة أخرى', 'Failed to place order. Please try again.'),
-        'error'
-      );
+      showToast(tt('placeOrderFailed', 'فشل إنشاء الطلب، يرجى المحاولة مرة أخرى', 'Failed to place order. Please try again.'), 'error');
     } finally {
       setIsProcessing(false);
     }
@@ -635,7 +600,6 @@ const Checkout: React.FC = () => {
     return isAR ? selectedShipping.nameAr : selectedShipping.nameEn;
   }, [selectedShipping, isAR]);
 
-  // دالة مساعدة لتنسيق حقول الإدخال لتجنب تكرار الكود
   const inputClass = (hasError: boolean) => [
     'w-full p-4 bg-slate-50 border rounded-2xl outline-none transition-all duration-300 font-medium text-slate-800',
     hasError 
@@ -643,7 +607,7 @@ const Checkout: React.FC = () => {
       : 'border-slate-200 focus:border-sky-400 focus:ring-4 focus:ring-sky-400/20 hover:border-slate-300'
   ].join(' ');
 
-  if (!Array.isArray(cart) || cart.length === 0) {
+  if (!Array.isArray(validatedCart) || validatedCart.length === 0) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <SEO title={tt('checkout', 'إتمام الطلب', 'Checkout')} noIndex={true} />
@@ -674,10 +638,10 @@ const Checkout: React.FC = () => {
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-5 mb-10">
           <div className="min-w-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <h1 className="text-4xl font-heading font-black text-slate-900 flex items-center gap-3">
-              {tt('checkout', 'إتمام الطلب', 'Checkout')}
+              {tt('checkout', 'إتمام الدفع', 'Secure Checkout')}
             </h1>
             <p className="text-slate-500 font-medium mt-2">
-              {tt('checkoutHint', 'خطوات بسيطة وسريعة لتأكيد طلبك', 'Simple and fast steps to confirm your order.')}
+              {tt('checkoutHint', 'نضمن لك تجربة تسوق آمنة وسريعة', 'Simple, fast, and secure checkout process.')}
             </p>
           </div>
 
@@ -695,7 +659,7 @@ const Checkout: React.FC = () => {
               className="text-sm font-bold text-slate-500 hover:text-sky-500 transition-colors px-3 py-2"
               type="button"
             >
-              {tt('continueShopping', 'متابعة التسوق', 'Continue shopping')}
+              {tt('continueShopping', 'العودة للتسوق', 'Back to shopping')}
             </button>
           </div>
         </div>
@@ -710,8 +674,8 @@ const Checkout: React.FC = () => {
                 {[1, 2, 3].map((i) => {
                   const active = step === i;
                   const done = step > i;
-                  const title = i === 1 ? tt('address', 'العنوان', 'Address') : i === 2 ? tt('shipping', 'الشحن', 'Shipping') : tt('payment', 'الدفع', 'Payment');
-                  const hint = i === 1 ? tt('stepAddressHint', 'بيانات الاستلام', 'Delivery details') : i === 2 ? tt('stepShippingHint', 'طريقة التوصيل', 'Delivery method') : tt('stepPaymentHint', 'طريقة الدفع', 'Payment method');
+                  const title = i === 1 ? tt('address', 'عنوان الاستلام', 'Shipping Address') : i === 2 ? tt('shipping', 'خيارات التوصيل', 'Delivery Method') : tt('payment', 'طريقة الدفع', 'Payment Method');
+                  const hint = i === 1 ? tt('stepAddressHint', 'بيانات الوجهة', 'Delivery details') : i === 2 ? tt('stepShippingHint', 'تحديد الموعد', 'Schedule delivery') : tt('stepPaymentHint', 'تأكيد الطلب', 'Confirm order');
 
                   return (
                     <div key={i} className={`flex-1 flex flex-col sm:flex-row items-center sm:items-start gap-3 text-center sm:text-start transition-opacity duration-300 ${!active && !done ? 'opacity-50' : 'opacity-100'}`}>
@@ -746,17 +710,17 @@ const Checkout: React.FC = () => {
                 <div className="flex items-center justify-between gap-3 flex-wrap mb-8 pb-4 border-b border-slate-100">
                   <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3">
                     <MapPin className="text-sky-500" size={28} strokeWidth={2.5} />
-                    {tt('deliveryAddress', 'عنوان الاستلام', 'Delivery address')}
+                    {tt('deliveryAddress', 'معلومات الاستلام', 'Shipping Information')}
                   </h2>
                   <div className="text-xs font-bold text-sky-600 bg-sky-50 px-3 py-1.5 rounded-lg border border-sky-100">
-                    {tt('deliverOnlyJordan', 'التوصيل داخل الأردن فقط 🇯🇴', 'Shipping within Jordan only 🇯🇴')}
+                    {tt('deliverOnlyJordan', 'التوصيل متاح داخل الأردن فقط 🇯🇴', 'Delivery within Jordan only 🇯🇴')}
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <div className="md:col-span-2">
                     <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
-                      {tt('email', 'البريد الإلكتروني', 'Email')}
+                      {tt('email', 'البريد الإلكتروني', 'Email Address')}
                       {needEmail && <span className="text-red-500 ms-1">*</span>}
                     </label>
                     <div className={inputClass(!!errors.email) + ' flex items-center gap-3 p-0 overflow-hidden'}>
@@ -767,19 +731,19 @@ const Checkout: React.FC = () => {
                         value={email}
                         onChange={(e) => setEmailField(e.target.value)}
                         type="email"
-                        placeholder={tt('emailPlaceholder', 'example@email.com', 'example@email.com')}
+                        placeholder={tt('emailPlaceholder', 'example@email.com', 'name@example.com')}
                         className="flex-1 bg-transparent border-none outline-none py-4 pr-4 rtl:pl-4 rtl:pr-0 w-full font-bold placeholder:font-medium placeholder:text-slate-300"
                         autoComplete="email"
                         dir="ltr"
                       />
                     </div>
                     {errors.email && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.email}</p>}
-                    {!needEmail && <p className="mt-1.5 ms-1 text-[11px] font-bold text-slate-400">{tt('emailOptional', 'اختياري (نرسل لك تفاصيل وحالة الطلب)', 'Optional (used for order updates)')}</p>}
+                    {!needEmail && <p className="mt-1.5 ms-1 text-[11px] font-bold text-slate-400">{tt('emailOptional', 'يستخدم لإرسال تأكيد وتحديثات الطلب', 'Used for order confirmation and updates')}</p>}
                   </div>
 
                   <div className="md:col-span-2">
                     <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
-                      {tt('fullName', 'الاسم الكامل', 'Full name')} <span className="text-red-500">*</span>
+                      {tt('fullName', 'الاسم الكامل', 'Full Name')} <span className="text-red-500">*</span>
                     </label>
                     <input
                       name="fullName"
@@ -816,7 +780,7 @@ const Checkout: React.FC = () => {
                       onChange={(e) => setField('citySlug', e.target.value)}
                       className={inputClass(!!errors.citySlug) + ' appearance-none cursor-pointer'}
                     >
-                      <option value="" disabled>{tt('selectCity', '— اختر المحافظة —', '— Select governorate —')}</option>
+                      <option value="" disabled>{tt('selectCity', '— اختر المحافظة —', '— Select a region —')}</option>
                       {JO_GOVS.map((c) => (
                         <option key={c.slug} value={c.slug}>{isAR ? c.ar : c.en}</option>
                       ))}
@@ -826,7 +790,7 @@ const Checkout: React.FC = () => {
 
                   <div className="md:col-span-2">
                     <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
-                      {tt('detailedAddress', 'العنوان بالتفصيل', 'Detailed address')} <span className="text-red-500">*</span>
+                      {tt('detailedAddress', 'العنوان التفصيلي', 'Detailed Address')} <span className="text-red-500">*</span>
                     </label>
                     <input
                       name="streetAddress"
@@ -836,7 +800,7 @@ const Checkout: React.FC = () => {
                       placeholder={tt(
                         'addressPlaceholder',
                         'اسم المنطقة - الشارع - رقم البناية - رقم الشقة',
-                        'Area - Street - Building - Apt'
+                        'Area - Street - Building No - Apt'
                       )}
                       className={inputClass(!!errors.streetAddress)}
                       autoComplete="street-address"
@@ -846,7 +810,7 @@ const Checkout: React.FC = () => {
 
                   <div>
                     <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
-                      {tt('postalCodeOpt', 'الرمز البريدي', 'Postal code')} <span className="text-slate-400 font-bold normal-case">({tt('optional', 'اختياري', 'Optional')})</span>
+                      {tt('postalCodeOpt', 'الرمز البريدي', 'Postal Code')} <span className="text-slate-400 font-bold normal-case">({tt('optional', 'اختياري', 'Optional')})</span>
                     </label>
                     <input
                       name="postalCode"
@@ -862,7 +826,7 @@ const Checkout: React.FC = () => {
 
                   <div>
                     <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
-                      {tt('phone', 'رقم الهاتف', 'Phone')} <span className="text-red-500">*</span>
+                      {tt('phone', 'رقم الجوال', 'Mobile Number')} <span className="text-red-500">*</span>
                     </label>
                     <div className={inputClass(!!errors.phoneLocal) + ' flex items-center gap-2 p-1.5'}>
                       <div className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-white border border-slate-200 shadow-sm shrink-0">
@@ -903,7 +867,7 @@ const Checkout: React.FC = () => {
                       />
                       <div className="min-w-0">
                         <p className="text-sm font-bold text-slate-800 group-hover:text-sky-600 transition-colors">
-                          {tt('saveInfo', 'حفظ بياناتي لتسريع الطلبات القادمة', 'Save my info for faster checkout next time')}
+                          {tt('saveInfo', 'حفظ بياناتي لتسريع عملية الدفع مستقبلاً', 'Save my information for faster checkout next time')}
                         </p>
                       </div>
                     </label>
@@ -917,7 +881,7 @@ const Checkout: React.FC = () => {
                       />
                       <div className="min-w-0">
                         <p className="text-sm font-bold text-slate-800 group-hover:text-sky-600 transition-colors">
-                          {tt('billingSame', 'عنوان الدفع (الفاتورة) يطابق عنوان الشحن', 'Billing address matches shipping address')}
+                          {tt('billingSame', 'عنوان الدفع (الفاتورة) مطابق لعنوان الاستلام', 'Billing address matches shipping address')}
                         </p>
                       </div>
                     </label>
@@ -934,7 +898,7 @@ const Checkout: React.FC = () => {
                       />
                       <div className="min-w-0">
                         <p className={`text-sm font-bold transition-colors ${errors.acceptPolicies ? 'text-red-700' : 'text-slate-800 group-hover:text-sky-600'}`}>
-                          {tt('acceptPolicies', 'أوافق على سياسات المتجر (الشحن، الخصوصية، الاسترجاع)', 'I agree to store policies (Shipping, Privacy, Returns)')}
+                          {tt('acceptPolicies', 'أوافق على سياسات المتجر وأحكام الخدمة', 'I accept the store policies and terms of service')}
                         </p>
                       </div>
                     </label>
@@ -943,7 +907,7 @@ const Checkout: React.FC = () => {
 
                 <div className="mt-8 pt-6 border-t border-slate-100 flex justify-end">
                   <Button onClick={goToShipping} disabled={isProcessing} className="w-full sm:w-auto px-10 py-4 text-lg">
-                    {tt('continueToShipping', 'متابعة لاختيار الشحن', 'Continue to shipping method')}
+                    {tt('continueToShipping', 'متابعة لاختيار التوصيل', 'Continue to delivery options')}
                   </Button>
                 </div>
               </div>
@@ -954,7 +918,7 @@ const Checkout: React.FC = () => {
               <div className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-sm border border-slate-100 animate-in fade-in slide-in-from-right-4 duration-500">
                 <h2 className="text-2xl font-black text-slate-900 mb-8 pb-4 border-b border-slate-100 flex items-center gap-3">
                   <Truck className="text-sky-500" size={28} strokeWidth={2.5} />
-                  {tt('shippingMethod', 'طريقة الشحن', 'Shipping method')}
+                  {tt('shippingMethod', 'خيارات التوصيل', 'Delivery Options')}
                 </h2>
 
                 <div className="space-y-4">
@@ -999,9 +963,9 @@ const Checkout: React.FC = () => {
                 <div className="mt-8 pt-8 border-t border-slate-100">
                   <p className="text-sm font-black uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-2">
                     <CalendarClock size={18} strokeWidth={2.5} />
-                    {tt('preferredDelivery', 'موعد توصيل مفضل', 'Preferred delivery time')}
+                    {tt('preferredDelivery', 'تحديد موعد الاستلام', 'Schedule Delivery Time')}
                     <span className="text-slate-400 font-bold text-[10px] bg-slate-100 px-2 py-0.5 rounded-md normal-case">
-                      {shippingMethodId === 'jo_schedule' ? tt('required', 'مطلوب', 'Required') : tt('optional', 'اختياري', 'Optional')}
+                      {shippingMethodId === 'jo_schedule' ? tt('required', 'إجباري', 'Required') : tt('optional', 'اختياري', 'Optional')}
                     </span>
                   </p>
 
@@ -1035,10 +999,10 @@ const Checkout: React.FC = () => {
 
                 <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col-reverse sm:flex-row justify-between gap-4">
                   <Button variant="outline" onClick={() => changeStep(1)} disabled={isProcessing} className="w-full sm:w-auto px-8 py-4">
-                    {tt('back', 'العودة للعنوان', 'Back to Address')}
+                    {tt('back', 'العودة للعنوان', 'Back to address')}
                   </Button>
                   <Button onClick={() => changeStep(3)} disabled={isProcessing} className="w-full sm:w-auto px-10 py-4 text-lg">
-                    {tt('continueToPayment', 'متابعة للدفع', 'Continue to Payment')}
+                    {tt('continueToPayment', 'متابعة للدفع', 'Proceed to Payment')}
                   </Button>
                 </div>
               </div>
@@ -1049,7 +1013,7 @@ const Checkout: React.FC = () => {
               <div className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-sm border border-slate-100 animate-in fade-in slide-in-from-right-4 duration-500">
                 <h2 className="text-2xl font-black text-slate-900 mb-8 pb-4 border-b border-slate-100 flex items-center gap-3">
                   <Shield className="text-emerald-500" size={28} strokeWidth={2.5} />
-                  {tt('paymentMethod', 'طريقة الدفع', 'Payment method')}
+                  {tt('paymentMethod', 'طريقة الدفع', 'Payment Method')}
                 </h2>
 
                 <div className="flex flex-col sm:flex-row gap-4 mb-8">
@@ -1083,7 +1047,7 @@ const Checkout: React.FC = () => {
                     {paymentMethod === 'cod' && <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-emerald-200 to-transparent opacity-50 rounded-bl-full pointer-events-none" />}
                     <div className="flex flex-col items-center justify-center gap-2 relative z-10">
                       <DollarSign size={28} strokeWidth={2} className={paymentMethod === 'cod' ? 'text-emerald-500' : 'text-slate-400'} />
-                      <span className="text-lg">{tt('cod', 'الدفع عند الاستلام', 'Cash on delivery')}</span>
+                      <span className="text-lg">{tt('cod', 'الدفع عند الاستلام', 'Cash on Delivery')}</span>
                     </div>
                   </button>
                 </div>
@@ -1092,31 +1056,31 @@ const Checkout: React.FC = () => {
                   <div className="space-y-6 animate-in fade-in duration-300">
                     <div className="bg-gradient-to-br from-indigo-50 to-white border border-indigo-100 rounded-3xl p-6 text-center shadow-inner">
                       <p className="text-sm text-indigo-800 mb-3 font-bold uppercase tracking-widest">
-                        {tt('cliqTransferHint', 'حول المبلغ إلى معرف كليك التالي:', 'Transfer amount to this CliQ ID:')}
+                        {tt('cliqTransferHint', 'يرجى تحويل القيمة إلى حساب CliQ التالي:', 'Please transfer the amount to this CliQ ID:')}
                       </p>
                       <div className="text-3xl sm:text-4xl font-black text-indigo-900 tracking-widest mb-4 select-all cursor-pointer bg-white px-6 py-3 rounded-2xl inline-block shadow-sm border border-indigo-50 hover:scale-105 transition-transform">
                         ANTASTORE
                       </div>
                       <div className="flex flex-col gap-1 text-sm font-bold text-indigo-700/80 bg-white/50 py-3 rounded-xl max-w-xs mx-auto">
-                        <p>{tt('cliqRecipient', 'المستفيد:', 'Recipient:')} <span className="text-indigo-900">مكتبة دير شرف Tech & Art</span></p>
-                        <p>{tt('amount', 'المبلغ المطلوب:', 'Amount:')} <span className="text-indigo-900 font-black text-base">{formatMoney(total)}</span></p>
+                        <p>{tt('cliqRecipient', 'الجهة المستفيدة:', 'Recipient:')} <span className="text-indigo-900">مكتبة دير شرف Tech & Art</span></p>
+                        <p>{tt('amount', 'إجمالي المبلغ:', 'Total Amount:')} <span className="text-indigo-900 font-black text-base">{formatMoney(total)}</span></p>
                       </div>
                     </div>
 
                     <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100">
                       <label className="block text-sm font-black text-slate-800 mb-3">
-                        {tt('referenceOrReceipt', 'أدخل رقم المرجع للتحويل', 'Enter Transfer Reference Number')} <span className="text-red-500">*</span>
+                        {tt('referenceOrReceipt', 'الرقم المرجعي للعملية (Reference Number)', 'Transaction Reference Number')} <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="text"
-                        placeholder={tt('enterCliqRef', 'مثال: 1234567890', 'e.g. 1234567890')}
+                        placeholder={tt('enterCliqRef', 'رقم مكون من أرقام أو أحرف', 'e.g. 1234567890')}
                         value={cliqRef}
                         onChange={(e) => setCliqRef(e.target.value)}
                         className={inputClass(false) + ' bg-white mb-5 text-center tracking-wider'}
                       />
 
                       <label className="block text-sm font-black text-slate-800 mb-3">
-                        {tt('uploadReceipt', 'صورة إيصال التحويل', 'Transfer Receipt Image')} <span className="text-slate-400 text-xs normal-case">({tt('optional', 'اختياري ويفضل', 'Optional but recommended')})</span>
+                        {tt('uploadReceipt', 'صورة أو لقطة شاشة للإيصال', 'Screenshot of Receipt')} <span className="text-slate-400 text-xs normal-case">({tt('optional', 'مستحسن لتسريع التأكيد', 'Recommended for faster processing')})</span>
                       </label>
                       <label className="block group">
                         <input
@@ -1130,10 +1094,10 @@ const Checkout: React.FC = () => {
                             <Upload className="text-slate-400 group-hover:text-sky-500" strokeWidth={2.5} />
                           </div>
                           <span className="text-sm text-slate-700 font-black block mb-1">
-                            {tt('clickToUpload', 'اضغط لرفع الصورة', 'Click to upload image')}
+                            {tt('clickToUpload', 'اضغط هنا لرفع الصورة', 'Click here to upload')}
                           </span>
                           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                            {tt('uploadHint', 'JPG/PNG حد أقصى 2.5MB', 'JPG/PNG up to 2.5MB')}
+                            {tt('uploadHint', 'صيغة JPG أو PNG. بحد أقصى 2.5 ميجابايت', 'JPG or PNG. Max 2.5MB')}
                           </p>
                         </div>
                       </label>
@@ -1166,13 +1130,13 @@ const Checkout: React.FC = () => {
                       <DollarSign size={40} strokeWidth={2.5} />
                     </div>
                     <h3 className="text-xl font-black text-emerald-900 mb-2">
-                      {tt('payOnDelivery', 'الدفع براحة عند استلام طلبك', 'Pay comfortably upon delivery')}
+                      {tt('payOnDelivery', 'الدفع الآمن عند الاستلام', 'Secure Pay on Delivery')}
                     </h3>
                     <p className="text-emerald-700/80 font-bold mb-5 max-w-sm mx-auto">
-                      {tt('codDesc', 'لن يتم خصم أي مبلغ الآن. جهز المبلغ نقداً لمندوب التوصيل.', 'No charges now. Please prepare cash for the delivery person.')}
+                      {tt('codDesc', 'لن يتم خصم أي مبلغ إلكترونياً. يرجى تجهيز المبلغ المطلوب نقداً لمندوب التوصيل.', 'No electronic charges will be made. Please prepare the exact cash amount for the courier.')}
                     </p>
                     <div className="bg-white rounded-2xl py-4 px-6 inline-block shadow-sm border border-emerald-50">
-                      <span className="text-sm font-bold text-slate-500 uppercase tracking-widest block mb-1">{tt('totalToPay', 'المبلغ المطلوب', 'Total to pay')}</span>
+                      <span className="text-sm font-bold text-slate-500 uppercase tracking-widest block mb-1">{tt('totalToPay', 'المبلغ المطلوب دفعه', 'Amount to Pay')}</span>
                       <span className="text-3xl font-black text-emerald-600 tabular-nums">{formatMoney(total)}</span>
                     </div>
                   </div>
@@ -1180,7 +1144,7 @@ const Checkout: React.FC = () => {
 
                 <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col-reverse sm:flex-row justify-between items-center gap-4">
                   <button onClick={() => changeStep(2)} disabled={isProcessing} className="text-sm font-bold text-slate-500 hover:text-slate-900 transition-colors w-full sm:w-auto py-3">
-                    {tt('backToShipping', 'العودة لخيارات الشحن', 'Back to Shipping')}
+                    {tt('backToShipping', 'الرجوع لخيارات التوصيل', 'Back to Delivery')}
                   </button>
                   <Button
                     onClick={handlePlaceOrder}
@@ -1188,7 +1152,7 @@ const Checkout: React.FC = () => {
                     isLoading={isProcessing}
                     disabled={isProcessing}
                   >
-                    {tt('placeOrder', 'إتمام الطلب الآن', 'Place Order Now')}
+                    {tt('placeOrder', 'تأكيد وإتمام الطلب', 'Confirm & Place Order')}
                   </Button>
                 </div>
               </div>
@@ -1199,11 +1163,11 @@ const Checkout: React.FC = () => {
           <div className="lg:w-[400px] shrink-0">
             <div className="bg-white p-6 sm:p-8 rounded-[2.5rem] shadow-xl shadow-slate-200/40 border border-slate-100 lg:sticky lg:top-24">
               <h3 className="font-heading font-black text-2xl mb-6 text-slate-900">
-                {tt('orderSummary', 'ملخص الطلب', 'Order summary')}
+                {tt('orderSummary', 'ملخص الفاتورة', 'Order Summary')}
               </h3>
 
               <div className="space-y-4 max-h-[40vh] overflow-y-auto pr-2 rtl:pr-0 rtl:pl-2 custom-scrollbar mb-6">
-                {cart.map((item: any) => (
+                {validatedCart.map((item: any) => (
                   <div key={item.id} className="flex gap-4 group">
                     <div className="relative">
                       <LazyImage
@@ -1230,44 +1194,44 @@ const Checkout: React.FC = () => {
 
               <div className="bg-slate-50 rounded-3xl p-5 space-y-3">
                 <div className="flex justify-between text-sm font-bold text-slate-500">
-                  <span>{tt('subtotal', 'المجموع الفرعي', 'Subtotal')}</span>
+                  <span>{tt('subtotal', 'الإجمالي الفرعي', 'Subtotal')}</span>
                   <span className="tabular-nums text-slate-700">{formatMoney(subtotal)}</span>
                 </div>
 
                 {discountAmount > 0 && (
                   <div className="flex justify-between text-sm font-black text-emerald-600 bg-emerald-50/50 p-2 -mx-2 rounded-xl">
-                    <span>{tt('discount', 'الخصم المطبق', 'Discount applied')}</span>
+                    <span>{tt('discount', 'الخصم المكتسب', 'Earned Discount')}</span>
                     <span className="tabular-nums">-{formatMoney(discountAmount)}</span>
                   </div>
                 )}
 
                 <div className="flex justify-between text-sm font-bold text-slate-500">
-                  <span>{tt('shipping', 'رسوم التوصيل', 'Shipping')} <span className="text-[10px] font-medium block">{shippingLabel}</span></span>
+                  <span>{tt('shipping', 'رسوم التوصيل', 'Shipping Fee')} <span className="text-[10px] font-medium block text-slate-400">{shippingLabel}</span></span>
                   <span className="tabular-nums text-slate-700">{formatMoney(shippingCost)}</span>
                 </div>
 
                 <div className="border-t border-slate-200/60 pt-4 mt-2 flex justify-between items-end">
-                  <span className="text-base font-black text-slate-900 uppercase tracking-widest">{tt('total', 'الإجمالي', 'Total')}</span>
+                  <span className="text-base font-black text-slate-900 uppercase tracking-widest">{tt('total', 'المجموع النهائي', 'Final Total')}</span>
                   <span className="text-3xl font-black text-sky-500 tabular-nums drop-shadow-sm leading-none">{formatMoney(total)}</span>
                 </div>
               </div>
 
               <div className="mt-6">
                 <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 ms-1">
-                  {tt('orderNote', 'ملاحظة الطلب', 'Order note')} <span className="normal-case">({tt('optional', 'اختياري', 'Optional')})</span>
+                  {tt('orderNote', 'ملاحظات إضافية', 'Additional Notes')} <span className="normal-case">({tt('optional', 'اختياري', 'Optional')})</span>
                 </label>
                 <textarea
                   value={orderNote || ''}
                   onChange={(e) => setOrderNote(e.target.value)}
                   maxLength={600}
-                  placeholder={tt('orderNotePlaceholder', 'هل هناك تفاصيل إضافية للطلب؟', 'Any additional details?')}
+                  placeholder={tt('orderNotePlaceholder', 'تعليمات لمندوب التوصيل أو تفاصيل تغليف الهدية...', 'Instructions for courier or gift wrapping details...')}
                   className="w-full min-h-[80px] resize-none p-4 rounded-2xl bg-slate-50 border border-slate-100 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-400/10 text-sm font-bold placeholder:font-medium placeholder:text-slate-400 transition-all"
                 />
               </div>
 
               <div className="mt-6 flex items-center justify-center gap-2 text-xs font-bold text-slate-400 bg-white border border-slate-100 py-3 rounded-2xl">
                 <Shield size={16} className="text-emerald-500" />
-                <span>{tt('secureCheckoutNote', 'عملية الدفع محمية ومشفّرة 100%', '100% Secure & Encrypted Checkout')}</span>
+                <span>{tt('secureCheckoutNote', 'بياناتك مشفرة ومحمية بالكامل 100%', 'Your data is 100% encrypted and secure')}</span>
               </div>
             </div>
           </div>
@@ -1278,7 +1242,7 @@ const Checkout: React.FC = () => {
       <div className="lg:hidden fixed bottom-0 left-0 w-full bg-white/90 backdrop-blur-md border-t border-slate-200 p-4 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-50 animate-in slide-in-from-bottom-full">
         <div className="flex items-center justify-between gap-4 max-w-md mx-auto">
           <div className="min-w-0 flex flex-col">
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{tt('total', 'الإجمالي', 'Total')}</span>
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{tt('total', 'المطلوب للدفع', 'Total to pay')}</span>
             <span className="text-xl font-black text-slate-900 tabular-nums leading-none mt-0.5">{formatMoney(total)}</span>
           </div>
 
@@ -1292,10 +1256,10 @@ const Checkout: React.FC = () => {
             isLoading={isProcessing}
           >
             {step === 1
-              ? tt('continueToShipping', 'متابعة', 'Continue')
+              ? tt('continueToShipping', 'متابعة للتوصيل', 'Continue to Delivery')
               : step === 2
-              ? tt('continueToPayment', 'متابعة', 'Continue')
-              : tt('confirmOrder', 'تأكيد الطلب', 'Confirm')}
+              ? tt('continueToPayment', 'متابعة للدفع', 'Continue to Payment')
+              : tt('confirmOrder', 'تأكيد الطلب', 'Confirm Order')}
           </Button>
         </div>
       </div>

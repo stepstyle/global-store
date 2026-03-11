@@ -11,6 +11,7 @@ import {
   ShoppingBag,
   Sparkles,
   Star,
+  PlaySquare
 } from 'lucide-react';
 
 import ProductCard from '../components/ProductCard';
@@ -159,6 +160,16 @@ const Shop: React.FC = () => {
 
   const [isMobile, setIsMobile] = useState(false);
 
+  // 1. أولاً: تعريف كل المتغيرات (States)
+  const [selectedCategory, setSelectedCategory] = useState<Category | 'All'>('All');
+  const [selectedSubCategory, setSelectedSubCategory] = useState<string>('');
+  const [priceRange, setPriceRange] = useState<[number, number]>([PRICE_MIN, PRICE_MAX]);
+  const [minRating, setMinRating] = useState<number>(0);
+  const [sortBy, setSortBy] = useState<SortOption>('newest');
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // 2. ثانياً: استخدام الـ Hooks
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 1024);
     checkMobile();
@@ -174,21 +185,12 @@ const Shop: React.FC = () => {
         document.body.style.overflow = prev;
       };
     }
-  }, [isMobile]);
+  }, [isMobile, isFilterOpen]);
 
   const spKey = useMemo(() => searchParams.toString(), [searchParams]);
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }, [spKey]);
-
-  const [selectedCategory, setSelectedCategory] = useState<Category | 'All'>('All');
-  const [selectedSubCategory, setSelectedSubCategory] = useState<string>('');
-  const [priceRange, setPriceRange] = useState<[number, number]>([PRICE_MIN, PRICE_MAX]);
-  const [minRating, setMinRating] = useState<number>(0);
-  const [sortBy, setSortBy] = useState<SortOption>('newest');
-  const [isFilterOpen, setIsFilterOpen] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-
   useEffect(() => {
     const rawCat = searchParams.get('filter');
     const aliased = rawCat ? CATEGORY_ALIASES[rawCat] || rawCat : null;
@@ -681,7 +683,7 @@ const Shop: React.FC = () => {
               </div>
 
               <div className="hidden lg:flex items-center gap-2 text-xs font-bold text-slate-400">
-                <span className="inline-flex h-2 w-2 rounded-full bg-green-500" />
+                <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
                 {tx('updatedInstantly', 'النتائج تتحدث مباشرة', 'Results update instantly')}
               </div>
             </div>
@@ -703,28 +705,28 @@ const Shop: React.FC = () => {
                 ))}
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center rounded-[2.5rem] border border-dashed border-slate-200 bg-white px-4 py-20 text-center lg:py-28">
-                <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-sky-50 shadow-inner">
-                  <Search className="text-sky-400" size={40} strokeWidth={2.5} />
+              <div className="flex flex-col items-center justify-center rounded-[2.5rem] border border-dashed border-slate-200 bg-white px-4 py-20 text-center lg:py-28 shadow-sm">
+                <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-slate-50 shadow-inner border border-slate-100">
+                  <Search className="text-slate-300" size={40} strokeWidth={2.5} />
                 </div>
 
-                <h2 className="mb-3 text-2xl lg:text-3xl font-black text-slate-900">
-                  {tx('noProducts', 'لا توجد منتجات', 'No products found')}
+                <h2 className="mb-3 text-2xl lg:text-3xl font-black text-slate-900 tracking-tight">
+                  {tx('noProducts', 'لم نجد ما تبحث عنه!', 'No products found')}
                 </h2>
 
                 <p className="mb-8 max-w-md text-sm sm:text-base leading-7 text-slate-500">
                   {tx(
                     'noProductsDesc',
-                    'لم نعثر على منتجات تطابق الفلاتر الحالية. جرّب تعديل الفلاتر أو امسحها كلها.',
-                    "We couldn't find products matching your current filters. Try adjusting them or clear all filters."
+                    'عذراً، لا توجد منتجات تطابق الفلاتر الحالية. حاول تخفيف الفلاتر أو البحث بكلمة مختلفة.',
+                    "Sorry, we couldn't find products matching your filters. Try adjusting them or clear all filters."
                   )}
                 </p>
 
                 <button
                   onClick={clearFilters}
-                  className="rounded-2xl bg-black px-8 py-4 font-extrabold text-white shadow-lg shadow-black/20 transition-all hover:bg-slate-800"
+                  className="rounded-2xl bg-black px-8 py-4 font-extrabold text-white shadow-xl shadow-black/20 transition-all hover:bg-slate-800 hover:scale-105 active:scale-95"
                 >
-                  {tx('resetFilters', 'إعادة ضبط الفلاتر', 'Reset filters')}
+                  {tx('resetFilters', 'إعادة ضبط البحث', 'Reset search')}
                 </button>
               </div>
             )}

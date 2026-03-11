@@ -1,7 +1,7 @@
 // src/components/ProductCard.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as ReactRouterDOM from 'react-router-dom';
-import { Star, ShoppingCart, Heart, Eye, Minus, Plus } from 'lucide-react';
+import { Star, ShoppingCart, Heart, Eye, Minus, Plus, PlaySquare } from 'lucide-react';
 import { Product } from '../types';
 import { useCart } from '../App';
 import LazyImage from './LazyImage';
@@ -187,17 +187,27 @@ const ProductCard: React.FC<ProductCardProps> = ({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* 🏷️ شارة الخصم أو المنتج الجديد */}
-      {badge && (
-        <div
-          className={[
-            'absolute top-4 start-4 z-30 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full shadow-lg',
-            (product as any).originalPrice ? 'bg-rose-500 shadow-rose-500/30' : 'bg-black shadow-black/30',
-          ].join(' ')}
-        >
-          {badge}
-        </div>
-      )}
+      {/* 🏷️ حاوية الشارات العلوية (الخصم + مؤشر الفيديو) */}
+      <div className="absolute top-4 start-4 z-30 flex flex-col gap-2">
+        {badge && (
+          <div
+            className={[
+              'text-white text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full shadow-lg',
+              (product as any).originalPrice ? 'bg-rose-500 shadow-rose-500/30' : 'bg-black shadow-black/30',
+            ].join(' ')}
+          >
+            {badge}
+          </div>
+        )}
+        
+        {/* 🎥 شارة الفيديو (Enterprise Feature) */}
+        {product.videoUrl && (
+          <div className="flex items-center justify-center gap-1.5 bg-sky-50 border border-sky-100 text-sky-600 text-[9px] font-black uppercase px-2 py-1.5 rounded-full shadow-md backdrop-blur-sm animate-in fade-in zoom-in">
+            <PlaySquare size={12} className="fill-current" />
+            <span>{L('فيديو', 'Video')}</span>
+          </div>
+        )}
+      </div>
 
       {/* 🔘 أزرار التفاعل السريعة */}
       <div className="absolute top-4 end-4 z-30 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-x-4 rtl:-translate-x-4 group-hover:translate-x-0 rtl:group-hover:translate-x-0">

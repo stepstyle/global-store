@@ -6,7 +6,7 @@ import { getFirestoreDb } from '../services/firebase';
 import { 
   User, Package, LogOut, Settings, ChevronRight, 
   Mail, Phone, Lock, ShieldCheck, Edit2, Clock, 
-  CheckCircle2, AlertCircle, ShoppingBag, Loader2
+  CheckCircle2, ShoppingBag, Loader2
 } from 'lucide-react';
 import { useCart } from '../App';
 import { Link } from 'react-router-dom';
@@ -314,7 +314,6 @@ const Account: React.FC = () => {
                                 <p className="text-sm text-slate-500 mb-1">{tt('total', 'الإجمالي', 'Total')}</p>
                                 <p className="font-extrabold text-lg text-slate-900" dir="ltr">{Number(order.total || 0).toFixed(2)} JOD</p>
                               </div>
-                              {/* زر التتبع الذي طلبته بالضبط */}
                               <Link to={`/tracking?orderId=${encodeURIComponent(order.id)}`}>
                                 <button className="px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl font-bold hover:bg-slate-900 hover:text-white transition-colors">
                                   {tt('details', 'التفاصيل', 'Details')}

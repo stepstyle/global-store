@@ -42,7 +42,7 @@ const OrderTracking: React.FC = () => {
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState('');
 
-  // 🌍 دعم اللغتين
+  // 🌍 دعم اللغتين وصياغة الشركات (Corporate Tone)
   const isAR = language === 'ar';
   const tr = useCallback((ar: string, en: string) => (isAR ? ar : en), [isAR]);
   const tt = useCallback(
@@ -78,7 +78,25 @@ const OrderTracking: React.FC = () => {
     [moneyFmt]
   );
 
-  // ✅ اقرأ orderId من query
+  // 📅 تنسيق ذكي للتواريخ مثل المواقع العالمية
+  const getDisplayDate = useCallback((rawDate?: string) => {
+    if (!rawDate) return '—';
+    try {
+      const d = new Date(rawDate);
+      if (isNaN(d.getTime())) return rawDate;
+      return new Intl.DateTimeFormat(isAR ? 'ar-JO' : 'en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(d);
+    } catch {
+      return rawDate;
+    }
+  }, [isAR]);
+
+  // ✅ قراءة رقم الطلب من الرابط
   const queryOrderId = useMemo(() => {
     try {
       const sp = new URLSearchParams(location.search);
@@ -88,19 +106,18 @@ const OrderTracking: React.FC = () => {
     }
   }, [location.search]);
 
-  // ✅ خطوات الشحن (حالة الطلب) - مترجمة
+  // ✅ خطوات التتبع بمصطلحات احترافية
   const steps = useMemo(
     () => [
-      { status: 'processing', label: tt('processing', 'قيد المعالجة', 'Processing'), icon: Package },
-      { status: 'shipped', label: tt('shipped', 'تم الشحن', 'Shipped'), icon: Truck },
-      { status: 'delivered', label: tt('delivered', 'تم التسليم', 'Delivered'), icon: MapPin },
+      { status: 'processing', label: tt('processing', 'جاري التجهيز', 'Preparing'), icon: Package },
+      { status: 'shipped', label: tt('shipped', 'في الطريق إليك', 'On the way'), icon: Truck },
+      { status: 'delivered', label: tt('delivered', 'تم التوصيل', 'Delivered'), icon: MapPin },
     ],
     [tt]
   );
 
   const getCurrentStepIndex = useCallback(
     (s: string) => {
-      // إذا كان "new" نعتبره "processing"
       const statusToFind = s === 'new' ? 'processing' : s;
       const idx = steps.findIndex((x) => x.status === statusToFind);
       return idx === -1 ? 0 : idx;
@@ -122,7 +139,7 @@ const OrderTracking: React.FC = () => {
       if (!id) {
         setOrder(null);
         setStatus('error');
-        setError(tt('orderIdError', 'الرجاء إدخال رقم طلب صحيح.', 'Please enter a valid order ID.'));
+        setError(tt('orderIdError', 'يرجى إدخال رقم تتبع صحيح للمتابعة.', 'Please enter a valid tracking number to proceed.'));
         return;
       }
 
@@ -140,18 +157,18 @@ const OrderTracking: React.FC = () => {
         } else {
           setOrder(null);
           setStatus('error');
-          setError(tt('orderNotFound', 'لم يتم العثور على الطلب. يرجى التأكد من الرقم.', 'Order not found. Please check the order ID.'));
+          setError(tt('orderNotFound', 'عذراً، لم نتمكن من العثور على شحنة بهذا الرقم. يرجى التحقق والمحاولة مجدداً.', 'Sorry, we couldn\'t locate a shipment with this ID. Please verify and try again.'));
         }
       } catch {
         setOrder(null);
         setStatus('error');
-        setError(tt('trackingFailed', 'فشل تتبع الطلب. حاول مرة أخرى.', 'Failed to fetch order tracking. Please try again.'));
+        setError(tt('trackingFailed', 'حدث خطأ أثناء محاولة تتبع الشحنة. يرجى المحاولة لاحقاً.', 'An error occurred while tracking the shipment. Please try again later.'));
       }
     },
     [tt]
   );
 
-  // ✅ Auto-fill + Auto-track إذا جاي من رابط
+  // ✅ Auto-fill + Auto-track إذا كان قادماً من رابط
   useEffect(() => {
     if (!queryOrderId) return;
     setOrderId(queryOrderId);
@@ -166,13 +183,13 @@ const OrderTracking: React.FC = () => {
   const copyText = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      showToast?.(tt('copied', 'تم النسخ', 'Copied'), 'success');
+      showToast?.(tt('copied', 'تم النسخ بنجاح', 'Copied successfully'), 'success');
     } catch {
       showToast?.(tt('copyFailed', 'تعذر النسخ', 'Copy failed'), 'error');
     }
   };
 
-  const seoTitle = useMemo(() => tt('trackOrder', 'تتبع الطلب', 'Track Order'), [tt]);
+  const seoTitle = useMemo(() => tt('trackOrder', 'تتبع الشحنة', 'Track Shipment'), [tt]);
   const orderNote = useMemo(() => safeText((order as any)?.note), [order]);
 
   return (
@@ -185,7 +202,7 @@ const OrderTracking: React.FC = () => {
       
       <div className="container mx-auto px-4 max-w-2xl relative z-10">
         <h1 className="text-3xl md:text-4xl font-heading font-black text-center mb-8 text-slate-900 tracking-tight">
-          {tt('trackYourOrder', 'تتبع طلبك', 'Track your order')}
+          {tt('trackYourOrder', 'تتبع حالة الشحنة', 'Track Your Shipment')}
         </h1>
 
         {/* Search Card */}
@@ -199,11 +216,11 @@ const OrderTracking: React.FC = () => {
               <input
                 type="text"
                 inputMode="text"
-                placeholder={tt('enterOrderId', 'أدخل رقم الطلب هنا...', 'Enter your order ID...')}
+                placeholder={tt('enterOrderId', 'أدخل رقم التتبع (Order ID) هنا...', 'Enter your Tracking Number (Order ID)...')}
                 value={orderId}
                 onChange={(e) => setOrderId(sanitizeOrderId(e.target.value))}
                 className="w-full py-4 ps-12 pe-4 bg-slate-50 rounded-2xl border border-slate-200 focus:bg-white focus:ring-2 focus:ring-sky-400/30 focus:border-sky-400 outline-none transition-all font-bold text-slate-800 placeholder:font-medium placeholder:text-slate-400"
-                aria-label={tt('enterOrderId', 'أدخل رقم الطلب', 'Enter order ID')}
+                aria-label={tt('enterOrderId', 'أدخل رقم التتبع', 'Enter tracking number')}
                 dir="ltr"
               />
             </div>
@@ -214,7 +231,7 @@ const OrderTracking: React.FC = () => {
               className="px-8 py-4 bg-black hover:bg-slate-800 text-white font-extrabold rounded-2xl shadow-lg shadow-black/20 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {status === 'loading' && <RefreshCw size={18} className="animate-spin" />}
-              {tt('track', 'تتبع', 'Track')}
+              {tt('track', 'تتبع الشحنة', 'Track')}
             </button>
           </form>
 
@@ -228,21 +245,21 @@ const OrderTracking: React.FC = () => {
           {status === 'idle' && !queryOrderId && (
             <div className="mt-6 flex flex-col items-center justify-center text-center p-6 bg-slate-50 border border-slate-100 border-dashed rounded-2xl">
               <Package size={40} className="text-slate-300 mb-3" />
-              <p className="text-sm font-bold text-slate-500 max-w-xs">
-                {tt('trackHint', 'أدخل رقم الطلب في الحقل أعلاه ثم اضغط "تتبع" لمعرفة حالة طلبك وتاريخ الوصول المتوقع.', 'Enter your order ID above then press "Track" to see its status.')}
+              <p className="text-sm font-bold text-slate-500 max-w-sm leading-relaxed">
+                {tt('trackHint', 'أدخل رقم الطلب الخاص بك في الحقل أعلاه ثم اضغط "تتبع الشحنة" لمعرفة تفاصيل وموعد الوصول.', 'Enter your Order ID in the field above and click "Track" to check the delivery status.')}
               </p>
             </div>
           )}
         </div>
 
-        {/* Result */}
+        {/* Result Card */}
         {status === 'success' && order && (
           <div className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-xl shadow-slate-200/40 border border-slate-100 animate-in fade-in slide-in-from-bottom-4 duration-500 overflow-hidden relative">
             
             {/* Header */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-10 pb-6 border-b border-slate-100">
               <div className="w-full">
-                <p className="text-slate-400 text-xs font-black uppercase tracking-widest mb-1.5">{tt('orderNumber', 'رقم الطلب', 'Order number')}</p>
+                <p className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-1.5">{tt('orderNumber', 'رقم التتبع (Order ID)', 'Tracking Number (Order ID)')}</p>
                 <div className="flex items-center justify-between sm:justify-start gap-4">
                   <p className="font-black text-2xl text-slate-900 break-all" dir="ltr">#{(order as any).id}</p>
 
@@ -252,18 +269,18 @@ const OrderTracking: React.FC = () => {
                     type="button"
                     title={tt('copy', 'نسخ', 'Copy')}
                   >
-                    <Copy size={14} /> {tt('copy', 'نسخ', 'Copy')}
+                    <Copy size={14} /> <span className="hidden sm:inline-block">{tt('copy', 'نسخ', 'Copy')}</span>
                   </button>
                 </div>
               </div>
 
               <div className="text-start sm:text-end w-full sm:w-auto shrink-0 bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">{tt('orderDate', 'تاريخ الطلب', 'Order date')}</p>
-                <p className="font-extrabold text-slate-800 text-sm" dir="ltr">{safeText((order as any).date)}</p>
+                <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">{tt('orderDate', 'تاريخ الطلب', 'Order Date')}</p>
+                <p className="font-extrabold text-slate-800 text-sm" dir="ltr">{getDisplayDate((order as any).date || (order as any).createdAt)}</p>
               </div>
             </div>
 
-            {/* Progress */}
+            {/* Progress Bar Area */}
             <div className="relative flex justify-between px-2 sm:px-6 mb-12">
               <div className="absolute top-5 start-0 w-full h-2 bg-slate-100 -z-0 rounded-full" />
 
@@ -286,7 +303,7 @@ const OrderTracking: React.FC = () => {
                         isCompleted 
                           ? 'bg-sky-400 text-white shadow-lg shadow-sky-400/30 scale-110' 
                           : 'bg-slate-100 text-slate-300'
-                      } ${isCurrent ? 'ring-4 ring-sky-100' : ''}`}
+                      } ${isCurrent && !isCompleted ? 'ring-4 ring-sky-100' : ''}`}
                     >
                       <Icon size={20} strokeWidth={isCompleted ? 2.5 : 2} className={isCurrent && !isCompleted ? 'animate-pulse text-sky-400' : ''} />
                     </div>
@@ -301,7 +318,7 @@ const OrderTracking: React.FC = () => {
             {/* Items Summary */}
             <div className="mt-8 bg-white p-6 rounded-3xl border border-slate-200/70 shadow-sm relative overflow-hidden">
               <div className="absolute left-0 top-0 w-1.5 h-full bg-slate-800" />
-              <h3 className="font-black text-sm mb-5 text-slate-900 uppercase tracking-widest">{tt('orderSummary', 'ملخص الطلب', 'Order summary')}</h3>
+              <h3 className="font-black text-sm mb-5 text-slate-900 uppercase tracking-widest">{tt('orderSummary', 'تفاصيل الشحنة', 'Shipment Details')}</h3>
 
               <div className="space-y-4">
                 {(order as any).items.map((item: any, i: number) => {
@@ -324,7 +341,7 @@ const OrderTracking: React.FC = () => {
               </div>
 
               <div className="mt-5 pt-5 border-t border-slate-100 flex justify-between items-center">
-                <span className="font-black text-slate-400 uppercase tracking-widest text-xs">{tt('total', 'الإجمالي', 'Total')}</span>
+                <span className="font-black text-slate-400 uppercase tracking-widest text-xs">{tt('total', 'المبلغ الإجمالي', 'Total Amount')}</span>
                 <span className="font-black text-2xl text-sky-500" dir="ltr">{formatMoney((order as any).total)}</span>
               </div>
             </div>
@@ -336,7 +353,7 @@ const OrderTracking: React.FC = () => {
                 <div className="flex items-center justify-between gap-3 mb-3">
                   <div className="flex items-center gap-2 text-slate-800">
                     <StickyNote size={18} className="text-yellow-500 shrink-0" />
-                    <p className="text-sm font-black uppercase tracking-widest">{tt('orderNote', 'ملاحظة الطلب', 'Order note')}</p>
+                    <p className="text-sm font-black uppercase tracking-widest">{tt('orderNote', 'ملاحظات إضافية', 'Additional Notes')}</p>
                   </div>
 
                   <button
@@ -345,7 +362,7 @@ const OrderTracking: React.FC = () => {
                     className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-100 px-3 py-1.5 rounded-xl transition-colors shrink-0"
                     title={tt('copy', 'نسخ', 'Copy')}
                   >
-                    <Copy size={14} /> {tt('copy', 'نسخ', 'Copy')}
+                    <Copy size={14} /> <span className="hidden sm:inline-block">{tt('copy', 'نسخ', 'Copy')}</span>
                   </button>
                 </div>
 
@@ -364,7 +381,7 @@ const OrderTracking: React.FC = () => {
                 type="button"
               >
                 <RefreshCw size={18} className={status === 'loading' ? 'animate-spin' : ''} />
-                {tt('refreshStatus', 'تحديث الحالة', 'Refresh status')}
+                {tt('refreshStatus', 'تحديث حالة الشحنة', 'Refresh Status')}
               </button>
 
               <button 
@@ -373,7 +390,7 @@ const OrderTracking: React.FC = () => {
                 type="button"
               >
                 <Home size={18} />
-                {tt('backToHome', 'العودة للرئيسية', 'Back to home')}
+                {tt('backToHome', 'العودة للرئيسية', 'Back to Home')}
               </button>
             </div>
           </div>

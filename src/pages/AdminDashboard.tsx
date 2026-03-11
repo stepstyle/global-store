@@ -22,8 +22,9 @@ import {
   StickyNote,
   Copy,
   X,
-  Image as ImageIcon,
+  ImageIcon,
   CreditCard,
+  Play, // 👈 أضف هذه الكلمة هنا بالضبط
 } from 'lucide-react';
 
 import { useCart } from '../App';
@@ -443,8 +444,7 @@ const selectedOrderReceipt = safeText(selectedOrder?.paymentDetails?.receiptImag
       description: '',
       details: undefined,
       brand: undefined,
-      videoUrl: undefined,
-      isNew: true,
+videoUrl: '', // اجعلها نص فارغ بدلاً من undefined لضمان استقرار المودال      isNew: true,
       image: '',
       images: [],
       rating: 0,
@@ -629,7 +629,7 @@ const selectedOrderReceipt = safeText(selectedOrder?.paymentDetails?.receiptImag
           description: (row.description || (row as any).Description || 'No description').toString(),
           details: (row as any).details ? String((row as any).details) : undefined,
           brand: (row as any).brand ? String((row as any).brand) : undefined,
-          videoUrl: (row as any).videoUrl ? String((row as any).videoUrl) : undefined,
+          videoUrl: (row.videoUrl || (row as any).VideoUrl || (row as any).video || '').toString().trim() || undefined,
           isNew: (row as any).isNew ? ['true', '1', 'yes', 'y'].includes(String((row as any).isNew).toLowerCase()) : undefined,
           image: primaryImage,
           images: images.length > 0 ? images : [],
@@ -805,22 +805,23 @@ const selectedOrderReceipt = safeText(selectedOrder?.paymentDetails?.receiptImag
             {/* Stats */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
               {[
-                { title: t('totalSales'), value: money(stats.sales), icon: DollarSign, color: 'bg-green-100 text-green-600' },
-                // ✅ show NEW orders count (not total)
-                { title: t('newOrders'), value: Number(newOrdersCount).toLocaleString(), icon: Package, color: 'bg-blue-100 text-blue-600' },
-                { title: t('users'), value: stats.users.toLocaleString(), icon: Users, color: 'bg-purple-100 text-purple-600' },
-                { title: 'Avg Order Value', value: money(stats.avg), icon: BarChart, color: 'bg-orange-100 text-orange-600' },
-              ].map((stat, idx) => (
-                <div key={idx} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${stat.color}`}>
-                    <stat.icon size={24} />
-                  </div>
-                  <div>
-                    <p className="text-slate-500 text-sm">{stat.title}</p>
-                    <p className="text-xl font-bold text-slate-900">{stat.value}</p>
-                  </div>
-                </div>
-              ))}
+  { title: t('totalSales'), value: money(stats.sales), icon: DollarSign, color: 'bg-emerald-50 text-emerald-600', border: 'border-emerald-100' },
+  { title: t('newOrders'), value: newOrdersCount, icon: Package, color: 'bg-amber-50 text-amber-600', border: 'border-amber-100' },
+  { title: t('users'), value: stats.users.toLocaleString(), icon: Users, color: 'bg-sky-50 text-sky-600', border: 'border-sky-100' },
+  { title: 'Avg Value', value: money(stats.avg), icon: BarChart, color: 'bg-slate-50 text-slate-600', border: 'border-slate-100' },
+].map((stat, idx) => (
+  <div key={idx} className={`bg-white p-6 rounded-[2rem] border ${stat.border} shadow-sm hover:shadow-md transition-all duration-300 group`}>
+    <div className="flex items-center gap-4">
+      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-transform group-hover:scale-110 ${stat.color}`}>
+        <stat.icon size={24} />
+      </div>
+      <div>
+        <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest">{stat.title}</p>
+        <p className="text-2xl font-black text-slate-900 tracking-tight">{stat.value}</p>
+      </div>
+    </div>
+  </div>
+))}
             </div>
 
             {(lowStockCount > 0 || outOfStockCount > 0) && (
@@ -1019,7 +1020,16 @@ const selectedOrderReceipt = safeText(selectedOrder?.paymentDetails?.receiptImag
                         />
                       </td>
 
-                      <td className="px-4 py-3 font-bold text-slate-700">{p.nameEn || p.name}</td>
+                      <td className="px-4 py-3">
+  <div className="flex flex-col">
+    <span className="font-bold text-slate-700">{p.nameEn || p.name}</span>
+    {p.videoUrl && (
+      <div className="flex items-center gap-1 mt-1 text-[10px] font-black text-sky-500 uppercase tracking-tighter">
+        <Play size={10} className="fill-current" /> {language === 'ar' ? 'فيديو متاح' : 'Video Available'}
+      </div>
+    )}
+  </div>
+</td>
 
                       <td className="px-4 py-3">
                         <span className="px-2 py-1 bg-slate-100 rounded-md text-xs">{p.category}</span>

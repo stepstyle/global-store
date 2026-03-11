@@ -14,12 +14,12 @@ import AdminGuard from './components/AdminGuard';
 import { Product, CartItem, ToastMessage, ToastType, Language, User } from './types';
 import { trackPageView, trackEvent } from './services/analytics';
 import { TRANSLATIONS } from './constants';
-import { db } from './services/storage';
+import { db as storageDb } from './services/storage'; // Renamed to avoid conflict
 import { auth, isFirebaseInitialized } from './services/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, getFirestore } from 'firebase/firestore';
+import { doc, getDoc, getFirestore, setDoc, deleteDoc } from 'firebase/firestore'; // 👈 تم استدعاء دوال الحفظ هنا
 
-// Lazy Load Pages - تحسين تجربة المستخدم في التحميل
+// Lazy Load Pages
 import Account from './pages/Account';
 const Home = React.lazy(() => import('./pages/Home'));
 const Shop = React.lazy(() => import('./pages/Shop'));
@@ -104,6 +104,8 @@ const App: React.FC = () => {
   const [orderNote, setOrderNoteState] = useState('');
   const [language, setLanguageState] = useState<Language>('ar');
 
+  const isRtl = language === 'ar';
+
   // --- Helpers ---
   const showToast = useCallback((message: string, type: ToastType) => {
     const id = Date.now().toString();
@@ -126,56 +128,134 @@ const App: React.FC = () => {
     language === 'ar' ? product.name : (product.nameEn || product.name), [language]
   );
 
-  // --- Core Actions ---
+  // --- Core Actions (Enterprise Cart Logic) ---
   const refreshProducts = useCallback(async () => {
     try {
-      const data = await db.products.getAll();
+      const data = await storageDb.products.getAll();
       setProducts(data || []);
     } catch (e) { console.error(e); }
   }, []);
 
-  const addToCart = useCallback(async (product: Product, quantity: number = 1) => {
-    const qty = Math.max(1, Math.round(quantity));
-    setCart((prev) => {
-      const existing = prev.find(i => i.id === product.id);
-      if (existing) {
-        showToast(t('quantity') + ' ' + t('completed'), 'info');
-        return prev.map(i => i.id === product.id ? { ...i, quantity: i.quantity + qty } : i);
+  // 🔥 إضافة دوال الحفظ الحقيقية للآدمن
+  const addProducts = useCallback(async (newProducts: Product[]) => {
+    try {
+      const firestore = getFirestore();
+      for (const p of newProducts) {
+        await setDoc(doc(firestore, 'products', p.id), p);
       }
-      showToast(getProductTitle(product) + ' ' + t('addToCart'), 'success');
+      await refreshProducts(); // تحديث المنتجات في الواجهة بعد الإضافة
+    } catch (e) {
+      console.error("Error adding product:", e);
+      throw e;
+    }
+  }, [refreshProducts]);
+
+  const updateProduct = useCallback(async (p: Product) => {
+    try {
+      const firestore = getFirestore();
+      await setDoc(doc(firestore, 'products', p.id), p, { merge: true });
+      await refreshProducts();
+    } catch (e) {
+      console.error("Error updating product:", e);
+      throw e;
+    }
+  }, [refreshProducts]);
+
+  const deleteProduct = useCallback(async (id: string) => {
+    try {
+      const firestore = getFirestore();
+      await deleteDoc(doc(firestore, 'products', id));
+      await refreshProducts();
+    } catch (e) {
+      console.error("Error deleting product:", e);
+      throw e;
+    }
+  }, [refreshProducts]);
+
+
+  const addToCart = useCallback(async (product: Product, quantity: number = 1) => {
+    const requestedQty = Math.max(1, Math.round(quantity));
+
+    setCart((prev) => {
+      const existingItem = prev.find(i => i.id === product.id);
+      const currentCartQty = existingItem ? existingItem.quantity : 0;
+      const targetQty = currentCartQty + requestedQty;
+
+      // 🛡️ Enterprise Feature: Stock Limit Validation
+      if (product.stock !== undefined && targetQty > product.stock) {
+        showToast(
+          isRtl ? 'عذراً، لقد بلغت الحد الأقصى للمخزون المتوفر.' : 'Maximum available stock reached.',
+          'error'
+        );
+        // Add only the remaining available stock if any
+        if (currentCartQty < product.stock) {
+          if (!existingItem) {
+            return [...prev, { ...product, quantity: product.stock }];
+          }
+          return prev.map(i => i.id === product.id ? { ...i, quantity: product.stock } : i);
+        }
+        return prev;
+      }
+
+      showToast(
+        isRtl ? 'تمت إضافة المنتج إلى السلة بنجاح.' : 'Product added to cart successfully.',
+        'success'
+      );
       setIsCartOpen(true);
-      return [...prev, { ...product, quantity: qty }];
+
+      if (existingItem) {
+        return prev.map(i => i.id === product.id ? { ...i, quantity: targetQty } : i);
+      }
+      return [...prev, { ...product, quantity: requestedQty }];
     });
-  }, [t, getProductTitle, showToast]);
+  }, [isRtl, showToast]);
 
   const updateCartItemQuantity = useCallback(async (pid: string, n: number) => {
-    setCart(prev => prev.map(i => i.id === pid ? { ...i, quantity: Math.max(1, n) } : i));
-  }, []);
+    const nextQty = Math.max(1, Math.round(n));
+
+    setCart(prev => prev.map(item => {
+      if (item.id === pid) {
+        // 🛡️ Enterprise Feature: Prevent updates exceeding stock
+        if (item.stock !== undefined && nextQty > item.stock) {
+          showToast(
+            isRtl ? 'الكمية المطلوبة تتجاوز المخزون المتاح حالياً.' : 'Requested quantity exceeds available stock.',
+            'error'
+          );
+          return { ...item, quantity: item.stock };
+        }
+        return { ...item, quantity: nextQty };
+      }
+      return item;
+    }));
+  }, [isRtl, showToast]);
 
   const removeFromCart = useCallback((pid: string) => {
     setCart(prev => prev.filter(i => i.id !== pid));
-    showToast(t('remove'), 'error');
-  }, [t, showToast]);
+    showToast(
+      isRtl ? 'تم إزالة المنتج من السلة.' : 'Item removed from your cart.',
+      'info'
+    );
+  }, [isRtl, showToast]);
 
   const toggleWishlist = useCallback((p: Product) => {
     setWishlist(prev => {
       const next = new Set(prev);
       if (next.has(p.id)) {
-        next.delete(p.id); showToast(t('remove'), 'info');
+        next.delete(p.id); 
+        showToast(isRtl ? 'تم إزالة المنتج من قائمة المفضلة.' : 'Removed from your wishlist.', 'info');
       } else {
-        next.add(p.id); showToast(t('wishlist'), 'success');
+        next.add(p.id); 
+        showToast(isRtl ? 'تم إضافة المنتج إلى قائمة المفضلة.' : 'Added to your wishlist.', 'success');
       }
       return next;
     });
-  }, [t, showToast]);
+  }, [isRtl, showToast]);
 
   // --- Effects & Initialization ---
   useEffect(() => {
-    // 1. Load Language
     const savedLang = localStorage.getItem('language') as Language;
     if (savedLang) setLanguageState(savedLang);
 
-    // 2. Load Initial Data
     refreshProducts();
     const sc = localStorage.getItem('anta_cart');
     if (sc) try { setCart(JSON.parse(sc)); } catch { }
@@ -186,7 +266,6 @@ const App: React.FC = () => {
     const sn = localStorage.getItem(ORDER_NOTE_KEY);
     if (sn) setOrderNoteState(sn);
 
-    // 3. Auth Listener
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       if (fbUser) {
         const docSnap = await getDoc(doc(getFirestore(), 'users', fbUser.uid));
@@ -227,7 +306,10 @@ const App: React.FC = () => {
       t, getProductTitle, user, login: setUser, logout: () => auth.signOut(),
       orderNote, setOrderNote: (n) => { setOrderNoteState(n); localStorage.setItem(ORDER_NOTE_KEY, n); },
       clearOrderNote: () => { setOrderNoteState(''); localStorage.removeItem(ORDER_NOTE_KEY); },
-      isLoading, addProducts: async () => {}, deleteProduct: async () => {}, updateProduct: async () => {}
+      isLoading, 
+      addProducts, // 👈 تم تفعيل دالة الإضافة
+      deleteProduct, // 👈 تم تفعيل دالة الحذف
+      updateProduct // 👈 تم تفعيل دالة التعديل
     }}>
       <HashRouter>
         <ScrollToTop />
@@ -238,7 +320,7 @@ const App: React.FC = () => {
           <CookieBanner />
 
           <main className="flex-grow">
-            <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-10 h-10 border-4 border-t-secondary-DEFAULT rounded-full animate-spin" /></div>}>
+            <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-10 h-10 border-4 border-t-blue-600 rounded-full animate-spin" /></div>}>
               <Routes>
                 <Route path="/account" element={<Account />} />
                 <Route path="/" element={<Home />} />

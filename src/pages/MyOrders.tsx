@@ -13,11 +13,11 @@ const { Link } = ReactRouterDOM as any;
 
 const safeText = (v: any) => String(v ?? '').trim();
 
-// 🔒 إخفاء رقم الهاتف بشكل آمن
+// 🔒 إخفاء رقم الهاتف بشكل آمن واحترافي (Enterprise Standard)
 const maskPhone = (phone?: string) => {
   const p = safeText(phone);
   if (p.length < 6) return p;
-  return `${p.slice(0, 4)} **** ${p.slice(-3)}`;
+  return `${p.slice(0, 4)} •••• ${p.slice(-3)}`;
 };
 
 // 🎨 ألوان حالات الطلب (متوافقة مع التصميم الحديث الراقي)
@@ -44,7 +44,7 @@ const MyOrders: React.FC = () => {
   const isAR = language === 'ar';
   const tr = useCallback((ar: string, en: string) => (isAR ? ar : en), [isAR]);
 
-  // ✅ t with safe bilingual fallback
+  // ✅ t with safe bilingual fallback (Corporate Tone)
   const tt = useCallback(
     (key: string, fallbackAr: string, fallbackEn: string) => {
       const v = t?.(key);
@@ -54,14 +54,31 @@ const MyOrders: React.FC = () => {
     [t, tr]
   );
 
-  // ✅ Status label translation
+  // 📅 تنسيق ذكي ومحلي للتاريخ (Smart Date Formatting)
+  const formatDate = useCallback((dateStr?: string) => {
+    const raw = safeText(dateStr);
+    if (!raw) return '—';
+    try {
+      const d = new Date(raw);
+      if (isNaN(d.getTime())) return raw; // Fallback إذا كان النص غير صالح كـ تاريخ
+      return new Intl.DateTimeFormat(isAR ? 'ar-JO' : 'en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      }).format(d);
+    } catch {
+      return raw;
+    }
+  }, [isAR]);
+
+  // ✅ Status label translation (Refined Terminology)
   const statusLabel = useCallback(
     (status?: string) => {
       const s = safeText(status);
-      if (s === 'processing' || s === 'new') return tt('processing', 'قيد المعالجة', 'Processing');
-      if (s === 'shipped') return tt('shipped', 'تم الشحن', 'Shipped');
-      if (s === 'delivered') return tt('delivered', 'تم التسليم', 'Delivered');
-      if (s === 'cancelled') return tt('cancelled', 'ملغي', 'Cancelled');
+      if (s === 'processing' || s === 'new') return tt('processing', 'جاري التجهيز', 'Preparing');
+      if (s === 'shipped') return tt('shipped', 'في الطريق إليك', 'On the way');
+      if (s === 'delivered') return tt('delivered', 'تم التوصيل', 'Delivered');
+      if (s === 'cancelled') return tt('cancelled', 'أُلغي الطلب', 'Cancelled');
       return s || '—';
     },
     [tt]
@@ -108,7 +125,7 @@ const MyOrders: React.FC = () => {
         setOrders(sorted);
       } catch {
         if (cancelled) return;
-        setErrorMsg(tt('loadFailed', 'فشل تحميل الطلبات. الرجاء المحاولة مرة أخرى.', 'Failed to load your orders. Please try again.'));
+        setErrorMsg(tt('loadFailed', 'تعذر استرداد سجل الطلبات. يرجى المحاولة لاحقاً.', 'Unable to retrieve order history. Please try again later.'));
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -130,20 +147,20 @@ const MyOrders: React.FC = () => {
   if (!user) {
     return (
       <div className="min-h-[80vh] flex flex-col items-center justify-center p-4 bg-slate-50 py-12">
-        <SEO title={tt('myOrders', 'طلباتي', 'My Orders')} noIndex={true} />
+        <SEO title={tt('myOrders', 'سجل الطلبات', 'Order History')} noIndex={true} />
         <div className="w-full max-w-md bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 p-8 sm:p-10 text-center animate-in fade-in zoom-in-95 duration-500">
           <div className="mx-auto w-20 h-20 rounded-full bg-sky-50 flex items-center justify-center text-sky-500 mb-6 shadow-inner">
             <Package size={40} strokeWidth={1.5} />
           </div>
           <h2 className="text-2xl font-heading font-black mb-3 text-slate-900 tracking-tight">
-            {tt('loginRequired', 'تسجيل الدخول مطلوب', 'Login Required')}
+            {tt('loginRequired', 'يتطلب تسجيل الدخول', 'Sign In Required')}
           </h2>
           <p className="text-slate-500 mb-8 text-sm font-medium leading-relaxed">
-            {tt('loginToSeeOrders', 'يرجى تسجيل الدخول لعرض وتتبع طلباتك السابقة.', 'Please login to view and track your previous orders.')}
+            {tt('loginToSeeOrders', 'يرجى تسجيل الدخول للوصول إلى سجل طلباتك وتتبع شحناتك بأمان.', 'Please sign in to access your order history and track your shipments securely.')}
           </p>
           <Link to="/login" className="block w-full">
             <button className="w-full py-4 rounded-2xl bg-sky-400 hover:bg-sky-500 text-white font-extrabold shadow-lg shadow-sky-400/30 transition-all duration-300">
-              {tt('login', 'تسجيل الدخول', 'Login')}
+              {tt('login', 'تسجيل الدخول', 'Sign In')}
             </button>
           </Link>
         </div>
@@ -156,17 +173,17 @@ const MyOrders: React.FC = () => {
   // ==========================================
   return (
     <div className="min-h-screen bg-slate-50 py-10 lg:py-16">
-      <SEO title={tt('myOrders', 'طلباتي', 'My Orders')} noIndex={true} />
+      <SEO title={tt('myOrders', 'سجل الطلبات', 'Order History')} noIndex={true} />
       <div className="container mx-auto px-4 lg:px-8 max-w-5xl">
         
         {/* رأس الصفحة */}
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-10">
           <div>
             <h1 className="text-3xl md:text-4xl font-heading font-black text-slate-900 tracking-tight">
-              {tt('myOrders', 'طلباتي', 'My Orders')}
+              {tt('myOrders', 'سجل الطلبات', 'Order History')}
             </h1>
             <p className="text-slate-500 mt-2 text-sm font-medium">
-              {tt('myOrdersHint', 'تابع وتصفح مشترياتك السابقة.', 'Track and review your recent purchases.')}
+              {tt('myOrdersHint', 'تتبع حالة طلباتك الحالية وراجع مشترياتك السابقة.', 'Track current orders and review your past purchases.')}
             </p>
           </div>
           <Link to="/shop" className="inline-flex items-center gap-1.5 text-sm font-extrabold text-sky-500 hover:text-sky-600 transition-colors group bg-white px-4 py-2.5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md">
@@ -193,14 +210,14 @@ const MyOrders: React.FC = () => {
               <ShoppingBag size={48} className="text-slate-300" strokeWidth={1.5} />
             </div>
             <h3 className="text-2xl font-black text-slate-900 mb-3 tracking-tight">
-              {tt('noOrders', 'لا توجد طلبات', 'No orders found')}
+              {tt('noOrders', 'لا توجد طلبات سابقة', 'No order history')}
             </h3>
-            <p className="text-slate-500 text-sm font-medium mb-8 max-w-sm mx-auto">
-              {tt('noOrdersHint', 'لم تقم بعمل أي طلب حتى الآن. اكتشف منتجاتنا الرائعة وابدأ التسوق!', 'You have not placed any orders yet. Discover our amazing products!')}
+            <p className="text-slate-500 text-sm font-medium mb-8 max-w-sm mx-auto leading-relaxed">
+              {tt('noOrdersHint', 'لم تقم بإجراء أي عمليات شراء بعد. تصفح تشكيلتنا وابدأ بتسوق ما يناسبك.', "You haven't made any purchases yet. Browse our collections and find what you love.")}
             </p>
             <Link to="/shop">
               <button className="px-10 py-4 rounded-2xl bg-black hover:bg-slate-800 text-white font-extrabold shadow-lg shadow-black/20 transition-all duration-300">
-                {tt('startShopping', 'ابدأ التسوق', 'Start shopping')}
+                {tt('startShopping', 'استكشف المتجر', 'Explore Store')}
               </button>
             </Link>
           </div>
@@ -220,7 +237,7 @@ const MyOrders: React.FC = () => {
                   className="bg-white rounded-[2rem] p-6 sm:p-8 border border-slate-100 shadow-sm hover:shadow-xl hover:shadow-slate-200/50 transition-all duration-500 animate-in fade-in slide-in-from-bottom-4 group/card relative overflow-hidden"
                 >
                   {/* شريط زينة جانبي مخفي يظهر عند التمرير */}
-                  <div className="absolute top-0 ltr:left-0 rtl:right-0 w-1.5 h-0 bg-sky-400 group-hover/card:h-full transition-all duration-500 ease-out" />
+                  <div className="absolute ltr:left-0 rtl:right-0 top-0 w-1.5 h-0 bg-sky-400 group-hover/card:h-full transition-all duration-500 ease-out" />
 
                   {/* === Header (Order ID & Status) === */}
                   <div className="flex flex-col md:flex-row justify-between md:items-start mb-6 gap-5 border-b border-slate-100 pb-6">
@@ -243,7 +260,7 @@ const MyOrders: React.FC = () => {
                       <div className="flex items-center gap-4 text-sm font-semibold text-slate-500 flex-wrap">
                         <span className="flex items-center gap-1.5">
                           <Calendar size={16} className="text-slate-400" />
-                          <span dir="ltr">{safeText(order.date) || '—'}</span>
+                          <span dir="ltr">{formatDate(order.createdAt || order.date)}</span>
                         </span>
                         <span className="hidden sm:inline-block w-1.5 h-1.5 bg-slate-200 rounded-full" />
                         <span className="flex items-center gap-1.5">
@@ -261,7 +278,7 @@ const MyOrders: React.FC = () => {
                     {/* Track Button */}
                     <Link to={`/tracking?orderId=${encodeURIComponent(safeText(order.id))}`} className="shrink-0 w-full md:w-auto">
                       <button className="w-full md:w-auto flex items-center justify-center gap-2 rounded-xl shadow-md shadow-black/10 bg-black hover:bg-slate-800 text-white font-extrabold px-6 py-3.5 transition-all">
-                        {tt('track', 'تتبع الطلب', 'Track Order')}
+                        {tt('track', 'تتبع مسار الطلب', 'Track Shipment')}
                         <ChevronRight size={18} className="rtl:rotate-180 ltr:rotate-0" />
                       </button>
                     </Link>
@@ -274,7 +291,7 @@ const MyOrders: React.FC = () => {
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex items-center gap-2 text-slate-800">
                           <StickyNote size={18} className="text-slate-400" />
-                          <p className="text-sm font-black uppercase tracking-widest">{tt('orderNote', 'ملاحظات الطلب', 'Order note')}</p>
+                          <p className="text-sm font-black uppercase tracking-widest">{tt('orderNote', 'ملاحظات إضافية', 'Additional notes')}</p>
                         </div>
 
                         {noteNeedsToggle && (
@@ -283,7 +300,7 @@ const MyOrders: React.FC = () => {
                             onClick={() => toggleNote(safeText(order.id))}
                             className="text-xs font-bold text-sky-600 hover:text-sky-700 transition whitespace-nowrap bg-sky-50 px-3 py-1.5 rounded-lg border border-sky-100"
                           >
-                            {isExpanded ? tt('showLess', 'عرض أقل', 'Show less') : tt('showMore', 'عرض المزيد', 'Show more')}
+                            {isExpanded ? tt('showLess', 'عرض أقل', 'Show less') : tt('showMore', 'قراءة المزيد', 'Read more')}
                           </button>
                         )}
                       </div>
@@ -318,7 +335,7 @@ const MyOrders: React.FC = () => {
                       {(order.items || []).length > 3 && (
                         <div className="pt-3 border-t border-slate-100">
                           <Link to={`/tracking?orderId=${encodeURIComponent(safeText(order.id))}`} className="text-xs font-black text-sky-500 hover:text-sky-600 hover:underline transition-colors">
-                            + {(order.items || []).length - 3} {tt('moreItems', 'منتجات أخرى (انقر للتفاصيل)', 'more items (click for details)')}
+                            + {(order.items || []).length - 3} {tt('moreItems', 'عناصر أخرى (انقر للتفاصيل)', 'more items (click for details)')}
                           </Link>
                         </div>
                       )}
@@ -328,7 +345,7 @@ const MyOrders: React.FC = () => {
                     <div className="lg:w-80 bg-white rounded-3xl p-6 text-sm h-fit border border-slate-200/80 shadow-sm relative overflow-hidden group">
                       <div className="absolute left-0 top-0 w-full h-1 bg-slate-200 group-hover:bg-slate-800 transition-colors" />
                       <p className="font-black text-slate-400 text-xs uppercase tracking-widest mb-4 flex items-center gap-2">
-                        <MapPin size={16} className="text-sky-500" /> {tt('shippingAddress', 'عنوان الاستلام', 'Shipping Address')}
+                        <MapPin size={16} className="text-sky-500" /> {tt('shippingAddress', 'عنوان التوصيل', 'Delivery Address')}
                       </p>
                       <div className="space-y-1.5 text-slate-600 font-medium leading-relaxed">
                         <p className="font-black text-slate-900 text-base">{safeText(order.address?.fullName) || '—'}</p>
