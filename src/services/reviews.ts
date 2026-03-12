@@ -141,6 +141,9 @@ const syncProductAggregate = async (productId: string): Promise<void> => {
 // ----------------------
 export const reviewsApi = {
   
+  // 🚨 اللمسة السحرية: تم إخراج الدالة هنا لكي يتمكن ProductDetails من الوصول إليها
+  requirePurchased,
+
   /**
    * 📥 جلب تقييمات المنتج
    * - للعميل: يرى المنشور فقط (published).
