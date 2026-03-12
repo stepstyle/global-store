@@ -1,5 +1,5 @@
 // src/pages/Login.tsx
-import React, { useMemo, useState, useEffect } from 'react'; // 👈 ضفنا useEffect هنا
+import React, { useMemo, useState } from 'react';
 import {
   Facebook,
   Eye,
@@ -20,8 +20,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
-// 👈 ضفنا getRedirectResult هنا
-import { getAuth, sendEmailVerification, signOut, getRedirectResult } from "firebase/auth";
+import { getAuth, sendEmailVerification, signOut } from "firebase/auth";
 
 import SEO from '../components/SEO';
 import { useCart } from '../App';
@@ -82,53 +81,6 @@ const Login: React.FC = () => {
   const title = useMemo(() => (isLoginMode ? tt('تسجيل الدخول', 'Sign In') : tt('إنشاء حساب جديد', 'Create Account')), [isLoginMode, isRtl]);
   const desc = useMemo(() => (isLoginMode ? tt('أهلاً بك مجدداً في متجر دير شرف', 'Welcome back to Dair Sharaf') : tt('انضم إلينا واكتشف منتجاتنا', 'Join us and discover our products')), [isLoginMode, isRtl]);
 
-  const getErrorMessage = (error: any) => {
-    const code = error?.code;
-    if (code === 'auth/popup-closed-by-user') return tt('تم إغلاق نافذة الدخول قبل إتمام العملية. يرجى المحاولة مجدداً.', 'Sign-in window was closed. Please try again.');
-    if (code === 'auth/unauthorized-continue-uri') return tt('عذراً، هذا الدومين غير موثق حالياً. يرجى التواصل مع الإدارة.', 'Domain not authorized. Please contact support.');
-    if (code === 'auth/email-already-in-use') return tt('يبدو أنك تملك حساباً مسبقاً. يرجى تسجيل الدخول بدلاً من ذلك.', 'An account with this email already exists.');
-    if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
-      return tt('بيانات الاعتماد غير صحيحة. يرجى التحقق من البريد وكلمة المرور.', 'Invalid credentials. Please check your email and password.');
-    }
-    if (code === 'auth/weak-password') return tt('يرجى اختيار كلمة مرور قوية (6 رموز على الأقل).', 'Please choose a stronger password.');
-    if (code === 'auth/unverified-email') return tt('عذراً، لم تقم بتفعيل حسابك بعد. يرجى مراجعة بريدك الإلكتروني.', 'Please verify your email address to proceed.');
-    return tt('حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى لاحقاً.', 'An unexpected error occurred. Please try again.');
-  };
-
-  // 🚀 🚀 🚀 هذا هو الكود السحري الذي كان ناقصاً لاصطياد الزبون العائد للموبايل 🚀 🚀 🚀
-  useEffect(() => {
-    const auth = getAuth();
-    setIsLoading(true); // تشغيل اللودينج عشان لو قاعد بيرجع من جوجل ما يكبس اشي
-    
-    getRedirectResult(auth)
-      .then((result) => {
-        if (result && result.user) {
-          const u = result.user;
-          const userObj: User = {
-            id: u.uid,
-            name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
-            email: u.email || '',
-            password: '',
-            role: 'customer',
-            orders: [],
-          };
-          login(userObj);
-          navigate('/');
-        } else {
-          setIsLoading(false); // إذا ما في نتيجة (فتح الصفحة عادي) بنطفي اللودينج
-        }
-      })
-      .catch((error: any) => {
-        console.error("Redirect Error:", error);
-        setFormAlert({
-          type: 'error',
-          message: getErrorMessage(error)
-        });
-        setIsLoading(false);
-      });
-  }, [login, navigate, isRtl]);
-  // 🚀 🚀 🚀 انتهى الكود السحري 🚀 🚀 🚀
-
   const clearMainFeedback = () => {
     setFormAlert({ type: '', message: '' });
     setFieldErrors((prev) => ({
@@ -150,6 +102,20 @@ const Login: React.FC = () => {
     if (formAlert.message) {
       setFormAlert({ type: '', message: '' });
     }
+  };
+
+  // 🚀 مترجم الأخطاء لمنع ظهور الكود الإنجليزي للزبون
+  const getErrorMessage = (error: any) => {
+    const code = error?.code;
+    if (code === 'auth/popup-closed-by-user') return tt('تم إغلاق نافذة الدخول قبل إتمام العملية. يرجى المحاولة مجدداً.', 'Sign-in window was closed. Please try again.');
+    if (code === 'auth/unauthorized-continue-uri') return tt('عذراً، هذا الدومين غير موثق حالياً. يرجى التواصل مع الإدارة.', 'Domain not authorized. Please contact support.');
+    if (code === 'auth/email-already-in-use') return tt('يبدو أنك تملك حساباً مسبقاً. يرجى تسجيل الدخول بدلاً من ذلك.', 'An account with this email already exists. Please log in.');
+    if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
+      return tt('بيانات الاعتماد غير صحيحة. يرجى التحقق من البريد وكلمة المرور.', 'Invalid credentials. Please check your email and password.');
+    }
+    if (code === 'auth/weak-password') return tt('يرجى اختيار كلمة مرور قوية (6 رموز على الأقل).', 'Please choose a stronger password (at least 6 characters).');
+    if (code === 'auth/unverified-email') return tt('عذراً، لم تقم بتفعيل حسابك بعد. يرجى مراجعة بريدك الإلكتروني.', 'Please verify your email address to proceed.');
+    return tt('حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى لاحقاً.', 'An unexpected error occurred. Please try again.');
   };
 
   const validate = () => {
@@ -187,7 +153,7 @@ const Login: React.FC = () => {
       if (auth.currentUser) {
         await sendEmailVerification(auth.currentUser);
         setFormAlert({ type: 'success', message: tt('تم إرسال الرابط مجدداً! تفقد بريدك الوارد (ومجلد الرسائل غير المرغوب فيها).', 'Verification link resent! Please check your inbox (and spam folder).') });
-        await signOut(auth);
+        await signOut(auth); // طرده ليعود للدخول
       }
     } catch (error: any) {
       if (error.code === 'auth/too-many-requests') {
@@ -241,7 +207,7 @@ const Login: React.FC = () => {
         await db.users.register(newUser);
         
         if (auth.currentUser) {
-          await signOut(auth);
+          await signOut(auth); 
         }
 
         setFormAlert({
@@ -271,6 +237,7 @@ const Login: React.FC = () => {
 
   const handleSendResetEmail = async () => {
     const email = safeText(resetEmail);
+
     setResetAlert({ type: '', message: '' });
     setFieldErrors((prev) => ({ ...prev, resetEmail: '' }));
 
@@ -285,6 +252,7 @@ const Login: React.FC = () => {
     setIsResetting(true);
     try {
       await sendResetEmail(email);
+
       setResetAlert({
         type: 'success',
         message: tt('تم إرسال تعليمات استعادة الحساب إلى بريدك الإلكتروني.', 'Account recovery instructions sent to your email.'),
@@ -310,17 +278,19 @@ const Login: React.FC = () => {
     }
   };
 
+  // 🚀 التعديل الاحترافي لضمان فتح النافذة على جميع الموبايلات (Safari/iPhone)
   const handleSocialAuth = async (provider: 'google' | 'facebook') => {
     if (isLoading) return;
-    setIsLoading(true);
+    
+    // 🚨 لا تضع setIsLoading(true) هنا أبدأ! هذا التأخير هو الذي يجعله يُحظر.
     setFormAlert({ type: '', message: '' });
 
     try {
+      // ستفتح النافذة فوراً استجابةً لضغطة المستخدم بدون أي تأخير
       const u = provider === 'google' ? await signInWithGoogle() : await signInWithFacebook();
       
-      // إذا كانت النتيجة undefined (بسبب التحويل على الموبايل)، لا نكمل لأن الصفحة ستحدث
-      if (!u) return; 
-
+      // ✅ الآن بعد أن سجل الدخول بنجاح عبر النافذة، نظهر اللودينج ونكمل
+      setIsLoading(true);
       const user: User = {
         id: u.uid,
         name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
@@ -336,7 +306,7 @@ const Login: React.FC = () => {
         type: 'error',
         message: getErrorMessage(err), 
       });
-      setIsLoading(false);
+      setIsLoading(false); 
     }
   };
 
