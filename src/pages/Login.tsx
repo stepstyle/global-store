@@ -20,7 +20,8 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
-import { getAuth, sendEmailVerification, signOut } from "firebase/auth";
+// 🚀 التعديل: استيراد أدوات جوجل وفيسبوك مباشرة هنا لتخطي أي تأخير
+import { getAuth, sendEmailVerification, signOut, signInWithPopup, GoogleAuthProvider, FacebookAuthProvider } from "firebase/auth";
 
 import SEO from '../components/SEO';
 import { useCart } from '../App';
@@ -28,7 +29,6 @@ import { db } from '../services/storage';
 import { User } from '../types';
 
 import { sendResetEmail } from '../services/passwordReset';
-import { signInWithGoogle, signInWithFacebook } from '../services/authProviders';
 
 const { useNavigate } = ReactRouterDOM as any;
 
@@ -104,7 +104,6 @@ const Login: React.FC = () => {
     }
   };
 
-  // 🚀 مترجم الأخطاء لمنع ظهور الكود الإنجليزي للزبون
   const getErrorMessage = (error: any) => {
     const code = error?.code;
     if (code === 'auth/popup-closed-by-user') return tt('تم إغلاق نافذة الدخول قبل إتمام العملية. يرجى المحاولة مجدداً.', 'Sign-in window was closed. Please try again.');
@@ -278,36 +277,49 @@ const Login: React.FC = () => {
     }
   };
 
-  // 🚀 التعديل الاحترافي لضمان فتح النافذة على جميع الموبايلات (Safari/iPhone)
-  const handleSocialAuth = async (provider: 'google' | 'facebook') => {
+  // 🚀 التعديل الاحترافي الخالي من الأخطاء لمتصفح سفاري (Safari Bypass)
+  const handleSocialAuth = (providerType: 'google' | 'facebook') => {
     if (isLoading) return;
-    
-    // 🚨 لا تضع setIsLoading(true) هنا أبدأ! هذا التأخير هو الذي يجعله يُحظر.
-    setFormAlert({ type: '', message: '' });
 
-    try {
-      // ستفتح النافذة فوراً استجابةً لضغطة المستخدم بدون أي تأخير
-      const u = provider === 'google' ? await signInWithGoogle() : await signInWithFacebook();
-      
-      // ✅ الآن بعد أن سجل الدخول بنجاح عبر النافذة، نظهر اللودينج ونكمل
-      setIsLoading(true);
-      const user: User = {
-        id: u.uid,
-        name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
-        email: u.email || '',
-        password: '',
-        role: 'customer',
-        orders: [],
-      };
-      login(user);
-      navigate('/');
-    } catch (err: any) {
-      setFormAlert({
-        type: 'error',
-        message: getErrorMessage(err), 
-      });
-      setIsLoading(false); 
+    // 🚨 التحذير الأهم: ممنوع استخدام أي State Update (مثل setIsLoading) قبل استدعاء النافذة!
+    // لأن React سيقوم بتأخير التنفيذ، وسيعتبر Safari أن النافذة "مشبوهة" ويقوم بحظرها.
+
+    const auth = getAuth();
+    const provider = providerType === 'google' 
+      ? new GoogleAuthProvider() 
+      : new FacebookAuthProvider();
+
+    if (providerType === 'google') {
+      provider.setCustomParameters({ prompt: "select_account" });
+    } else {
+      provider.addScope('email');
     }
+
+    // 🚀 استدعاء النافذة المنبثقة "مباشرة" وفي نفس اللحظة التي يضغط فيها المستخدم
+    signInWithPopup(auth, provider)
+      .then((res) => {
+        // بعد أن تفتح النافذة وينجح المستخدم في اختيار إيميله، نقوم بتحديث الـ State
+        setIsLoading(true);
+        const u = res.user;
+        const userObj: User = {
+          id: u.uid,
+          name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
+          email: u.email || '',
+          password: '',
+          role: 'customer',
+          orders: [],
+        };
+        login(userObj);
+        navigate('/');
+      })
+      .catch((err: any) => {
+        console.error("Social Auth Error:", err);
+        setFormAlert({
+          type: 'error',
+          message: getErrorMessage(err), 
+        });
+        setIsLoading(false);
+      });
   };
 
   return (
