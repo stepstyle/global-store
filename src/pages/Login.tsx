@@ -1,5 +1,5 @@
 // src/pages/Login.tsx
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react'; // 👈 ضفنا useEffect هنا
 import {
   Facebook,
   Eye,
@@ -20,7 +20,8 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
-import { getAuth, sendEmailVerification, signOut } from "firebase/auth";
+// 👈 ضفنا getRedirectResult هنا
+import { getAuth, sendEmailVerification, signOut, getRedirectResult } from "firebase/auth";
 
 import SEO from '../components/SEO';
 import { useCart } from '../App';
@@ -59,7 +60,6 @@ const Login: React.FC = () => {
     resetEmail: '',
   });
 
-  // نوع مخصص للأخطاء لدعم الأزرار التفاعلية داخل رسالة الخطأ (مثل إعادة الإرسال)
   const [formAlert, setFormAlert] = useState<{
     type: 'error' | 'success' | 'verify' | '';
     message: string;
@@ -78,10 +78,56 @@ const Login: React.FC = () => {
 
   const isRtl = language === 'ar';
   
-  // نصوص الشركات (Corporate Terminology)
   const tt = (ar: string, en: string) => (isRtl ? ar : en);
   const title = useMemo(() => (isLoginMode ? tt('تسجيل الدخول', 'Sign In') : tt('إنشاء حساب جديد', 'Create Account')), [isLoginMode, isRtl]);
   const desc = useMemo(() => (isLoginMode ? tt('أهلاً بك مجدداً في متجر دير شرف', 'Welcome back to Dair Sharaf') : tt('انضم إلينا واكتشف منتجاتنا', 'Join us and discover our products')), [isLoginMode, isRtl]);
+
+  const getErrorMessage = (error: any) => {
+    const code = error?.code;
+    if (code === 'auth/popup-closed-by-user') return tt('تم إغلاق نافذة الدخول قبل إتمام العملية. يرجى المحاولة مجدداً.', 'Sign-in window was closed. Please try again.');
+    if (code === 'auth/unauthorized-continue-uri') return tt('عذراً، هذا الدومين غير موثق حالياً. يرجى التواصل مع الإدارة.', 'Domain not authorized. Please contact support.');
+    if (code === 'auth/email-already-in-use') return tt('يبدو أنك تملك حساباً مسبقاً. يرجى تسجيل الدخول بدلاً من ذلك.', 'An account with this email already exists.');
+    if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
+      return tt('بيانات الاعتماد غير صحيحة. يرجى التحقق من البريد وكلمة المرور.', 'Invalid credentials. Please check your email and password.');
+    }
+    if (code === 'auth/weak-password') return tt('يرجى اختيار كلمة مرور قوية (6 رموز على الأقل).', 'Please choose a stronger password.');
+    if (code === 'auth/unverified-email') return tt('عذراً، لم تقم بتفعيل حسابك بعد. يرجى مراجعة بريدك الإلكتروني.', 'Please verify your email address to proceed.');
+    return tt('حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى لاحقاً.', 'An unexpected error occurred. Please try again.');
+  };
+
+  // 🚀 🚀 🚀 هذا هو الكود السحري الذي كان ناقصاً لاصطياد الزبون العائد للموبايل 🚀 🚀 🚀
+  useEffect(() => {
+    const auth = getAuth();
+    setIsLoading(true); // تشغيل اللودينج عشان لو قاعد بيرجع من جوجل ما يكبس اشي
+    
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result && result.user) {
+          const u = result.user;
+          const userObj: User = {
+            id: u.uid,
+            name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
+            email: u.email || '',
+            password: '',
+            role: 'customer',
+            orders: [],
+          };
+          login(userObj);
+          navigate('/');
+        } else {
+          setIsLoading(false); // إذا ما في نتيجة (فتح الصفحة عادي) بنطفي اللودينج
+        }
+      })
+      .catch((error: any) => {
+        console.error("Redirect Error:", error);
+        setFormAlert({
+          type: 'error',
+          message: getErrorMessage(error)
+        });
+        setIsLoading(false);
+      });
+  }, [login, navigate, isRtl]);
+  // 🚀 🚀 🚀 انتهى الكود السحري 🚀 🚀 🚀
 
   const clearMainFeedback = () => {
     setFormAlert({ type: '', message: '' });
@@ -104,24 +150,6 @@ const Login: React.FC = () => {
     if (formAlert.message) {
       setFormAlert({ type: '', message: '' });
     }
-  };
-
-  const getErrorMessage = (error: any) => {
-    const code = error?.code;
-    
-    // الأخطاء اللي ظهرت عندك في الصور
-    if (code === 'auth/popup-closed-by-user') return tt('تم إغلاق نافذة الدخول قبل إتمام العملية. يرجى المحاولة مجدداً.', 'Sign-in window was closed. Please try again.');
-    if (code === 'auth/unauthorized-continue-uri') return tt('عذراً، هذا الدومين غير موثق حالياً. يرجى التواصل مع الإدارة.', 'Domain not authorized. Please contact support.');
-    
-    // الأخطاء التقليدية (الموجودة في كودك أصلاً)
-    if (code === 'auth/email-already-in-use') return tt('يبدو أنك تملك حساباً مسبقاً. يرجى تسجيل الدخول بدلاً من ذلك.', 'An account with this email already exists.');
-    if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
-      return tt('بيانات الاعتماد غير صحيحة. يرجى التحقق من البريد وكلمة المرور.', 'Invalid credentials. Please check your email and password.');
-    }
-    if (code === 'auth/weak-password') return tt('يرجى اختيار كلمة مرور قوية (6 رموز على الأقل).', 'Please choose a stronger password.');
-    if (code === 'auth/unverified-email') return tt('عذراً، لم تقم بتفعيل حسابك بعد. يرجى مراجعة بريدك الإلكتروني.', 'Please verify your email address to proceed.');
-    
-    return tt('حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى لاحقاً.', 'An unexpected error occurred. Please try again.');
   };
 
   const validate = () => {
@@ -152,7 +180,6 @@ const Login: React.FC = () => {
     return !nextErrors.name && !nextErrors.email && !nextErrors.password;
   };
 
-  // 🔄 دالة إعادة إرسال رابط التفعيل
   const handleResendVerification = async () => {
     setIsResendingEmail(true);
     try {
@@ -160,7 +187,7 @@ const Login: React.FC = () => {
       if (auth.currentUser) {
         await sendEmailVerification(auth.currentUser);
         setFormAlert({ type: 'success', message: tt('تم إرسال الرابط مجدداً! تفقد بريدك الوارد (ومجلد الرسائل غير المرغوب فيها).', 'Verification link resent! Please check your inbox (and spam folder).') });
-        await signOut(auth); // طرده ليعود للدخول
+        await signOut(auth);
       }
     } catch (error: any) {
       if (error.code === 'auth/too-many-requests') {
@@ -186,10 +213,8 @@ const Login: React.FC = () => {
       const auth = getAuth();
 
       if (isLoginMode) {
-        // --- مسار تسجيل الدخول ---
         const user = await db.users.login(formData.email, formData.password);
         
-        // فحص التفعيل
         if (auth.currentUser && !auth.currentUser.emailVerified) {
           throw { code: 'auth/unverified-email' }; 
         }
@@ -204,7 +229,6 @@ const Login: React.FC = () => {
           });
         }
       } else {
-        // --- مسار إنشاء الحساب الجديد ---
         const newUser: User = {
           id: '',
           name: formData.name,
@@ -217,7 +241,7 @@ const Login: React.FC = () => {
         await db.users.register(newUser);
         
         if (auth.currentUser) {
-          await signOut(auth); // إخراجه فوراً لضمان عدم الدخول بدون تفعيل
+          await signOut(auth);
         }
 
         setFormAlert({
@@ -229,7 +253,6 @@ const Login: React.FC = () => {
         setFormData((prev) => ({ ...prev, password: '' })); 
       }
     } catch (error: any) {
-      // إذا كان الخطأ هو عدم تفعيل الإيميل، نظهر رسالة من نوع verify لزر إعادة الإرسال
       if (error?.code === 'auth/unverified-email') {
          setFormAlert({
            type: 'verify',
@@ -248,7 +271,6 @@ const Login: React.FC = () => {
 
   const handleSendResetEmail = async () => {
     const email = safeText(resetEmail);
-
     setResetAlert({ type: '', message: '' });
     setFieldErrors((prev) => ({ ...prev, resetEmail: '' }));
 
@@ -263,7 +285,6 @@ const Login: React.FC = () => {
     setIsResetting(true);
     try {
       await sendResetEmail(email);
-
       setResetAlert({
         type: 'success',
         message: tt('تم إرسال تعليمات استعادة الحساب إلى بريدك الإلكتروني.', 'Account recovery instructions sent to your email.'),
@@ -288,13 +309,18 @@ const Login: React.FC = () => {
       setIsResetting(false);
     }
   };
-const handleSocialAuth = async (provider: 'google' | 'facebook') => {
+
+  const handleSocialAuth = async (provider: 'google' | 'facebook') => {
     if (isLoading) return;
     setIsLoading(true);
     setFormAlert({ type: '', message: '' });
 
     try {
       const u = provider === 'google' ? await signInWithGoogle() : await signInWithFacebook();
+      
+      // إذا كانت النتيجة undefined (بسبب التحويل على الموبايل)، لا نكمل لأن الصفحة ستحدث
+      if (!u) return; 
+
       const user: User = {
         id: u.uid,
         name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
@@ -306,12 +332,10 @@ const handleSocialAuth = async (provider: 'google' | 'facebook') => {
       login(user);
       navigate('/');
     } catch (err: any) {
-      // ✅ التعديل الاحترافي هنا: نستخدم getErrorMessage بدل err.message
       setFormAlert({
         type: 'error',
         message: getErrorMessage(err), 
       });
-    } finally {
       setIsLoading(false);
     }
   };
@@ -396,7 +420,6 @@ const handleSocialAuth = async (provider: 'google' | 'facebook') => {
                   )}
                   <span className="leading-snug">{formAlert.message}</span>
                 </div>
-                {/* 🚀 الزر الذكي لإعادة إرسال الإيميل */}
                 {formAlert.type === 'verify' && (
                   <button 
                     onClick={handleResendVerification}
@@ -511,10 +534,10 @@ const handleSocialAuth = async (provider: 'google' | 'facebook') => {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full h-16 sm:h-20 rounded-2xl bg-gradient-to-r from-[#EAB308] to-[#3B82F6] text-white font-black text-xl shadow-lg shadow-blue-500/20 hover:shadow-orange-500/20 hover:scale-[1.02] active:scale-95 transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:scale-100 mt-2"
+                className="w-full h-16 sm:h-20 rounded-2xl bg-gradient-to-r from-[#EAB308] to-[#3B82F6] text-white font-black text-xl shadow-lg shadow-blue-500/20 hover:shadow-orange-500/20 hover:scale-[1.02] active:scale-95 transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:scale-100 mt-2 flex justify-center items-center"
               >
                 {isLoading ? (
-                  <Loader2 className="animate-spin mx-auto" size={28} />
+                  <Loader2 className="animate-spin" size={28} />
                 ) : isLoginMode ? (
                   tt('متابعة الدخول', 'Sign In')
                 ) : (
@@ -536,7 +559,7 @@ const handleSocialAuth = async (provider: 'google' | 'facebook') => {
               <button
                 type="button"
                 onClick={() => handleSocialAuth('google')}
-                className="flex items-center justify-center gap-2 py-3.5 border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 transition-all text-xs font-black text-slate-700 shadow-sm"
+                className="flex items-center justify-center gap-2 py-3.5 border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 transition-all text-xs font-black text-slate-700 shadow-sm disabled:opacity-50"
                 disabled={isLoading}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -551,7 +574,7 @@ const handleSocialAuth = async (provider: 'google' | 'facebook') => {
               <button
                 type="button"
                 onClick={() => handleSocialAuth('facebook')}
-                className="flex items-center justify-center gap-2 py-3.5 border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 transition-all text-xs font-black text-slate-700 shadow-sm"
+                className="flex items-center justify-center gap-2 py-3.5 border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 transition-all text-xs font-black text-slate-700 shadow-sm disabled:opacity-50"
                 disabled={isLoading}
               >
                 <Facebook size={18} className="text-[#1877F2]" fill="currentColor" stroke="none" />
