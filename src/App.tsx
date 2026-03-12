@@ -17,7 +17,7 @@ import { TRANSLATIONS } from './constants';
 import { db as storageDb } from './services/storage'; // Renamed to avoid conflict
 import { auth, isFirebaseInitialized } from './services/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, getFirestore, setDoc, deleteDoc } from 'firebase/firestore'; // 👈 تم استدعاء دوال الحفظ هنا
+import { doc, getDoc, getFirestore } from 'firebase/firestore';
 
 // Lazy Load Pages
 import Account from './pages/Account';
@@ -137,41 +137,38 @@ const App: React.FC = () => {
   }, []);
 
   // 🔥 إضافة دوال الحفظ الحقيقية للآدمن
-  const addProducts = useCallback(async (newProducts: Product[]) => {
-    try {
-      const firestore = getFirestore();
-      for (const p of newProducts) {
-        await setDoc(doc(firestore, 'products', p.id), p);
-      }
-      await refreshProducts(); // تحديث المنتجات في الواجهة بعد الإضافة
-    } catch (e) {
-      console.error("Error adding product:", e);
-      throw e;
-    }
-  }, [refreshProducts]);
+  // 🔥 إضافة دوال الحفظ الحقيقية للآدمن
+const addProducts = useCallback(async (newProducts: Product[]) => {
+  try {
+    await storageDb.products.add(newProducts);
+    await refreshProducts();
+  } catch (e) {
+    console.error('Error adding product:', e);
+    throw e;
+  }
+}, [refreshProducts]);
 
-  const updateProduct = useCallback(async (p: Product) => {
-    try {
-      const firestore = getFirestore();
-      await setDoc(doc(firestore, 'products', p.id), p, { merge: true });
-      await refreshProducts();
-    } catch (e) {
-      console.error("Error updating product:", e);
-      throw e;
-    }
-  }, [refreshProducts]);
+ 
 
   const deleteProduct = useCallback(async (id: string) => {
-    try {
-      const firestore = getFirestore();
-      await deleteDoc(doc(firestore, 'products', id));
-      await refreshProducts();
-    } catch (e) {
-      console.error("Error deleting product:", e);
-      throw e;
-    }
-  }, [refreshProducts]);
+  try {
+    await storageDb.products.delete(id);
+    await refreshProducts();
+  } catch (e) {
+    console.error('Error deleting product:', e);
+    throw e;
+  }
+}, [refreshProducts]);
 
+const updateProduct = useCallback(async (p: Product) => {
+  try {
+    await storageDb.products.update(p);
+    await refreshProducts();
+  } catch (e) {
+    console.error('Error updating product:', e);
+    throw e;
+  }
+}, [refreshProducts]);
 
   const addToCart = useCallback(async (product: Product, quantity: number = 1) => {
     const requestedQty = Math.max(1, Math.round(quantity));
@@ -252,35 +249,49 @@ const App: React.FC = () => {
   }, [isRtl, showToast]);
 
   // --- Effects & Initialization ---
-  useEffect(() => {
-    const savedLang = localStorage.getItem('language') as Language;
-    if (savedLang) setLanguageState(savedLang);
+useEffect(() => {
+  const savedLang = localStorage.getItem('language') as Language;
+  if (savedLang) setLanguageState(savedLang);
 
-    refreshProducts();
-    const sc = localStorage.getItem('anta_cart');
-    if (sc) try { setCart(JSON.parse(sc)); } catch { }
-    
-    const sw = localStorage.getItem('anta_wishlist');
-    if (sw) try { setWishlist(new Set(JSON.parse(sw))); } catch { }
+  refreshProducts();
 
-    const sn = localStorage.getItem(ORDER_NOTE_KEY);
-    if (sn) setOrderNoteState(sn);
+  const sc = localStorage.getItem('anta_cart');
+  if (sc) {
+    try { setCart(JSON.parse(sc)); } catch {}
+  }
 
-    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
-      if (fbUser) {
-        const docSnap = await getDoc(doc(getFirestore(), 'users', fbUser.uid));
-        const d = docSnap.data();
-        setUser({
-          id: fbUser.uid,
-          name: d?.name || fbUser.displayName || 'User',
-          email: fbUser.email || '',
-          role: d?.role || 'customer',
-          orders: d?.orders || []
-        });
-      } else { setUser(null); }
-    });
-    return () => unsubscribe();
-  }, [refreshProducts]);
+  const sw = localStorage.getItem('anta_wishlist');
+  if (sw) {
+    try { setWishlist(new Set(JSON.parse(sw))); } catch {}
+  }
+
+  const sn = localStorage.getItem(ORDER_NOTE_KEY);
+  if (sn) setOrderNoteState(sn);
+
+  if (!auth) {
+    setUser(storageDb.users.getCurrent());
+    return;
+  }
+
+  const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+    if (fbUser) {
+      const docSnap = await getDoc(doc(getFirestore(), 'users', fbUser.uid));
+      const d = docSnap.data();
+
+      setUser({
+        id: fbUser.uid,
+        name: d?.name || fbUser.displayName || 'User',
+        email: fbUser.email || '',
+        role: d?.role || 'customer',
+        orders: d?.orders || []
+      });
+    } else {
+      setUser(storageDb.users.getCurrent());
+    }
+  });
+
+  return () => unsubscribe();
+}, [refreshProducts]);
 
   useEffect(() => {
     localStorage.setItem('anta_cart', JSON.stringify(cart));
@@ -303,7 +314,7 @@ const App: React.FC = () => {
       removeFromCart, clearCart: () => setCart([]), toggleWishlist, cartCount,
       wishlistCount: wishlist.size, isCartOpen, setIsCartOpen, openQuickView: (p) => setQuickViewProduct(p),
       showToast, language, setLanguage: (l) => { setLanguageState(l); localStorage.setItem('language', l); },
-      t, getProductTitle, user, login: setUser, logout: () => auth.signOut(),
+      t, getProductTitle, user, login: setUser,logout: () => { void storageDb.users.logout().catch(console.error); },
       orderNote, setOrderNote: (n) => { setOrderNoteState(n); localStorage.setItem(ORDER_NOTE_KEY, n); },
       clearOrderNote: () => { setOrderNoteState(''); localStorage.removeItem(ORDER_NOTE_KEY); },
       isLoading, 
@@ -322,6 +333,10 @@ const App: React.FC = () => {
           <main className="flex-grow">
             <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-10 h-10 border-4 border-t-blue-600 rounded-full animate-spin" /></div>}>
               <Routes>
+                <Route path="/" element={<Home />} />
+    <Route path="/product/:id" element={<ProductDetails />} />
+    {/* يجب إدخال لوحة التحكم هنا لتتمكن من استخدام useCart */}
+    <Route path="/admin" element={<AdminDashboard />} />
                 <Route path="/account" element={<Account />} />
                 <Route path="/" element={<Home />} />
                 <Route path="/shop" element={<Shop />} />

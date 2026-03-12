@@ -255,6 +255,7 @@ const NativeVideoPlayer = ({ src, poster }: { src: string; poster: string }) => 
 };
 
 const ProductDetails: React.FC = () => {
+  
   const params = useParams();
   const id = String((params as any)?.id ?? '');
   const location = useLocation();

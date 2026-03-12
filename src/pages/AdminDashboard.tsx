@@ -3,6 +3,7 @@ import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestor
 import { getFirestoreDb, firebaseReady as fbReady } from '../services/firebase';
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import Papa from 'papaparse';
+import { useNavigate } from 'react-router-dom'; // 👈 استيراد دالة التوجيه للطرد
 import {
   BarChart,
   Users,
@@ -24,7 +25,7 @@ import {
   X,
   ImageIcon,
   CreditCard,
-  Play, // 👈 أضف هذه الكلمة هنا بالضبط
+  Play,
 } from 'lucide-react';
 
 import { useCart } from '../App';
@@ -186,53 +187,70 @@ const toMillis = (v: any): number => {
 };
 
 const AdminDashboard: React.FC = () => {
-  const { addProducts, deleteProduct, updateProduct, showToast, t, products, language } = useCart() as any;
+  const navigate = useNavigate();
+  // نجلب حالة المستخدم الحالية (سواء مسجل أو تم تسجيل خروجه)
+  const { addProducts, deleteProduct, updateProduct, showToast, t, products, language, user } = useCart() as any;
+
+  // 🚨🚨 ضع إيميلك الشخصي الحقيقي هنا بين الأقواس (مثال: admin@gmail.com) 🚨🚨
+  const MY_ADMIN_EMAIL = "mohmmedmostakl@gmail.com".toLowerCase();
+
+  // 🛡️ حارس الأمن الصارم (مستوى الإنتاج الفعلي للعملاء)
+  useEffect(() => {
+    // 1. حالة تسجيل الخروج: إذا لم يكن هناك مستخدم، اطرده فوراً للرئيسية
+    if (!user) {
+      navigate('/');
+      return;
+    }
+
+    // 2. حالة الدخول الغريب: إذا كان مسجل دخول لكن إيميله لا يطابق إيميلك الشخصي، اطرده فوراً
+    if (user.email?.toLowerCase() !== MY_ADMIN_EMAIL) {
+      showToast('أنت غير مصرح لك بدخول لوحة التحكم السرية.', 'error');
+      navigate('/');
+    }
+  }, [user, navigate, showToast]);
+
+ 
 
   const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'orders' | 'settings'>('overview');
-
+  // ... باقي الكود ينزل تحت كما هو بدون أي تغيير
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [stats, setStats] = useState({ sales: 0, orders: 0, users: 0, avg: 0 });
 
-  // ✅ New orders badge + realtime detection
   const [newOrdersCount, setNewOrdersCount] = useState(0);
   const prevNewIdsRef = useRef<Set<string>>(new Set());
   const initializedRef = useRef(false);
 
-  // Search (debounced)
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
-  // Pagination
   const [page, setPage] = useState(1);
 
-  // Settings State
   const [firebaseConfigInput, setFirebaseConfigInput] = useState('');
 
-  // Edit State (Used for edit + create)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
-  // Cloudinary Upload State
   const [uploading, setUploading] = useState(false);
   const [uploadedUrls, setUploadedUrls] = useState<string[]>([]);
   const [uploadError, setUploadError] = useState<string>('');
 
-  // ✅ Orders: Receipt preview modal (CliQ)
   const [receiptModal, setReceiptModal] = useState<{ open: boolean; orderId?: string; url?: string }>({
     open: false,
     orderId: undefined,
     url: undefined,
   });
-const [orderDetailsModal, setOrderDetailsModal] = useState<{
-  open: boolean;
-  order: Order | null;
-}>({
-  open: false,
-  order: null,
-});
+  
+  const [orderDetailsModal, setOrderDetailsModal] = useState<{
+    open: boolean;
+    order: Order | null;
+  }>({
+    open: false,
+    order: null,
+  });
+
   const firebaseReady = useMemo(() => getFirebaseReady(), []);
 
   const moneyFmt = useMemo(() => {
@@ -444,8 +462,8 @@ const selectedOrderReceipt = safeText(selectedOrder?.paymentDetails?.receiptImag
       description: '',
       details: undefined,
       brand: undefined,
-videoUrl: '', // اجعلها نص فارغ بدلاً من undefined لضمان استقرار المودال      isNew: true,
-      image: '',
+      videoUrl: '',
+       isNew: true,      image: '',
       images: [],
       rating: 0,
       reviews: 0,
@@ -732,13 +750,17 @@ videoUrl: '', // اجعلها نص فارغ بدلاً من undefined لضمان
   const lowStockCount = products.filter((p: any) => p.stock > 0 && p.stock < 10).length;
   const outOfStockCount = products.filter((p: any) => p.stock === 0).length;
 
-  // ✅ UPDATED: Cloudinary optimized thumbnail (no forced JPG)
   const toThumb = (url?: string) => {
     return url || '';
   };
 
-  const fromIdx = Math.min((page - 1) * PAGE_SIZE + 1, filteredProducts.length || 0);
+ const fromIdx = Math.min((page - 1) * PAGE_SIZE + 1, filteredProducts.length || 0);
   const toIdx = Math.min(page * PAGE_SIZE, filteredProducts.length || 0);
+
+  // ✅ المكان الصحيح للجدار الناري: (بعد انتهاء جميع الـ Hooks في React)
+  if (!user || user.email?.toLowerCase() !== MY_ADMIN_EMAIL) {
+    return null; 
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 py-12">
@@ -1239,6 +1261,7 @@ videoUrl: '', // اجعلها نص فارغ بدلاً من undefined لضمان
 
     {st !== 'delivered' && st !== 'cancelled' && (
       <button
+        variant="outline"
         onClick={() => handleUpdateOrderStatus(order.id, 'cancelled')}
         className="px-3 py-1.5 bg-red-50 text-red-700 rounded-xl text-xs font-bold hover:bg-red-100 border border-red-100"
       >

@@ -11,7 +11,6 @@ import {
   ShoppingBag,
   Sparkles,
   Star,
-  PlaySquare
 } from 'lucide-react';
 
 import ProductCard from '../components/ProductCard';
@@ -116,8 +115,6 @@ const getIdTimestamp = (id: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const getSubValue = (p: any) => String((p?.subcategory ?? p?.subCategory ?? '') as any).trim();
-
 function useDebouncedValue<T>(value: T, delayMs: number) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -159,8 +156,6 @@ const Shop: React.FC = () => {
   };
 
   const [isMobile, setIsMobile] = useState(false);
-
-  // 1. أولاً: تعريف كل المتغيرات (States)
   const [selectedCategory, setSelectedCategory] = useState<Category | 'All'>('All');
   const [selectedSubCategory, setSelectedSubCategory] = useState<string>('');
   const [priceRange, setPriceRange] = useState<[number, number]>([PRICE_MIN, PRICE_MAX]);
@@ -169,7 +164,6 @@ const Shop: React.FC = () => {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
 
-  // 2. ثانياً: استخدام الـ Hooks
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 1024);
     checkMobile();
@@ -191,6 +185,7 @@ const Shop: React.FC = () => {
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }, [spKey]);
+
   useEffect(() => {
     const rawCat = searchParams.get('filter');
     const aliased = rawCat ? CATEGORY_ALIASES[rawCat] || rawCat : null;
@@ -214,7 +209,7 @@ const Shop: React.FC = () => {
 
     products.forEach((p: any) => {
       const id = String(p?.id ?? '');
-      const full = `${p.name} ${p.nameEn} ${p.category} ${p.brand || ''} ${p.subcategory || ''}`.toLowerCase();
+      const full = `${p.name} ${p.nameEn} ${p.category} ${p.brand || ''} ${p.subcategory || p.subCategory || ''}`.toLowerCase();
       const prefixes = new Set<string>([
         ...makePrefixes(p.name || ''),
         ...makePrefixes(p.nameEn || ''),
@@ -226,6 +221,7 @@ const Shop: React.FC = () => {
     return map;
   }, [products]);
 
+  // 🚨 التعديل السحري هنا لدعم الأصناف الفرعية المتعددة 🚨
   const filteredProducts = useMemo(() => {
     let result = Array.isArray(products) ? [...products] : [];
 
@@ -239,8 +235,18 @@ const Shop: React.FC = () => {
 
     if (selectedCategory !== 'All') {
       result = result.filter((p) => p.category === selectedCategory);
+      
       if (selectedSubCategory) {
-        result = result.filter((p) => getSubValue(p) === selectedSubCategory);
+        result = result.filter((p) => {
+          // جلب قيمة الفئة الفرعية من المنتج (التي قد تكون "girls" أو "girls,edu")
+          const prodSubValue = String(p?.subCategory || p?.subcategory || '').trim();
+          
+          // إذا لم يكن لدى المنتج فئة فرعية، نستبعده
+          if (!prodSubValue) return false;
+          
+          // تقسيم النص المدمج إلى مصفوفة وفحص ما إذا كانت تحتوي على الفئة المختارة
+          return prodSubValue.split(',').map(s => s.trim()).includes(selectedSubCategory);
+        });
       }
     }
 
@@ -492,28 +498,6 @@ const Shop: React.FC = () => {
             </div>
           </div>
         </div>
-
-        {activeChips.length > 0 && (
-          <div className="mb-6 flex flex-wrap gap-2">
-            {activeChips.map((c) => (
-              <button
-                key={c.key}
-                onClick={c.onRemove}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 shadow-sm transition-all hover:border-red-100 hover:bg-red-50 hover:text-red-500"
-              >
-                <span>{c.label}</span>
-                <X size={12} strokeWidth={3} />
-              </button>
-            ))}
-
-            <button
-              onClick={clearFilters}
-              className="inline-flex items-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-2 text-xs font-extrabold text-red-500 transition-all hover:bg-red-100"
-            >
-              {tx('clearAll', 'مسح الكل', 'Clear all')}
-            </button>
-          </div>
-        )}
 
         <div className="flex flex-col gap-8 lg:flex-row lg:gap-10">
           <aside

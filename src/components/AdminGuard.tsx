@@ -1,45 +1,70 @@
-import React, { useEffect, useState } from "react";
-import { Navigate } from "react-router-dom";
-import { doc, getDoc } from "firebase/firestore";
-import { useCart } from "../App"; 
-import { db } from "../services/firebase";
+import React, { useEffect, useState } from 'react';
+import { Navigate } from 'react-router-dom';
+import { doc, getDoc } from 'firebase/firestore';
+import { useCart } from '../App';
+import { db } from '../services/firebase';
 
-async function checkIsAdmin(uid: string) {
-  const rolesSnap = await getDoc(doc(db, "config", "roles"));
-  const ownerUid = rolesSnap.data()?.ownerUid;
+async function checkIsAdmin(uid: string, role?: string) {
+  if (!uid) return false;
+  if (String(role || '').toLowerCase() === 'admin') return true;
+  if (!db) return false;
 
-  if (uid === ownerUid) return true;
+  try {
+    const rolesSnap = await getDoc(doc(db, 'config', 'roles'));
+    const ownerUid = rolesSnap.data()?.ownerUid;
+    if (uid === ownerUid) return true;
+  } catch (error) {
+    console.warn('AdminGuard roles lookup failed:', error);
+  }
 
-  const adminSnap = await getDoc(doc(db, "admins", uid));
-  return adminSnap.exists();
+  try {
+    const adminSnap = await getDoc(doc(db, 'admins', uid));
+    return adminSnap.exists();
+  } catch (error) {
+    console.warn('AdminGuard admins lookup failed:', error);
+    return false;
+  }
 }
 
 export default function AdminGuard({ children }: { children: React.ReactNode }) {
   const { user } = useCart();
   const [loading, setLoading] = useState(true);
-  const [ok, setOk] = useState(true); // 👈 جعلناها true افتراضياً لكسر الحماية مؤقتاً
+  const [ok, setOk] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
-      // 👈 تم تصحيح user.uid إلى user.id ليتطابق مع App.tsx
       if (!user?.id) {
-        if (!cancelled) { setOk(true); setLoading(false); } // سمحنا بالدخول للتجربة
+        if (!cancelled) {
+          setOk(false);
+          setLoading(false);
+        }
         return;
       }
-      // في الإنتاج الحقيقي سنعيد تفعيل هذا الفحص
-      // const isAdmin = await checkIsAdmin(user.id);
-      if (!cancelled) { setOk(true); setLoading(false); }
+
+      const isAdmin = await checkIsAdmin(user.id, user.role);
+      if (!cancelled) {
+        setOk(isAdmin);
+        setLoading(false);
+      }
     })();
 
-    return () => { cancelled = true; };
-  }, [user?.id]);
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.role]);
 
-  // 👈 قمنا بتعطيل الطرد (Redirect) مؤقتاً لكي تدخل لوحة التحكم
-  // if (loading) return null;
-  // if (!user) return <Navigate to="/login" replace />;
-  // if (!ok) return <Navigate to="/" replace />;
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="w-10 h-10 border-4 border-slate-200 border-t-slate-900 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) return <Navigate to="/login" replace />;
+  if (!ok) return <Navigate to="/" replace />;
 
   return <>{children}</>;
 }
