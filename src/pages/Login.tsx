@@ -108,12 +108,19 @@ const Login: React.FC = () => {
 
   const getErrorMessage = (error: any) => {
     const code = error?.code;
-    if (code === 'auth/email-already-in-use') return tt('يبدو أنك تملك حساباً مسبقاً. يرجى تسجيل الدخول بدلاً من ذلك.', 'An account with this email already exists. Please log in.');
+    
+    // الأخطاء اللي ظهرت عندك في الصور
+    if (code === 'auth/popup-closed-by-user') return tt('تم إغلاق نافذة الدخول قبل إتمام العملية. يرجى المحاولة مجدداً.', 'Sign-in window was closed. Please try again.');
+    if (code === 'auth/unauthorized-continue-uri') return tt('عذراً، هذا الدومين غير موثق حالياً. يرجى التواصل مع الإدارة.', 'Domain not authorized. Please contact support.');
+    
+    // الأخطاء التقليدية (الموجودة في كودك أصلاً)
+    if (code === 'auth/email-already-in-use') return tt('يبدو أنك تملك حساباً مسبقاً. يرجى تسجيل الدخول بدلاً من ذلك.', 'An account with this email already exists.');
     if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
       return tt('بيانات الاعتماد غير صحيحة. يرجى التحقق من البريد وكلمة المرور.', 'Invalid credentials. Please check your email and password.');
     }
-    if (code === 'auth/weak-password') return tt('يرجى اختيار كلمة مرور قوية (6 رموز على الأقل).', 'Please choose a stronger password (at least 6 characters).');
+    if (code === 'auth/weak-password') return tt('يرجى اختيار كلمة مرور قوية (6 رموز على الأقل).', 'Please choose a stronger password.');
     if (code === 'auth/unverified-email') return tt('عذراً، لم تقم بتفعيل حسابك بعد. يرجى مراجعة بريدك الإلكتروني.', 'Please verify your email address to proceed.');
+    
     return tt('حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى لاحقاً.', 'An unexpected error occurred. Please try again.');
   };
 
@@ -281,8 +288,7 @@ const Login: React.FC = () => {
       setIsResetting(false);
     }
   };
-
-  const handleSocialAuth = async (provider: 'google' | 'facebook') => {
+const handleSocialAuth = async (provider: 'google' | 'facebook') => {
     if (isLoading) return;
     setIsLoading(true);
     setFormAlert({ type: '', message: '' });
@@ -300,9 +306,10 @@ const Login: React.FC = () => {
       login(user);
       navigate('/');
     } catch (err: any) {
+      // ✅ التعديل الاحترافي هنا: نستخدم getErrorMessage بدل err.message
       setFormAlert({
         type: 'error',
-        message: err?.message || tt('تم إلغاء أو فشل عملية تسجيل الدخول.', 'Authentication failed or was cancelled.'),
+        message: getErrorMessage(err), 
       });
     } finally {
       setIsLoading(false);
