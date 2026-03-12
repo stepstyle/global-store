@@ -9,18 +9,18 @@ import {
   Shield,
   DollarSign,
   Smartphone,
-  Upload,
   ShoppingBag,
   Mail,
   Phone,
   CalendarClock,
+  MessageCircle,
+  Copy // 👈 إضافة أيقونة النسخ
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
 import { db } from '../services/storage';
 import { Order, Product } from '../types';
 import SEO from '../components/SEO';
 import LazyImage from '../components/LazyImage';
-import { uploadToCloudinary } from '../services/cloudinary';
 
 const { useNavigate } = ReactRouterDOM as any;
 
@@ -32,6 +32,9 @@ const clampQty = (n: any) => {
   const x = Math.round(Number(n) || 1);
   return Math.max(1, Math.min(99, x));
 };
+
+// 🚨 رقم واتساب المتجر 
+const STORE_WHATSAPP = '962796969081';
 
 const JO_COUNTRY = { code: 'JO', nameAr: 'الأردن', nameEn: 'Jordan' };
 
@@ -66,46 +69,6 @@ const DIAL_OPTIONS: DialOption[] = [
   { code: 'GB', dial: '+44', flag: '🇬🇧', nameAr: 'بريطانيا', nameEn: 'United Kingdom' },
 ];
 
-type ShippingMethod = {
-  id: string;
-  nameAr: string;
-  nameEn: string;
-  durationAr: string;
-  durationEn: string;
-  price: number;
-  icon?: any;
-};
-
-const CHECKOUT_SHIPPING_METHODS: ShippingMethod[] = [
-  {
-    id: 'jo_fast_12_24',
-    nameAr: 'توصيل سريع (محلي)',
-    nameEn: 'Fast delivery (Local)',
-    durationAr: 'خلال 12–24 ساعة',
-    durationEn: 'Within 12–24 hours',
-    price: 2.5,
-    icon: Truck,
-  },
-  {
-    id: 'jo_govs_24_48',
-    nameAr: 'توصيل المحافظات',
-    nameEn: 'Governorates delivery',
-    durationAr: 'خلال 24–48 ساعة',
-    durationEn: 'Within 24–48 hours',
-    price: 3.5,
-    icon: Truck,
-  },
-  {
-    id: 'jo_schedule',
-    nameAr: 'تحديد موعد التوصيل',
-    nameEn: 'Schedule delivery',
-    durationAr: 'اختر التاريخ والوقت المناسبين',
-    durationEn: 'Choose your preferred date & time',
-    price: 4.0,
-    icon: CalendarClock,
-  },
-];
-
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const normalizeName = (name: string) => safeTrim(name).replace(/\s+/g, ' ');
@@ -130,7 +93,7 @@ const makeOrderId = () => {
 const Checkout: React.FC = () => {
   const {
     cart,
-    products, // 🛡️ تم الاستدعاء للمقارنة الأمنية
+    products,
     t,
     showToast,
     getProductTitle,
@@ -159,7 +122,7 @@ const Checkout: React.FC = () => {
   };
 
   const [step, setStep] = useState(1);
-  const [shippingMethodId, setShippingMethodId] = useState<string>(CHECKOUT_SHIPPING_METHODS[0]!.id);
+  const [shippingMethodId, setShippingMethodId] = useState<string>('standard');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cod');
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -172,8 +135,6 @@ const Checkout: React.FC = () => {
   const [dialCode, setDialCode] = useState<string>(() => '+962');
 
   const [cliqRef, setCliqRef] = useState('');
-  const [cliqReceiptPreview, setCliqReceiptPreview] = useState<string>('');
-  const [cliqReceiptUrl, setCliqReceiptUrl] = useState<string>('');
 
   const [formData, setFormData] = useState({
     fullName: '',
@@ -216,21 +177,49 @@ const Checkout: React.FC = () => {
   const formatMoney = (value: number) =>
     fmt ? fmt.format(value) : `JOD ${Number(value || 0).toFixed(2)}`;
 
+  const baseShippingCost = useMemo(() => {
+    const slug = formData.citySlug;
+    if (!slug) return 0;
+    if (slug === 'amman') return 1.5;
+    if (['zarqa', 'balqa', 'madaba'].includes(slug)) return 2.5;
+    if (['irbid', 'jerash', 'ajloun'].includes(slug)) return 3.0;
+    if (['mafraq', 'karak', 'tafilah', 'maan'].includes(slug)) return 4.0;
+    if (slug === 'aqaba') return 5.0;
+    return 2.5;
+  }, [formData.citySlug]);
+
+  const dynamicShippingMethods = useMemo(() => [
+    {
+      id: 'standard',
+      nameAr: 'توصيل للمنطقة المحددة',
+      nameEn: 'Standard Delivery',
+      durationAr: 'خلال 24–48 ساعة',
+      durationEn: 'Within 24–48 hours',
+      price: baseShippingCost,
+      icon: Truck,
+    },
+    {
+      id: 'express',
+      nameAr: 'توصيل سريع (نفس اليوم)',
+      nameEn: 'Express Delivery (Same Day)',
+      durationAr: 'خلال 12 ساعة',
+      durationEn: 'Within 12 hours',
+      price: baseShippingCost + 1.5,
+      icon: Truck,
+    }
+  ], [baseShippingCost]);
+
   const selectedShipping = useMemo(
-    () => CHECKOUT_SHIPPING_METHODS.find((m) => m.id === shippingMethodId),
-    [shippingMethodId]
+    () => dynamicShippingMethods.find((m) => m.id === shippingMethodId),
+    [shippingMethodId, dynamicShippingMethods]
   );
 
-  // ==========================================
-  // 🛡️ حسابات التسعير والأمان الموثوقة (Security Layer)
-  // ==========================================
   const validatedCart = useMemo(() => {
     const safeCart = Array.isArray(cart) ? cart : [];
     return safeCart.map((cartItem: any) => {
       const realProduct = products.find((p: Product) => p.id === cartItem.id);
       return {
         ...cartItem,
-        // نعتمد السعر الأصلي من الداتا بيز لمنع التلاعب
         price: realProduct ? realProduct.price : cartItem.price,
         stock: realProduct ? realProduct.stock : cartItem.stock,
       };
@@ -381,45 +370,6 @@ const Checkout: React.FC = () => {
     return Object.keys(nextErr).length === 0;
   };
 
-  const readFileAsDataUrl = (file: File) =>
-    new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-
-  const handleCliqReceiptPick = async (file: File | null) => {
-    if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-      showToast(tt('invalidImage', 'الرجاء رفع صورة صالحة', 'Please upload a valid image file.'), 'error');
-      return;
-    }
-
-    const maxBytes = 2.5 * 1024 * 1024;
-    if (file.size > maxBytes) {
-      showToast(
-        tt('imageTooLarge', 'حجم الصورة كبير جداً. الحد الأقصى 2.5MB', 'Image is too large. Maximum size is 2.5MB.'),
-        'error'
-      );
-      return;
-    }
-
-    try {
-      const preview = await readFileAsDataUrl(file);
-      setCliqReceiptPreview(preview);
-
-      const url = await uploadToCloudinary(file);
-      setCliqReceiptUrl(url);
-
-      showToast(tt('uploaded', 'تم رفع الإيصال بنجاح', 'Receipt uploaded successfully.'), 'success');
-    } catch {
-      setCliqReceiptUrl('');
-      showToast(tt('uploadFailed', 'فشل الرفع، يرجى المحاولة مرة أخرى', 'Upload failed. Please try again.'), 'error');
-    }
-  };
-
   const goToShipping = () => {
     const ok = validateStep1();
     if (!ok) {
@@ -438,7 +388,6 @@ const Checkout: React.FC = () => {
       return;
     }
 
-    // 🛡️ فحص نهائي للمخزون قبل إرسال الطلب (Final Stock Check)
     const outOfStockItems = validatedCart.filter(item => item.stock !== undefined && item.quantity > item.stock);
     if (outOfStockItems.length > 0) {
       showToast(
@@ -467,7 +416,6 @@ const Checkout: React.FC = () => {
 
     if (paymentMethod === 'cliq') {
       const ref = safeTrim(cliqRef);
-
       if (!ref) {
         showToast(
           tt('enterCliqRef', 'يرجى إدخال الرقم المرجعي لحوالة CliQ', 'Please enter the CliQ reference number.'),
@@ -475,7 +423,6 @@ const Checkout: React.FC = () => {
         );
         return;
       }
-
       if (ref.length < 4 || ref.length > 40) {
         showToast(
           tt('invalidCliqRef', 'الرقم المرجعي غير صالح', 'Invalid CliQ reference number.'),
@@ -502,7 +449,6 @@ const Checkout: React.FC = () => {
       const nowMs = now.getTime();
       const orderId = makeOrderId();
 
-      // إنشاء كائن الطلب باستخدام الأسعار الموثقة
       const newOrder: Order & any = {
         id: orderId,
         userId: user ? user.id : 'guest',
@@ -515,7 +461,7 @@ const Checkout: React.FC = () => {
         items: validatedCart.map((item: any) => ({
           productId: item.id,
           name: item.name,
-          price: Number(item.price || 0), // السعر الحقيقي
+          price: Number(item.price || 0),
           quantity: clampQty(item.quantity),
           image: item.image,
         })),
@@ -532,7 +478,7 @@ const Checkout: React.FC = () => {
           ? { date: safeTrim(preferredDeliveryDate) || undefined, time: safeTrim(preferredDeliveryTime) || undefined }
           : undefined,
         paymentDetails: paymentMethod === 'cliq'
-          ? { cliqReference: safeTrim(cliqRef), receiptImage: cliqReceiptUrl || undefined, isPaid: false }
+          ? { cliqReference: safeTrim(cliqRef), isPaid: false }
           : undefined,
         address: { fullName: normalizeName(formData.fullName) || 'Guest', city: shippingCityName, street: shippingStreet, phone: shippingPhoneE164 },
         addressMeta: { country: JO_COUNTRY.nameEn, countryCode: JO_COUNTRY.code, citySlug: formData.citySlug, postalCode: safeTrim(formData.postalCode) || undefined, saveInfo: !!formData.saveInfo, phoneDial: dialCode, phoneLocal: safeTrim(formData.phoneLocal) },
@@ -541,17 +487,14 @@ const Checkout: React.FC = () => {
           : { fullName: normalizeName(formData.billingFullName), city: billingCityName, street: billingStreet, phone: billingPhoneE164, meta: { citySlug: formData.billingCitySlug, postalCode: safeTrim(formData.billingPostalCode) || undefined, phoneDial: dialCode, phoneLocal: safeTrim(formData.billingPhoneLocal) } },
       };
 
+      // 🚀 إرسال للخلفية بدون await لتجنب تعليق الموقع (Fire and Forget)
       const workerUrl = import.meta.env.VITE_WORKER_URL;
       if (workerUrl && workerUrl.trim() !== '') {
-        try {
-          await fetch(`${workerUrl}/create-order`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ order: newOrder }),
-          });
-        } catch (workerError) {
-          console.warn('Backend sync skipped or failed. Order will proceed locally.', workerError);
-        }
+        fetch(`${workerUrl}/create-order`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order: newOrder }),
+        }).catch(e => console.warn('Background sync error', e));
       }
 
       try {
@@ -564,26 +507,26 @@ const Checkout: React.FC = () => {
 
       try {
         sessionStorage.setItem(`order_success_${newOrder.id}`, JSON.stringify(newOrder));
-      } catch (storageError) {
-        console.error('Failed to cache order success payload:', storageError);
-      }
+      } catch (storageError) {}
 
       clearCart();
       if (typeof clearOrderNote === 'function') clearOrderNote();
       
-      try {
-        await refreshProducts();
-      } catch (refreshError) {
-        console.error('refreshProducts failed:', refreshError);
-      }
+      try { refreshProducts(); } catch (e) {}
 
       showToast(tt('alertSet', 'تم استلام طلبك بنجاح', 'Order placed successfully.'), 'success');
+
+      // 🚀 تحويل الواتساب الذكي بدلاً من رفع الصورة
+      if (paymentMethod === 'cliq') {
+        const waMsg = `مرحباً متجر دير شرف 👋\nتم الدفع عبر CliQ، وهذا طلبي الجديد.\n\n*الاسم:* ${normalizeName(formData.fullName)}\n*رقم الطلب:* #${orderId}\n*الرقم المرجعي للتحويل:* ${safeTrim(cliqRef)}\n\n(يرجى إرفاق صورة إيصال التحويل مع هذه الرسالة لتأكيد طلبك ✅)`;
+        const waUrl = `https://wa.me/${STORE_WHATSAPP}?text=${encodeURIComponent(waMsg)}`;
+        window.open(waUrl, '_blank');
+      }
 
       navigate(`/order-success/${newOrder.id}`, { state: { order: newOrder }, replace: true });
     } catch (error: any) {
       console.error('Checkout submit failed:', error);
       showToast(tt('placeOrderFailed', 'فشل إنشاء الطلب، يرجى المحاولة مرة أخرى', 'Failed to place order. Please try again.'), 'error');
-    } finally {
       setIsProcessing(false);
     }
   };
@@ -922,7 +865,7 @@ const Checkout: React.FC = () => {
                 </h2>
 
                 <div className="space-y-4">
-                  {CHECKOUT_SHIPPING_METHODS.map((method) => {
+                  {dynamicShippingMethods.map((method) => {
                     const active = shippingMethodId === method.id;
                     const Icon = method.icon || Truck;
 
@@ -935,6 +878,7 @@ const Checkout: React.FC = () => {
                             ? 'border-sky-500 bg-sky-50 shadow-md shadow-sky-500/10' 
                             : 'border-slate-100 bg-white hover:border-slate-300 hover:bg-slate-50',
                         ].join(' ')}
+                        onClick={() => setShippingMethodId(method.id)}
                       >
                         <div className="flex items-center gap-4">
                           <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${active ? 'border-sky-500' : 'border-slate-300'}`}>
@@ -958,43 +902,6 @@ const Checkout: React.FC = () => {
                       </label>
                     );
                   })}
-                </div>
-
-                <div className="mt-8 pt-8 border-t border-slate-100">
-                  <p className="text-sm font-black uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-2">
-                    <CalendarClock size={18} strokeWidth={2.5} />
-                    {tt('preferredDelivery', 'تحديد موعد الاستلام', 'Schedule Delivery Time')}
-                    <span className="text-slate-400 font-bold text-[10px] bg-slate-100 px-2 py-0.5 rounded-md normal-case">
-                      {shippingMethodId === 'jo_schedule' ? tt('required', 'إجباري', 'Required') : tt('optional', 'اختياري', 'Optional')}
-                    </span>
-                  </p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <input
-                        type="date"
-                        value={preferredDeliveryDate}
-                        onChange={(e) => {
-                          setPreferredDeliveryDate(e.target.value);
-                          setErrors((p) => { const n = { ...p }; delete n.preferredDeliveryDate; return n; });
-                        }}
-                        className={inputClass(!!errors.preferredDeliveryDate)}
-                      />
-                      {errors.preferredDeliveryDate && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.preferredDeliveryDate}</p>}
-                    </div>
-                    <div>
-                      <input
-                        type="time"
-                        value={preferredDeliveryTime}
-                        onChange={(e) => {
-                          setPreferredDeliveryTime(e.target.value);
-                          setErrors((p) => { const n = { ...p }; delete n.preferredDeliveryTime; return n; });
-                        }}
-                        className={inputClass(!!errors.preferredDeliveryTime)}
-                      />
-                      {errors.preferredDeliveryTime && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.preferredDeliveryTime}</p>}
-                    </div>
-                  </div>
                 </div>
 
                 <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col-reverse sm:flex-row justify-between gap-4">
@@ -1055,20 +962,47 @@ const Checkout: React.FC = () => {
                 {paymentMethod === 'cliq' && (
                   <div className="space-y-6 animate-in fade-in duration-300">
                     <div className="bg-gradient-to-br from-indigo-50 to-white border border-indigo-100 rounded-3xl p-6 text-center shadow-inner">
-                      <p className="text-sm text-indigo-800 mb-3 font-bold uppercase tracking-widest">
-                        {tt('cliqTransferHint', 'يرجى تحويل القيمة إلى حساب CliQ التالي:', 'Please transfer the amount to this CliQ ID:')}
+                      <p className="text-sm text-indigo-800 mb-4 font-bold uppercase tracking-widest">
+                        معلومات حساب CliQ الخاص بالمتجر:
                       </p>
-                      <div className="text-3xl sm:text-4xl font-black text-indigo-900 tracking-widest mb-4 select-all cursor-pointer bg-white px-6 py-3 rounded-2xl inline-block shadow-sm border border-indigo-50 hover:scale-105 transition-transform">
-                        ANTASTORE
+                      
+                      {/* 🚀 تصميم فخم لبيانات CliQ الخاصة بك مع زر نسخ للرقم */}
+                      <div className="flex flex-col gap-3 max-w-sm mx-auto mb-6">
+                        <div className="bg-white px-5 py-4 rounded-xl shadow-sm border border-indigo-50 flex justify-between items-center">
+                          <span className="text-slate-400 text-sm font-bold">الاسم (Name):</span>
+                          <span className="font-black text-indigo-900 text-[13px] text-left uppercase leading-tight max-w-[180px]">
+                            Moien AbedAlAzizi Mahmoud Antari
+                          </span>
+                        </div>
+                        
+                        <div 
+                          onClick={() => {
+                            navigator.clipboard.writeText('0796969081');
+                            showToast('تم نسخ الرقم بنجاح', 'success');
+                          }}
+                          className="bg-white px-5 py-4 rounded-xl shadow-sm border border-indigo-200 flex justify-between items-center cursor-pointer hover:bg-indigo-50/80 transition-all group"
+                        >
+                          <span className="text-slate-400 text-sm font-bold flex items-center gap-2">
+                            <Copy size={14} className="group-hover:text-indigo-500 transition-colors" />
+                            الرقم / Alias:
+                          </span>
+                          <span className="font-black text-xl text-indigo-600 tracking-widest">0796969081</span>
+                        </div>
+
+                        <div className="bg-white px-5 py-4 rounded-xl shadow-sm border border-indigo-50 flex justify-between items-center">
+                          <span className="text-slate-400 text-sm font-bold">البنك (Bank):</span>
+                          <span className="font-black text-indigo-900 text-sm">بنك الأردن (Bank of Jordan)</span>
+                        </div>
                       </div>
-                      <div className="flex flex-col gap-1 text-sm font-bold text-indigo-700/80 bg-white/50 py-3 rounded-xl max-w-xs mx-auto">
-                        <p>{tt('cliqRecipient', 'الجهة المستفيدة:', 'Recipient:')} <span className="text-indigo-900">مكتبة دير شرف Tech & Art</span></p>
-                        <p>{tt('amount', 'إجمالي المبلغ:', 'Total Amount:')} <span className="text-indigo-900 font-black text-base">{formatMoney(total)}</span></p>
+
+                      <div className="bg-indigo-900 text-white rounded-2xl py-5 flex flex-col items-center justify-center shadow-md">
+                        <span className="text-indigo-200 text-sm mb-1 font-bold">المبلغ الإجمالي المطلوب تحويله:</span>
+                        <span className="text-3xl font-black tabular-nums">{formatMoney(total)}</span>
                       </div>
                     </div>
 
-                    <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100">
-                      <label className="block text-sm font-black text-slate-800 mb-3">
+                    <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100 text-center">
+                      <label className="block text-sm font-black text-slate-800 mb-3 text-start">
                         {tt('referenceOrReceipt', 'الرقم المرجعي للعملية (Reference Number)', 'Transaction Reference Number')} <span className="text-red-500">*</span>
                       </label>
                       <input
@@ -1076,50 +1010,18 @@ const Checkout: React.FC = () => {
                         placeholder={tt('enterCliqRef', 'رقم مكون من أرقام أو أحرف', 'e.g. 1234567890')}
                         value={cliqRef}
                         onChange={(e) => setCliqRef(e.target.value)}
-                        className={inputClass(false) + ' bg-white mb-5 text-center tracking-wider'}
+                        className={inputClass(false) + ' bg-white mb-5 text-center tracking-wider text-xl font-black'}
                       />
 
-                      <label className="block text-sm font-black text-slate-800 mb-3">
-                        {tt('uploadReceipt', 'صورة أو لقطة شاشة للإيصال', 'Screenshot of Receipt')} <span className="text-slate-400 text-xs normal-case">({tt('optional', 'مستحسن لتسريع التأكيد', 'Recommended for faster processing')})</span>
-                      </label>
-                      <label className="block group">
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => handleCliqReceiptPick(e.target.files?.[0] ?? null)}
-                        />
-                        <div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center bg-white group-hover:bg-sky-50 group-hover:border-sky-300 cursor-pointer transition-all duration-300">
-                          <div className="w-14 h-14 bg-slate-50 group-hover:bg-white rounded-full flex items-center justify-center mx-auto mb-3 transition-colors">
-                            <Upload className="text-slate-400 group-hover:text-sky-500" strokeWidth={2.5} />
-                          </div>
-                          <span className="text-sm text-slate-700 font-black block mb-1">
-                            {tt('clickToUpload', 'اضغط هنا لرفع الصورة', 'Click here to upload')}
-                          </span>
-                          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                            {tt('uploadHint', 'صيغة JPG أو PNG. بحد أقصى 2.5 ميجابايت', 'JPG or PNG. Max 2.5MB')}
-                          </p>
+                      {/* 🚀 إشعار الواتساب الجميل (بديل مربع الرفع اللي كان يعلق) */}
+                      <div className="bg-[#25D366]/10 border border-[#25D366]/20 rounded-2xl p-4 flex flex-col sm:flex-row items-center gap-4 text-start">
+                        <div className="w-12 h-12 shrink-0 bg-[#25D366]/20 text-[#25D366] rounded-full flex items-center justify-center">
+                           <MessageCircle size={24} strokeWidth={2.5} />
                         </div>
-                      </label>
-
-                      {(cliqReceiptPreview || cliqReceiptUrl) && (
-                        <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-2 animate-in zoom-in-95 duration-300 relative group">
-                          <img
-                            src={cliqReceiptPreview || cliqReceiptUrl}
-                            alt="Receipt preview"
-                            className="w-full h-48 object-cover rounded-xl"
-                          />
-                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 rounded-xl transition-opacity flex items-center justify-center">
-                            <button
-                              type="button"
-                              onClick={(e) => { e.preventDefault(); setCliqReceiptPreview(''); setCliqReceiptUrl(''); }}
-                              className="bg-white text-red-500 font-black px-4 py-2 rounded-xl hover:scale-105 transition-transform shadow-lg"
-                            >
-                              {tt('remove', 'إزالة الصورة', 'Remove Image')}
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                        <p className="text-sm font-bold text-slate-700 leading-relaxed">
+                          لتسريع العملية وضمان عدم التعليق، سيتم <span className="text-[#25D366] font-black">تحويلك إلى الواتساب</span> لإرسال صورة الإيصال بمجرد النقر على زر تأكيد الطلب بالأسفل.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1152,7 +1054,7 @@ const Checkout: React.FC = () => {
                     isLoading={isProcessing}
                     disabled={isProcessing}
                   >
-                    {tt('placeOrder', 'تأكيد وإتمام الطلب', 'Confirm & Place Order')}
+                    {isProcessing ? 'جاري تأكيد الطلب...' : tt('placeOrder', 'تأكيد وإتمام الطلب', 'Confirm & Place Order')}
                   </Button>
                 </div>
               </div>

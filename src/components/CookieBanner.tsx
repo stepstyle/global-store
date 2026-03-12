@@ -50,6 +50,16 @@ const CookieBanner: React.FC = () => {
     }
   }, []);
 
+  const accept = useCallback(() => {
+    safeStorage.set(COOKIE_KEY, 'accepted');
+    setShow(false);
+  }, []);
+
+  const decline = useCallback(() => {
+    safeStorage.set(COOKIE_KEY, 'declined');
+    setShow(false);
+  }, []);
+
   useEffect(() => {
     const choice = safeStorage.get(COOKIE_KEY) as CookieChoice | null;
     if (choice === 'accepted' || choice === 'declined') return;
@@ -62,21 +72,11 @@ const CookieBanner: React.FC = () => {
   useEffect(() => {
     if (!show) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setShow(false);
+      if (e.key === 'Escape') decline(); // تم التعديل هنا لحفظ القرار
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [show]);
-
-  const accept = useCallback(() => {
-    safeStorage.set(COOKIE_KEY, 'accepted');
-    setShow(false);
-  }, []);
-
-  const decline = useCallback(() => {
-    safeStorage.set(COOKIE_KEY, 'declined');
-    setShow(false);
-  }, []);
+  }, [show, decline]); // أضفنا decline للمصفوفة
 
   if (!show) return null;
 
@@ -104,7 +104,7 @@ const CookieBanner: React.FC = () => {
           </div>
           <button
             type="button"
-            onClick={() => setShow(false)}
+            onClick={decline} // تم التعديل هنا لحفظ القرار بدلاً من الإخفاء فقط
             className="p-2 rounded-xl hover:bg-white/10 transition-colors text-slate-400 hover:text-white"
             aria-label="Close"
           >
