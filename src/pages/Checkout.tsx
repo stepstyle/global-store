@@ -12,9 +12,8 @@ import {
   ShoppingBag,
   Mail,
   Phone,
-  CalendarClock,
   MessageCircle,
-  Copy // 👈 إضافة أيقونة النسخ
+  Copy
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
 import { db } from '../services/storage';
@@ -33,53 +32,88 @@ const clampQty = (n: any) => {
   return Math.max(1, Math.min(99, x));
 };
 
-// 🚨 رقم واتساب المتجر 
+// 🚨 رقم واتساب المتجر
 const STORE_WHATSAPP = '962796969081';
 
 const JO_COUNTRY = { code: 'JO', nameAr: 'الأردن', nameEn: 'Jordan' };
 
-const JO_GOVS: Array<{ slug: string; ar: string; en: string }> = [
-  { slug: 'amman', ar: 'عمّان', en: 'Amman' },
-  { slug: 'zarqa', ar: 'الزرقاء', en: 'Zarqa' },
-  { slug: 'irbid', ar: 'إربد', en: 'Irbid' },
-  { slug: 'ajloun', ar: 'عجلون', en: 'Ajloun' },
-  { slug: 'jerash', ar: 'جرش', en: 'Jerash' },
-  { slug: 'mafraq', ar: 'المفرق', en: 'Mafraq' },
-  { slug: 'balqa', ar: 'البلقاء', en: 'Balqa' },
-  { slug: 'madaba', ar: 'مادبا', en: 'Madaba' },
-  { slug: 'karak', ar: 'الكرك', en: 'Karak' },
-  { slug: 'tafilah', ar: 'الطفيلة', en: 'Tafilah' },
-  { slug: 'maan', ar: 'معان', en: "Ma'an" },
-  { slug: 'aqaba', ar: 'العقبة', en: 'Aqaba' },
+// 🚀 هذا هو تعريف REGIONS اللي ناقص عندك
+const REGIONS = [
+  {
+    labelAr: 'محافظات الوسط',
+    labelEn: 'Central Region',
+    govs: [
+      { slug: 'amman', ar: 'عمّان (العاصمة)', en: 'Amman' },
+      { slug: 'zarqa', ar: 'الزرقاء', en: 'Zarqa' },
+      { slug: 'balqa', ar: 'البلقاء (السلط)', en: 'Balqa' },
+      { slug: 'madaba', ar: 'مادبا', en: 'Madaba' },
+    ]
+  },
+  {
+    labelAr: 'محافظات الشمال',
+    labelEn: 'Northern Region',
+    govs: [
+      { slug: 'irbid', ar: 'إربد', en: 'Irbid' },
+      { slug: 'jerash', ar: 'جرش', en: 'Jerash' },
+      { slug: 'ajloun', ar: 'عجلون', en: 'Ajloun' },
+      { slug: 'mafraq', ar: 'المفرق', en: 'Mafraq' },
+    ]
+  },
+  {
+    labelAr: 'محافظات الجنوب',
+    labelEn: 'Southern Region',
+    govs: [
+      { slug: 'karak', ar: 'الكرك', en: 'Karak' },
+      { slug: 'tafilah', ar: 'الطفيلة', en: 'Tafilah' },
+      { slug: 'maan', ar: 'معان', en: "Ma'an" },
+      { slug: 'aqaba', ar: 'العقبة', en: 'Aqaba' },
+    ]
+  }
 ];
 
+// استخراج المحافظات كقائمة مسطحة عشان الكود القديم ما يضرب
+const JO_GOVS = REGIONS.flatMap(r => r.govs);
+// 🚀 قائمة احترافية بأسماء مناطق عمان الحقيقية مبرمجة مع التسعيرة الذكية المخفية عن الزبون
+const AMMAN_AREAS = [
+  { id: 'a1', nameAr: 'النزهة / طبربور / طارق', nameEn: 'Nuzha / Tabarbour / Tariq', price: 1.5, isOutskirt: false },
+  { id: 'a2', nameAr: 'جبل الحسين / اللويبدة / العبدلي', nameEn: 'Jabal Hussein / Lweibdeh / Abdali', price: 1.5, isOutskirt: false },
+  { id: 'a3', nameAr: 'الهاشمي الشمالي والجنوبي / ماركا', nameEn: 'Hashimi / Marka', price: 1.5, isOutskirt: false },
+  { id: 'a4', nameAr: 'ضاحية الأقصى / الاستقلال', nameEn: 'Dahiyet Al Aqsa / Istiqlal', price: 1.5, isOutskirt: false },
+  { id: 'a5', nameAr: 'وسط البلد / الأشرفية / الوحدات', nameEn: 'Downtown / Ashrafieh / Wehdat', price: 2.5, isOutskirt: false },
+  { id: 'a6', nameAr: 'تلاع العلي / خلدا / أم السماق', nameEn: 'Tlaa Al Ali / Khalda / Um Al Summaq', price: 2.5, isOutskirt: false },
+  { id: 'a7', nameAr: 'الشميساني / عبدون / دير غبار / الصويفية', nameEn: 'Shmeisani / Abdoun / Sweifieh', price: 2.5, isOutskirt: false },
+  { id: 'a8', nameAr: 'الدوار السابع والثامن / البيادر', nameEn: '7th & 8th Circle / Bayader', price: 2.5, isOutskirt: false },
+  { id: 'a9', nameAr: 'الجبيهة / أبو نصير / شفا بدران', nameEn: 'Jubeiha / Abu Nuseir / Shafa Badran', price: 3.5, isOutskirt: false },
+  { id: 'a10', nameAr: 'دابوق / بدر الجديدة / الفحيص', nameEn: 'Dabouq / Badr Al Jadeedah', price: 3.5, isOutskirt: false },
+  { id: 'a11', nameAr: 'مرج الحمام / المقابلين / البنيات', nameEn: 'Marj Al Hamam / Muqabalain', price: 3.5, isOutskirt: false },
+  { id: 'a12', nameAr: 'سحاب / أبو علندا / اليادودة', nameEn: 'Sahab / Abu Alanda / Yadoudeh', price: 0, isOutskirt: true },
+  { id: 'a13', nameAr: 'الجيزة / خريبة السوق / القسطل', nameEn: 'Jizah / Khreibet Souq', price: 0, isOutskirt: true },
+  { id: 'a14', nameAr: 'ناعور / طريق المطار', nameEn: 'Naour / Airport Road', price: 0, isOutskirt: true },
+];
 type DialOption = { code: string; dial: string; flag: string; nameAr: string; nameEn: string };
 const DIAL_OPTIONS: DialOption[] = [
   { code: 'JO', dial: '+962', flag: '🇯🇴', nameAr: 'الأردن', nameEn: 'Jordan' },
-  { code: 'PS', dial: '+970', flag: '🇵🇸', nameAr: 'فلسطين', nameEn: 'Palestine' },
-  { code: 'AE', dial: '+971', flag: '🇦🇪', nameAr: 'الإمارات', nameEn: 'UAE' },
-  { code: 'SA', dial: '+966', flag: '🇸🇦', nameAr: 'السعودية', nameEn: 'Saudi Arabia' },
-  { code: 'EG', dial: '+20', flag: '🇪🇬', nameAr: 'مصر', nameEn: 'Egypt' },
-  { code: 'IQ', dial: '+964', flag: '🇮🇶', nameAr: 'العراق', nameEn: 'Iraq' },
-  { code: 'KW', dial: '+965', flag: '🇰🇼', nameAr: 'الكويت', nameEn: 'Kuwait' },
-  { code: 'QA', dial: '+974', flag: '🇶🇦', nameAr: 'قطر', nameEn: 'Qatar' },
-  { code: 'BH', dial: '+973', flag: '🇧🇭', nameAr: 'البحرين', nameEn: 'Bahrain' },
-  { code: 'TR', dial: '+90', flag: '🇹🇷', nameAr: 'تركيا', nameEn: 'Turkey' },
-  { code: 'US', dial: '+1', flag: '🇺🇸', nameAr: 'أمريكا', nameEn: 'United States' },
-  { code: 'GB', dial: '+44', flag: '🇬🇧', nameAr: 'بريطانيا', nameEn: 'United Kingdom' },
 ];
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// 🚀 التحقق الصارم من رقم الهاتف الأردني
+const isValidJordanPhone = (phone: string) => {
+  const cleanPhone = digitsOnly(phone);
+  return /^(079|078|077)\d{7}$/.test(cleanPhone);
+};
+
+const digitsOnly = (s: string) => String(s ?? '').replace(/[^\d]/g, '');
+
 const normalizeName = (name: string) => safeTrim(name).replace(/\s+/g, ' ');
 const normalizeAddress = (addr: string) => safeTrim(addr).replace(/\s+/g, ' ');
-const digitsOnly = (s: string) => String(s ?? '').replace(/[^\d]/g, '');
 
 const normalizePhoneGlobal = (dial: string, local: string) => {
   const d = String(dial || '').trim();
   const num = digitsOnly(local);
   if (!d || !num) return '';
-  return `${d}${num}`;
+  const cleanLocal = num.startsWith('0') ? num.substring(1) : num;
+  return `${d}${cleanLocal}`;
 };
 
 const makeOrderId = () => {
@@ -108,6 +142,7 @@ const Checkout: React.FC = () => {
 
   const navigate = useNavigate();
   const isAR = language === 'ar';
+  const isLoggedIn = !!user?.id;
 
   const tr = (ar: string, en: string) => (isAR ? ar : en);
 
@@ -133,13 +168,14 @@ const Checkout: React.FC = () => {
   }, [user?.email]);
 
   const [dialCode, setDialCode] = useState<string>(() => '+962');
-
   const [cliqRef, setCliqRef] = useState('');
 
   const [formData, setFormData] = useState({
     fullName: '',
     country: JO_COUNTRY.nameEn,
     citySlug: '',
+    ammanAreaId: '', // المنطقة المختارة في عمان
+    ammanOutskirtSpeed: 'nextDay', // لخيارات التوصيل في أطراف عمان
     streetAddress: '',
     postalCode: '',
     phoneLocal: '',
@@ -152,10 +188,9 @@ const Checkout: React.FC = () => {
     billingPostalCode: '',
   });
 
-  const [preferredDeliveryDate, setPreferredDeliveryDate] = useState('');
-  const [preferredDeliveryTime, setPreferredDeliveryTime] = useState('');
   const [acceptPolicies, setAcceptPolicies] = useState(true);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+const [acceptDeliveryPolicy, setAcceptDeliveryPolicy] = useState(false);
+const [errors, setErrors] = useState<Record<string, string>>({});
 
   const changeStep = (newStep: number) => {
     setStep(newStep);
@@ -177,40 +212,70 @@ const Checkout: React.FC = () => {
   const formatMoney = (value: number) =>
     fmt ? fmt.format(value) : `JOD ${Number(value || 0).toFixed(2)}`;
 
+  // 🚀 النظام الذكي لاحتساب التكلفة حسب المنطقة
+  const selectedAmmanArea = useMemo(() => {
+    return AMMAN_AREAS.find(a => a.id === formData.ammanAreaId);
+  }, [formData.ammanAreaId]);
+
   const baseShippingCost = useMemo(() => {
     const slug = formData.citySlug;
-    if (!slug) return 0;
-    if (slug === 'amman') return 1.5;
-    if (['zarqa', 'balqa', 'madaba'].includes(slug)) return 2.5;
-    if (['irbid', 'jerash', 'ajloun'].includes(slug)) return 3.0;
-    if (['mafraq', 'karak', 'tafilah', 'maan'].includes(slug)) return 4.0;
-    if (slug === 'aqaba') return 5.0;
-    return 2.5;
-  }, [formData.citySlug]);
+if (!slug) return 0;
 
-  const dynamicShippingMethods = useMemo(() => [
-    {
+if (slug === 'amman') {
+  const area = AMMAN_AREAS.find(a => a.id === formData.ammanAreaId);
+  if (!area) return 0;
+  if (area.isOutskirt) {
+    // إذا اختار سحاب/ماركا: اليوم 4 دنانير، بكرة 3 دنانير
+    return formData.ammanOutskirtSpeed === 'sameDay' ? 4.0 : 3.0;
+  }
+  return area.price;
+}
+
+// أي محافظة ثانية سعر ثابت 3 دنانير
+return 3.0;
+  }, [formData.citySlug, selectedAmmanArea, formData.ammanOutskirtSpeed]);
+
+  const dynamicShippingMethods = useMemo(() => {
+    // المحافظات
+    if (formData.citySlug !== 'amman') {
+      return [{
+        id: 'standard',
+        nameAr: 'توصيل للمحافظات',
+        nameEn: 'Governorates Delivery',
+        durationAr: 'يصلك خلال 48 ساعة',
+        durationEn: 'Within 48 hours',
+        price: baseShippingCost,
+        icon: Truck,
+      }];
+    }
+
+    // عمان (الأطراف)
+    if (selectedAmmanArea?.isOutskirt) {
+       return [{
+        id: 'standard',
+        nameAr: 'توصيل لمنطقة الأطراف',
+        nameEn: 'Outskirts Delivery',
+        durationAr: formData.ammanOutskirtSpeed === 'sameDay' ? 'توصيل في نفس اليوم' : 'توصيل خلال 24 ساعة',
+        durationEn: formData.ammanOutskirtSpeed === 'sameDay' ? 'Same Day Delivery' : 'Next Day Delivery',
+        price: baseShippingCost,
+        icon: Truck,
+      }];
+    }
+
+    // عمان (المناطق الداخلية)
+    return [{
       id: 'standard',
-      nameAr: 'توصيل للمنطقة المحددة',
-      nameEn: 'Standard Delivery',
-      durationAr: 'خلال 24–48 ساعة',
-      durationEn: 'Within 24–48 hours',
+      nameAr: 'توصيل داخل عمان',
+      nameEn: 'Amman Delivery',
+      durationAr: 'توصيل سريع ومباشر',
+      durationEn: 'Fast & Direct Delivery',
       price: baseShippingCost,
       icon: Truck,
-    },
-    {
-      id: 'express',
-      nameAr: 'توصيل سريع (نفس اليوم)',
-      nameEn: 'Express Delivery (Same Day)',
-      durationAr: 'خلال 12 ساعة',
-      durationEn: 'Within 12 hours',
-      price: baseShippingCost + 1.5,
-      icon: Truck,
-    }
-  ], [baseShippingCost]);
+    }];
+  }, [baseShippingCost, formData.citySlug, selectedAmmanArea, formData.ammanOutskirtSpeed]);
 
   const selectedShipping = useMemo(
-    () => dynamicShippingMethods.find((m) => m.id === shippingMethodId),
+    () => dynamicShippingMethods.find((m) => m.id === shippingMethodId) || dynamicShippingMethods[0],
     [shippingMethodId, dynamicShippingMethods]
   );
 
@@ -249,11 +314,6 @@ const Checkout: React.FC = () => {
   const shippingCost = selectedShipping ? Number(selectedShipping.price || 0) : 0;
   const total = Math.max(0, subtotal - discountAmount + shippingCost);
 
-  const cityLabel = (slug: string) => {
-    const c = JO_GOVS.find((x) => x.slug === slug);
-    return c ? (isAR ? c.ar : c.en) : '';
-  };
-
   const setField = (key: string, value: any) => {
     setFormData((p) => ({ ...p, [key]: value }));
     setErrors((p) => {
@@ -273,107 +333,66 @@ const Checkout: React.FC = () => {
   };
 
   const validateStep1 = () => {
-    const nextErr: Record<string, string> = {};
-    const needEmail = !user?.id;
-    const e = safeTrim(email);
+  const nextErr: Record<string, string> = {};
+  const currentEmail = safeTrim(email || user?.email || '');
 
-    if (needEmail && !e) {
-      nextErr.email = tt('emailRequired', 'البريد الإلكتروني مطلوب', 'Email is required.');
-    } else if (e && !emailRegex.test(e)) {
-      nextErr.email = tt('emailInvalid', 'البريد الإلكتروني غير صحيح', 'Invalid email address.');
-    }
+  if (!isLoggedIn && !currentEmail) {
+    nextErr.email = tr('البريد الإلكتروني مطلوب للضيوف', 'Email is required for guests');
+  } else if (currentEmail && !emailRegex.test(currentEmail)) {
+    nextErr.email = tr('البريد الإلكتروني غير صحيح', 'Invalid email');
+  }
 
-    const name = normalizeName(formData.fullName);
-    if (name.length < 5) {
-      nextErr.fullName = tt('nameMin5', 'الاسم يجب أن يكون 5 أحرف على الأقل', 'Name must be at least 5 characters.');
-    }
+  const name = normalizeName(formData.fullName);
+  if (name.length < 5) {
+    nextErr.fullName = tt(
+      'nameMin5',
+      'الاسم يجب أن يكون 5 أحرف على الأقل',
+      'Name must be at least 5 characters.'
+    );
+  }
 
-    if (!safeTrim(formData.country)) {
-      nextErr.country = tt('countryRequired', 'الدولة مطلوبة', 'Country is required.');
-    }
+  if (!safeTrim(formData.citySlug)) {
+    nextErr.citySlug = tt('cityRequired', 'المدينة مطلوبة', 'City is required.');
+  } else if (formData.citySlug === 'amman' && !safeTrim(formData.ammanAreaId)) {
+    nextErr.ammanAreaId = tt(
+      'areaRequired',
+      'يرجى تحديد منطقتك السكنية',
+      'Please select your residential area.'
+    );
+  }
 
-    if (!safeTrim(formData.citySlug)) {
-      nextErr.citySlug = tt('cityRequired', 'المدينة مطلوبة', 'City is required.');
-    }
+  const addr = normalizeAddress(formData.streetAddress);
+  if (addr.length < 8) {
+    nextErr.streetAddress = tt(
+      'addressMin8',
+      'يرجى كتابة العنوان بالتفصيل (8 أحرف على الأقل)',
+      'Please write a detailed address (at least 8 characters).'
+    );
+  }
 
-    const addr = normalizeAddress(formData.streetAddress);
-    if (addr.length < 8) {
-      nextErr.streetAddress = tt(
-        'addressMin8',
-        'يرجى كتابة العنوان بالتفصيل (8 أحرف على الأقل)',
-        'Please write a detailed address (at least 8 characters).'
-      );
-    }
+  if (!isValidJordanPhone(formData.phoneLocal)) {
+    nextErr.phoneLocal = tt(
+      'phoneInvalid',
+      'يرجى إدخال رقم أردني صحيح (يبدأ بـ 079, 078, 077)',
+      'Please enter a valid Jordanian number (079, 078, 077).'
+    );
+  }
 
-    const e164 = normalizePhoneGlobal(dialCode, formData.phoneLocal);
-    if (!e164) {
-      nextErr.phoneLocal = tt('phoneInvalid', 'رقم الهاتف غير صحيح', 'Invalid phone number.');
-    } else if (digitsOnly(formData.phoneLocal).length < 6) {
-      nextErr.phoneLocal = tt('phoneTooShort', 'رقم الهاتف قصير جداً', 'Phone number is too short.');
-    }
+  if (!acceptPolicies) {
+    nextErr.acceptPolicies = tt(
+      'acceptPoliciesRequired',
+      'يجب الموافقة على سياسات المتجر لإتمام الطلب',
+      'You must accept the store policies to place the order.'
+    );
+  }
 
-    if (shippingMethodId === 'jo_schedule') {
-      if (!safeTrim(preferredDeliveryDate)) {
-        nextErr.preferredDeliveryDate = tt('dateRequired', 'التاريخ مطلوب', 'Date is required.');
-      }
-      if (!safeTrim(preferredDeliveryTime)) {
-        nextErr.preferredDeliveryTime = tt('timeRequired', 'الوقت مطلوب', 'Time is required.');
-      }
-    }
-
-    if (!acceptPolicies) {
-      nextErr.acceptPolicies = tt(
-        'acceptPoliciesRequired',
-        'يجب الموافقة على سياسات المتجر لإتمام الطلب',
-        'You must accept the store policies to place the order.'
-      );
-    }
-
-    if (!formData.billingSameAsShipping) {
-      const bn = normalizeName(formData.billingFullName);
-      if (bn.length < 5) {
-        nextErr.billingFullName = tt(
-          'billingNameMin5',
-          'اسم الفاتورة يجب أن يكون 5 أحرف على الأقل',
-          'Billing name must be at least 5 characters.'
-        );
-      }
-
-      if (!safeTrim(formData.billingCitySlug)) {
-        nextErr.billingCitySlug = tt(
-          'billingCityRequired',
-          'مدينة الفاتورة مطلوبة',
-          'Billing city is required.'
-        );
-      }
-
-      const ba = normalizeAddress(formData.billingStreetAddress);
-      if (ba.length < 8) {
-        nextErr.billingStreetAddress = tt(
-          'billingAddressMin8',
-          'عنوان الفاتورة بالتفصيل (8 أحرف على الأقل)',
-          'Billing address must be detailed (at least 8 characters).'
-        );
-      }
-
-      const bE164 = normalizePhoneGlobal(dialCode, formData.billingPhoneLocal);
-      if (!bE164) {
-        nextErr.billingPhoneLocal = tt(
-          'billingPhoneInvalid',
-          'رقم هاتف الفاتورة غير صحيح',
-          'Invalid billing phone.'
-        );
-      }
-    }
-
-    setErrors(nextErr);
-    return Object.keys(nextErr).length === 0;
-  };
-
+  setErrors(nextErr);
+  return Object.keys(nextErr).length === 0;
+};
   const goToShipping = () => {
     const ok = validateStep1();
     if (!ok) {
-      showToast(tt('fixErrors', 'يرجى تصحيح الحقول المطلوبة', 'Please fix the required fields.'), 'error');
+      showToast(tt('fixErrors', 'يرجى تصحيح الحقول المحددة باللون الأحمر', 'Please fix the required fields.'), 'error');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
@@ -388,16 +407,6 @@ const Checkout: React.FC = () => {
       return;
     }
 
-    const outOfStockItems = validatedCart.filter(item => item.stock !== undefined && item.quantity > item.stock);
-    if (outOfStockItems.length > 0) {
-      showToast(
-        tr('عذراً، لقد نفدت كمية بعض المنتجات من المخزون للتو. يرجى مراجعة السلة.', 'Sorry, some items just went out of stock. Please check your cart.'),
-        'error'
-      );
-      navigate('/cart');
-      return;
-    }
-
     const ok = validateStep1();
     if (!ok) {
       showToast(tt('fixErrors', 'يرجى تصحيح الحقول المطلوبة', 'Please fix the required fields.'), 'error');
@@ -406,10 +415,7 @@ const Checkout: React.FC = () => {
     }
 
     if (!selectedShipping) {
-      showToast(
-        tt('shippingRequired', 'يرجى اختيار طريقة التوصيل أولاً', 'Please select a shipping method first.'),
-        'error'
-      );
+      showToast(tt('shippingRequired', 'يرجى اختيار طريقة التوصيل', 'Please select a shipping method.'), 'error');
       changeStep(2);
       return;
     }
@@ -417,17 +423,7 @@ const Checkout: React.FC = () => {
     if (paymentMethod === 'cliq') {
       const ref = safeTrim(cliqRef);
       if (!ref) {
-        showToast(
-          tt('enterCliqRef', 'يرجى إدخال الرقم المرجعي لحوالة CliQ', 'Please enter the CliQ reference number.'),
-          'error'
-        );
-        return;
-      }
-      if (ref.length < 4 || ref.length > 40) {
-        showToast(
-          tt('invalidCliqRef', 'الرقم المرجعي غير صالح', 'Invalid CliQ reference number.'),
-          'error'
-        );
+        showToast(tt('enterCliqRef', 'يرجى إدخال الرقم المرجعي لحوالة CliQ', 'Please enter the CliQ reference number.'), 'error');
         return;
       }
     }
@@ -436,17 +432,24 @@ const Checkout: React.FC = () => {
 
     try {
       const shippingPhoneE164 = normalizePhoneGlobal(dialCode, formData.phoneLocal) || safeTrim(formData.phoneLocal);
-      const shippingCityName = cityLabel(formData.citySlug) || safeTrim(formData.citySlug);
+      
+      // جلب اسم المحافظة
+      let shippingCityName = '';
+      REGIONS.forEach(r => {
+        const gov = r.govs.find(g => g.slug === formData.citySlug);
+        if (gov) shippingCityName = isAR ? gov.ar : gov.en;
+      });
+
+      // إضافة اسم المنطقة الدقيق في عمان للعنوان
+      if (formData.citySlug === 'amman' && selectedAmmanArea) {
+        shippingCityName = `${shippingCityName} - ${isAR ? selectedAmmanArea.nameAr : selectedAmmanArea.nameEn}`;
+      }
+
       const shippingStreet = normalizeAddress(formData.streetAddress);
       
-      const billingPhoneE164 = normalizePhoneGlobal(dialCode, formData.billingPhoneLocal) || safeTrim(formData.billingPhoneLocal);
-      const billingCityName = cityLabel(formData.billingCitySlug) || safeTrim(formData.billingCitySlug);
-      const billingStreet = normalizeAddress(formData.billingStreetAddress);
-
       const now = new Date();
       const nowIso = now.toISOString();
       const nowDate = nowIso.split('T')[0];
-      const nowMs = now.getTime();
       const orderId = makeOrderId();
 
       const newOrder: Order & any = {
@@ -456,7 +459,7 @@ const Checkout: React.FC = () => {
         seenByAdmin: false,
         date: nowDate,
         createdAt: nowIso,
-        createdAtMs: nowMs,
+        createdAtMs: now.getTime(),
         updatedAt: nowIso,
         items: validatedCart.map((item: any) => ({
           productId: item.id,
@@ -473,21 +476,19 @@ const Checkout: React.FC = () => {
         shippingMethod: isAR ? selectedShipping.nameAr : selectedShipping.nameEn,
         paymentMethod,
         customerEmail: safeTrim(email) || safeTrim(user?.email || ''),
-        note: safeTrim(orderNote) || undefined,
-        deliveryPreference: safeTrim(preferredDeliveryDate) || safeTrim(preferredDeliveryTime)
-          ? { date: safeTrim(preferredDeliveryDate) || undefined, time: safeTrim(preferredDeliveryTime) || undefined }
-          : undefined,
-        paymentDetails: paymentMethod === 'cliq'
-          ? { cliqReference: safeTrim(cliqRef), isPaid: false }
-          : undefined,
+consents: {
+  acceptedStorePolicies: !!acceptPolicies,
+  acceptedDeliveryPolicy: !!acceptDeliveryPolicy,
+  saveInfo: !!formData.saveInfo,
+  billingSameAsShipping: !!formData.billingSameAsShipping,
+},
+note: safeTrim(orderNote) || undefined,
+        paymentDetails: paymentMethod === 'cliq' ? { cliqReference: safeTrim(cliqRef), isPaid: false } : undefined,
         address: { fullName: normalizeName(formData.fullName) || 'Guest', city: shippingCityName, street: shippingStreet, phone: shippingPhoneE164 },
-        addressMeta: { country: JO_COUNTRY.nameEn, countryCode: JO_COUNTRY.code, citySlug: formData.citySlug, postalCode: safeTrim(formData.postalCode) || undefined, saveInfo: !!formData.saveInfo, phoneDial: dialCode, phoneLocal: safeTrim(formData.phoneLocal) },
-        billingAddress: formData.billingSameAsShipping
-          ? undefined
-          : { fullName: normalizeName(formData.billingFullName), city: billingCityName, street: billingStreet, phone: billingPhoneE164, meta: { citySlug: formData.billingCitySlug, postalCode: safeTrim(formData.billingPostalCode) || undefined, phoneDial: dialCode, phoneLocal: safeTrim(formData.billingPhoneLocal) } },
+        addressMeta: { country: JO_COUNTRY.nameEn, countryCode: JO_COUNTRY.code, citySlug: formData.citySlug, ammanAreaId: formData.ammanAreaId, saveInfo: !!formData.saveInfo, phoneDial: dialCode, phoneLocal: safeTrim(formData.phoneLocal) },
       };
 
-      // 🚀 إرسال للخلفية بدون await لتجنب تعليق الموقع (Fire and Forget)
+      // إرسال للسيرفر فوراً بدون تأخير
       const workerUrl = import.meta.env.VITE_WORKER_URL;
       if (workerUrl && workerUrl.trim() !== '') {
         fetch(`${workerUrl}/create-order`, {
@@ -498,12 +499,8 @@ const Checkout: React.FC = () => {
       }
 
       try {
-        if (db?.orders?.create) {
-          await db.orders.create(newOrder);
-        }
-      } catch (dbError) {
-        console.error('Failed to save order locally:', dbError);
-      }
+        if (db?.orders?.create) await db.orders.create(newOrder);
+      } catch (dbError) {}
 
       try {
         sessionStorage.setItem(`order_success_${newOrder.id}`, JSON.stringify(newOrder));
@@ -512,11 +509,9 @@ const Checkout: React.FC = () => {
       clearCart();
       if (typeof clearOrderNote === 'function') clearOrderNote();
       
-      try { refreshProducts(); } catch (e) {}
-
       showToast(tt('alertSet', 'تم استلام طلبك بنجاح', 'Order placed successfully.'), 'success');
 
-      // 🚀 تحويل الواتساب الذكي بدلاً من رفع الصورة
+      // 🚀 التحويل التلقائي للواتساب
       if (paymentMethod === 'cliq') {
         const waMsg = `مرحباً متجر دير شرف 👋\nتم الدفع عبر CliQ، وهذا طلبي الجديد.\n\n*الاسم:* ${normalizeName(formData.fullName)}\n*رقم الطلب:* #${orderId}\n*الرقم المرجعي للتحويل:* ${safeTrim(cliqRef)}\n\n(يرجى إرفاق صورة إيصال التحويل مع هذه الرسالة لتأكيد طلبك ✅)`;
         const waUrl = `https://wa.me/${STORE_WHATSAPP}?text=${encodeURIComponent(waMsg)}`;
@@ -530,18 +525,6 @@ const Checkout: React.FC = () => {
       setIsProcessing(false);
     }
   };
-
-  const dialLabel = useMemo(() => {
-    const d = DIAL_OPTIONS.find((x) => x.dial === dialCode) || DIAL_OPTIONS[0]!;
-    return isAR ? `${d.flag} ${d.nameAr} ${d.dial}` : `${d.flag} ${d.nameEn} ${d.dial}`;
-  }, [dialCode, isAR]);
-
-  const needEmail = !user?.id;
-
-  const shippingLabel = useMemo(() => {
-    if (!selectedShipping) return '';
-    return isAR ? selectedShipping.nameAr : selectedShipping.nameEn;
-  }, [selectedShipping, isAR]);
 
   const inputClass = (hasError: boolean) => [
     'w-full p-4 bg-slate-50 border rounded-2xl outline-none transition-all duration-300 font-medium text-slate-800',
@@ -561,10 +544,7 @@ const Checkout: React.FC = () => {
           <h2 className="text-3xl font-heading font-black text-slate-900 mb-3">
             {tt('cartEmpty', 'سلتك فارغة', 'Your cart is empty')}
           </h2>
-          <p className="text-slate-500 font-medium mb-8 leading-relaxed">
-            {tt('browseToAdd', 'تصفّح منتجاتنا المميزة وأضف ما يعجبك لإتمام عملية الشراء.', 'Browse products and add items to your cart to checkout.')}
-          </p>
-          <Button onClick={() => navigate('/shop')} className="w-full py-4 text-lg">
+          <Button onClick={() => navigate('/shop')} className="w-full py-4 text-lg mt-8">
             {tt('browseProducts', 'تصفح المنتجات', 'Browse products')}
           </Button>
         </div>
@@ -587,24 +567,6 @@ const Checkout: React.FC = () => {
               {tt('checkoutHint', 'نضمن لك تجربة تسوق آمنة وسريعة', 'Simple, fast, and secure checkout process.')}
             </p>
           </div>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate('/cart')}
-              className="flex items-center gap-2 text-sm font-bold bg-white text-slate-700 border-2 border-slate-200 hover:bg-slate-900 hover:text-white hover:border-slate-900 px-5 py-2.5 rounded-xl transition-all shadow-sm active:scale-95"
-              type="button"
-            >
-              <ShoppingBag size={16} strokeWidth={2.5} />
-              <span className="hidden sm:inline-block">{tt('editCart', 'تعديل السلة', 'Edit cart')}</span>
-            </button>
-            <button
-              onClick={() => navigate('/shop')}
-              className="text-sm font-bold text-slate-500 hover:text-sky-500 transition-colors px-3 py-2"
-              type="button"
-            >
-              {tt('continueShopping', 'العودة للتسوق', 'Back to shopping')}
-            </button>
-          </div>
         </div>
 
         <div className="flex flex-col lg:flex-row gap-8 xl:gap-12">
@@ -618,29 +580,18 @@ const Checkout: React.FC = () => {
                   const active = step === i;
                   const done = step > i;
                   const title = i === 1 ? tt('address', 'عنوان الاستلام', 'Shipping Address') : i === 2 ? tt('shipping', 'خيارات التوصيل', 'Delivery Method') : tt('payment', 'طريقة الدفع', 'Payment Method');
-                  const hint = i === 1 ? tt('stepAddressHint', 'بيانات الوجهة', 'Delivery details') : i === 2 ? tt('stepShippingHint', 'تحديد الموعد', 'Schedule delivery') : tt('stepPaymentHint', 'تأكيد الطلب', 'Confirm order');
+                  const hint = i === 1 ? tt('stepAddressHint', 'بيانات الوجهة', 'Delivery details') : i === 2 ? tt('stepShippingHint', 'تأكيد التسعيرة', 'Confirm shipping') : tt('stepPaymentHint', 'تأكيد الطلب', 'Confirm order');
 
                   return (
                     <div key={i} className={`flex-1 flex flex-col sm:flex-row items-center sm:items-start gap-3 text-center sm:text-start transition-opacity duration-300 ${!active && !done ? 'opacity-50' : 'opacity-100'}`}>
-                      <div
-                        className={[
-                          'w-10 h-10 rounded-xl flex items-center justify-center font-black shrink-0 transition-all duration-500',
-                          active ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/30 scale-110' : done ? 'bg-black text-white shadow-md' : 'bg-slate-100 text-slate-400',
-                        ].join(' ')}
-                      >
+                      <div className={['w-10 h-10 rounded-xl flex items-center justify-center font-black shrink-0 transition-all duration-500', active ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/30 scale-110' : done ? 'bg-black text-white shadow-md' : 'bg-slate-100 text-slate-400'].join(' ')}>
                         {done ? <CheckCircle size={20} strokeWidth={3} /> : i}
                       </div>
-
                       <div className="min-w-0 hidden sm:block mt-1">
-                        <p className={`text-sm font-black ${done || active ? 'text-slate-900' : 'text-slate-500'}`}>
-                          {title}
-                        </p>
+                        <p className={`text-sm font-black ${done || active ? 'text-slate-900' : 'text-slate-500'}`}>{title}</p>
                         <p className="text-[11px] font-bold text-slate-400 line-clamp-1 mt-0.5">{hint}</p>
                       </div>
-
-                      {i < 3 && <div className="hidden sm:block h-[3px] rounded-full bg-slate-100 flex-1 mx-4 mt-4" >
-                        <div className={`h-full bg-black rounded-full transition-all duration-700 ${done ? 'w-full' : 'w-0'}`} />
-                      </div>}
+                      {i < 3 && <div className="hidden sm:block h-[3px] rounded-full bg-slate-100 flex-1 mx-4 mt-4" ><div className={`h-full bg-black rounded-full transition-all duration-700 ${done ? 'w-full' : 'w-0'}`} /></div>}
                     </div>
                   );
                 })}
@@ -656,34 +607,41 @@ const Checkout: React.FC = () => {
                     {tt('deliveryAddress', 'معلومات الاستلام', 'Shipping Information')}
                   </h2>
                   <div className="text-xs font-bold text-sky-600 bg-sky-50 px-3 py-1.5 rounded-lg border border-sky-100">
-                    {tt('deliverOnlyJordan', 'التوصيل متاح داخل الأردن فقط 🇯🇴', 'Delivery within Jordan only 🇯🇴')}
+                    متاح داخل الأردن فقط 🇯🇴
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <div className="md:col-span-2">
-                    <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
-                      {tt('email', 'البريد الإلكتروني', 'Email Address')}
-                      {needEmail && <span className="text-red-500 ms-1">*</span>}
-                    </label>
-                    <div className={inputClass(!!errors.email) + ' flex items-center gap-3 p-0 overflow-hidden'}>
-                      <div className="pl-4 rtl:pr-4 rtl:pl-0">
-                        <Mail size={20} className="text-slate-400" strokeWidth={2.5} />
-                      </div>
-                      <input
-                        value={email}
-                        onChange={(e) => setEmailField(e.target.value)}
-                        type="email"
-                        placeholder={tt('emailPlaceholder', 'example@email.com', 'name@example.com')}
-                        className="flex-1 bg-transparent border-none outline-none py-4 pr-4 rtl:pl-4 rtl:pr-0 w-full font-bold placeholder:font-medium placeholder:text-slate-300"
-                        autoComplete="email"
-                        dir="ltr"
-                      />
-                    </div>
-                    {errors.email && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.email}</p>}
-                    {!needEmail && <p className="mt-1.5 ms-1 text-[11px] font-bold text-slate-400">{tt('emailOptional', 'يستخدم لإرسال تأكيد وتحديثات الطلب', 'Used for order confirmation and updates')}</p>}
-                  </div>
+  <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
+    {tt('emailAddress', 'البريد الإلكتروني', 'Email Address')}
+    {!isLoggedIn && <span className="text-red-500">*</span>}
+  </label>
 
+  <div className="relative">
+    <Mail size={18} className="absolute left-4 rtl:left-auto rtl:right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+    <input
+      value={email}
+      onChange={(e) => setEmailField(e.target.value)}
+      type="email"
+      inputMode="email"
+      autoComplete="email"
+      placeholder={isLoggedIn ? 'name@example.com (اختياري)' : 'name@example.com'}
+      className={inputClass(!!errors.email) + ' pl-12 pr-4 rtl:pl-4 rtl:pr-12'}
+      dir="ltr"
+    />
+  </div>
+
+  <p className="mt-1.5 ms-1 text-[11px] font-bold text-slate-400">
+    {isLoggedIn
+      ? 'إذا تركته فارغًا سيتم استخدام بريد الحساب المسجل.'
+      : 'مطلوب لإرسال تأكيد الطلب ومتابعة الحالة.'}
+  </p>
+
+  {errors.email && (
+    <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.email}</p>
+  )}
+</div>
                   <div className="md:col-span-2">
                     <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
                       {tt('fullName', 'الاسم الكامل', 'Full Name')} <span className="text-red-500">*</span>
@@ -693,43 +651,107 @@ const Checkout: React.FC = () => {
                       value={formData.fullName}
                       onChange={(e) => setField('fullName', e.target.value)}
                       type="text"
-                      placeholder={tt('fullNamePh', 'الاسم الأول والأخير', 'First and last name')}
+                      placeholder="الاسم الأول والأخير"
                       className={inputClass(!!errors.fullName)}
-                      autoComplete="name"
                     />
                     {errors.fullName && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.fullName}</p>}
                   </div>
 
                   <div>
                     <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
-                      {tt('country', 'الدولة', 'Country')}
+                      {tt('phone', 'رقم الجوال', 'Mobile Number')} <span className="text-red-500">*</span>
                     </label>
-                    <select
-                      value={JO_COUNTRY.nameEn}
-                      onChange={() => setField('country', JO_COUNTRY.nameEn)}
-                      className={inputClass(false) + ' appearance-none cursor-pointer text-slate-500'}
-                      disabled
-                    >
-                      <option value={JO_COUNTRY.nameEn}>{isAR ? JO_COUNTRY.nameAr : JO_COUNTRY.nameEn}</option>
-                    </select>
+                    <div className={inputClass(!!errors.phoneLocal) + ' flex items-center gap-2 p-1.5'}>
+                      <div className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-white border border-slate-200 shadow-sm shrink-0">
+                        <Phone size={16} className="text-slate-400 hidden sm:block" />
+                        <span className="text-sm font-black text-slate-700" dir="ltr">+962</span>
+                      </div>
+                      <input
+                        value={formData.phoneLocal}
+                        onChange={(e) => setField('phoneLocal', e.target.value)}
+                        type="tel"
+                        inputMode="numeric"
+                        maxLength={10}
+                        placeholder="0791234567"
+                        className="flex-1 min-w-0 bg-transparent border-none outline-none px-3 font-bold text-lg tabular-nums placeholder:text-slate-300"
+                        dir="ltr"
+                      />
+                    </div>
+                    {errors.phoneLocal && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.phoneLocal}</p>}
                   </div>
 
+                  {/* 🚀 القائمة المنسدلة الاحترافية للمحافظات */}
                   <div>
                     <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
-                      {tt('city', 'المحافظة', 'Governorate')} <span className="text-red-500">*</span>
+                      المحافظة <span className="text-red-500">*</span>
                     </label>
                     <select
                       value={formData.citySlug}
-                      onChange={(e) => setField('citySlug', e.target.value)}
+                      onChange={(e) => {
+                        setField('citySlug', e.target.value);
+                        setField('ammanAreaId', ''); // مسح المنطقة إذا غير المحافظة
+                      }}
                       className={inputClass(!!errors.citySlug) + ' appearance-none cursor-pointer'}
                     >
-                      <option value="" disabled>{tt('selectCity', '— اختر المحافظة —', '— Select a region —')}</option>
-                      {JO_GOVS.map((c) => (
-                        <option key={c.slug} value={c.slug}>{isAR ? c.ar : c.en}</option>
+                      <option value="" disabled>— اختر المحافظة —</option>
+                      {REGIONS.map((region, idx) => (
+                        <optgroup key={idx} label={isAR ? region.labelAr : region.labelEn} className="font-black text-slate-900 bg-slate-50">
+                          {region.govs.map((gov) => (
+                            <option key={gov.slug} value={gov.slug} className="font-bold text-slate-700 bg-white">
+                              {isAR ? gov.ar : gov.en}
+                            </option>
+                          ))}
+                        </optgroup>
                       ))}
                     </select>
                     {errors.citySlug && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.citySlug}</p>}
                   </div>
+
+                  {/* 🚀 قائمة مناطق عمان الحقيقية */}
+                  {formData.citySlug === 'amman' && (
+                    <div className="md:col-span-2 animate-in fade-in slide-in-from-top-4 duration-300">
+                      <label className="block text-xs font-black uppercase tracking-widest text-sky-600 mb-2 ms-1">
+                        يرجى تحديد منطقتك السكنية داخل عمان <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={formData.ammanAreaId}
+                        onChange={(e) => {
+                          setField('ammanAreaId', e.target.value);
+                          setField('ammanOutskirtSpeed', 'nextDay');
+                        }}
+                        className={inputClass(!!errors.ammanAreaId) + ' appearance-none cursor-pointer bg-sky-50/30 border-sky-200'}
+                      >
+                        <option value="" disabled>— تصفح واختر منطقتك —</option>
+                        {AMMAN_AREAS.map((area) => (
+                          <option key={area.id} value={area.id} className="font-bold text-slate-800">
+                            {isAR ? area.nameAr : area.nameEn}
+                          </option>
+                        ))}
+                      </select>
+                      {errors.ammanAreaId && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.ammanAreaId}</p>}
+
+                      {/* خيارات السرعة إذا كانت المنطقة أطراف */}
+                      {selectedAmmanArea?.isOutskirt && (
+                        <div className="mt-4 p-5 rounded-2xl border-2 border-sky-100 bg-white space-y-3">
+                          <p className="text-sm font-black text-slate-800 mb-2">اختر سرعة التوصيل لمنطقتك:</p>
+                          <label className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-colors ${formData.ammanOutskirtSpeed === 'sameDay' ? 'border-sky-500 bg-sky-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                            <div className="flex items-center gap-3">
+                              <input type="radio" name="outskirtSpeed" value="sameDay" checked={formData.ammanOutskirtSpeed === 'sameDay'} onChange={(e) => setField('ammanOutskirtSpeed', e.target.value)} className="w-4 h-4 text-sky-500 focus:ring-sky-500" />
+                              <span className="text-sm font-bold text-slate-700">توصيل في نفس اليوم</span>
+                            </div>
+                            <span className="text-sm font-black text-slate-900">4.0 JD</span>
+                          </label>
+                          <label className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-colors ${formData.ammanOutskirtSpeed === 'nextDay' ? 'border-sky-500 bg-sky-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                            <div className="flex items-center gap-3">
+                              <input type="radio" name="outskirtSpeed" value="nextDay" checked={formData.ammanOutskirtSpeed === 'nextDay'} onChange={(e) => setField('ammanOutskirtSpeed', e.target.value)} className="w-4 h-4 text-sky-500 focus:ring-sky-500" />
+                              <span className="text-sm font-bold text-slate-700">توصيل ثاني يوم</span>
+                            </div>
+                            <span className="text-sm font-black text-slate-900">3.0 JD</span>
+                          </label>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div className="md:col-span-2">
                     <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
@@ -740,111 +762,10 @@ const Checkout: React.FC = () => {
                       value={formData.streetAddress}
                       onChange={(e) => setField('streetAddress', e.target.value)}
                       type="text"
-                      placeholder={tt(
-                        'addressPlaceholder',
-                        'اسم المنطقة - الشارع - رقم البناية - رقم الشقة',
-                        'Area - Street - Building No - Apt'
-                      )}
+                      placeholder="اسم الشارع - رقم البناية - رقم الشقة"
                       className={inputClass(!!errors.streetAddress)}
-                      autoComplete="street-address"
                     />
                     {errors.streetAddress && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.streetAddress}</p>}
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
-                      {tt('postalCodeOpt', 'الرمز البريدي', 'Postal Code')} <span className="text-slate-400 font-bold normal-case">({tt('optional', 'اختياري', 'Optional')})</span>
-                    </label>
-                    <input
-                      name="postalCode"
-                      value={formData.postalCode}
-                      onChange={(e) => setField('postalCode', e.target.value)}
-                      type="text"
-                      placeholder="00000"
-                      className={inputClass(false)}
-                      autoComplete="postal-code"
-                      dir="ltr"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
-                      {tt('phone', 'رقم الجوال', 'Mobile Number')} <span className="text-red-500">*</span>
-                    </label>
-                    <div className={inputClass(!!errors.phoneLocal) + ' flex items-center gap-2 p-1.5'}>
-                      <div className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-white border border-slate-200 shadow-sm shrink-0">
-                        <Phone size={16} className="text-slate-400 hidden sm:block" strokeWidth={2.5} />
-                        <select
-                          value={dialCode}
-                          onChange={(e) => setDialCode(e.target.value)}
-                          className="bg-transparent outline-none text-sm font-black text-slate-700 cursor-pointer appearance-none"
-                          dir="ltr"
-                        >
-                          {DIAL_OPTIONS.map((d) => (
-                            <option key={d.code} value={d.dial}>{d.flag} {d.dial}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <input
-                        name="phoneLocal"
-                        value={formData.phoneLocal}
-                        onChange={(e) => setField('phoneLocal', e.target.value)}
-                        type="tel"
-                        inputMode="tel"
-                        placeholder="79 000 0000"
-                        className="flex-1 min-w-0 bg-transparent border-none outline-none px-3 font-bold text-lg tabular-nums placeholder:text-slate-300 placeholder:font-medium"
-                        autoComplete="tel"
-                        dir="ltr"
-                      />
-                    </div>
-                    {errors.phoneLocal && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.phoneLocal}</p>}
-                  </div>
-
-                  <div className="md:col-span-2 space-y-3 mt-4">
-                    <label className="flex items-center gap-4 p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 cursor-pointer transition-colors group">
-                      <input
-                        type="checkbox"
-                        checked={!!formData.saveInfo}
-                        onChange={(e) => setField('saveInfo', e.target.checked)}
-                        className="w-5 h-5 rounded border-slate-300 text-sky-500 focus:ring-sky-500/30 transition-all"
-                      />
-                      <div className="min-w-0">
-                        <p className="text-sm font-bold text-slate-800 group-hover:text-sky-600 transition-colors">
-                          {tt('saveInfo', 'حفظ بياناتي لتسريع عملية الدفع مستقبلاً', 'Save my information for faster checkout next time')}
-                        </p>
-                      </div>
-                    </label>
-
-                    <label className="flex items-center gap-4 p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 cursor-pointer transition-colors group">
-                      <input
-                        type="checkbox"
-                        checked={!!formData.billingSameAsShipping}
-                        onChange={(e) => setField('billingSameAsShipping', e.target.checked)}
-                        className="w-5 h-5 rounded border-slate-300 text-sky-500 focus:ring-sky-500/30 transition-all"
-                      />
-                      <div className="min-w-0">
-                        <p className="text-sm font-bold text-slate-800 group-hover:text-sky-600 transition-colors">
-                          {tt('billingSame', 'عنوان الدفع (الفاتورة) مطابق لعنوان الاستلام', 'Billing address matches shipping address')}
-                        </p>
-                      </div>
-                    </label>
-
-                    <label className={`flex items-start gap-4 p-4 rounded-2xl border transition-colors cursor-pointer group ${errors.acceptPolicies ? 'border-red-200 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-slate-50'}`}>
-                      <input
-                        type="checkbox"
-                        checked={acceptPolicies}
-                        onChange={(e) => {
-                          setAcceptPolicies(e.target.checked);
-                          setErrors((p) => { const n = { ...p }; delete n.acceptPolicies; return n; });
-                        }}
-                        className="mt-0.5 w-5 h-5 rounded border-slate-300 text-sky-500 focus:ring-sky-500/30 transition-all"
-                      />
-                      <div className="min-w-0">
-                        <p className={`text-sm font-bold transition-colors ${errors.acceptPolicies ? 'text-red-700' : 'text-slate-800 group-hover:text-sky-600'}`}>
-                          {tt('acceptPolicies', 'أوافق على سياسات المتجر وأحكام الخدمة', 'I accept the store policies and terms of service')}
-                        </p>
-                      </div>
-                    </label>
                   </div>
                 </div>
 
@@ -856,57 +777,46 @@ const Checkout: React.FC = () => {
               </div>
             )}
 
-            {/* STEP 2: Shipping */}
+            {/* STEP 2: Shipping Confirmation */}
             {step === 2 && (
               <div className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-sm border border-slate-100 animate-in fade-in slide-in-from-right-4 duration-500">
                 <h2 className="text-2xl font-black text-slate-900 mb-8 pb-4 border-b border-slate-100 flex items-center gap-3">
                   <Truck className="text-sky-500" size={28} strokeWidth={2.5} />
-                  {tt('shippingMethod', 'خيارات التوصيل', 'Delivery Options')}
+                  تأكيد تسعيرة التوصيل
                 </h2>
 
                 <div className="space-y-4">
                   {dynamicShippingMethods.map((method) => {
-                    const active = shippingMethodId === method.id;
+                    const active = true; // الخيار يكون فعالاً وتلقائياً بناءً على المحافظة/المنطقة
                     const Icon = method.icon || Truck;
 
                     return (
-                      <label
-                        key={method.id}
-                        className={[
-                          'flex items-center justify-between p-5 rounded-2xl cursor-pointer transition-all duration-300 border-2',
-                          active 
-                            ? 'border-sky-500 bg-sky-50 shadow-md shadow-sky-500/10' 
-                            : 'border-slate-100 bg-white hover:border-slate-300 hover:bg-slate-50',
-                        ].join(' ')}
-                        onClick={() => setShippingMethodId(method.id)}
-                      >
+                      <div key={method.id} className="flex items-center justify-between p-5 rounded-2xl border-2 border-sky-500 bg-sky-50 shadow-md shadow-sky-500/10">
                         <div className="flex items-center gap-4">
-                          <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${active ? 'border-sky-500' : 'border-slate-300'}`}>
-                            {active && <div className="w-3 h-3 rounded-full bg-sky-500" />}
+                          <div className="w-6 h-6 rounded-full border-2 border-sky-500 flex items-center justify-center shrink-0">
+                            <div className="w-3 h-3 rounded-full bg-sky-500" />
                           </div>
-                          
                           <div className="min-w-0">
-                            <p className={`font-black flex items-center gap-2 ${active ? 'text-sky-700' : 'text-slate-800'}`}>
-                              <Icon size={18} strokeWidth={2.5} className={active ? 'text-sky-500' : 'text-slate-400'} />
+                            <p className="font-black flex items-center gap-2 text-sky-700">
+                              <Icon size={18} strokeWidth={2.5} className="text-sky-500" />
                               {isAR ? method.nameAr : method.nameEn}
                             </p>
-                            <p className={`text-xs font-bold mt-1.5 ${active ? 'text-sky-600/80' : 'text-slate-500'}`}>
+                            <p className="text-xs font-bold mt-1.5 text-sky-600/80">
                               {isAR ? method.durationAr : method.durationEn}
                             </p>
                           </div>
                         </div>
-
-                        <span className={`font-black text-lg tabular-nums shrink-0 ml-4 rtl:ml-0 rtl:mr-4 ${active ? 'text-sky-700' : 'text-slate-900'}`}>
+                        <span className="font-black text-lg tabular-nums shrink-0 text-sky-700 ml-4 rtl:ml-0 rtl:mr-4">
                           {formatMoney(Number(method.price || 0))}
                         </span>
-                      </label>
+                      </div>
                     );
                   })}
                 </div>
 
                 <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col-reverse sm:flex-row justify-between gap-4">
                   <Button variant="outline" onClick={() => changeStep(1)} disabled={isProcessing} className="w-full sm:w-auto px-8 py-4">
-                    {tt('back', 'العودة للعنوان', 'Back to address')}
+                    {tt('back', 'تعديل العنوان', 'Edit Address')}
                   </Button>
                   <Button onClick={() => changeStep(3)} disabled={isProcessing} className="w-full sm:w-auto px-10 py-4 text-lg">
                     {tt('continueToPayment', 'متابعة للدفع', 'Proceed to Payment')}
@@ -927,12 +837,7 @@ const Checkout: React.FC = () => {
                   <button
                     onClick={() => setPaymentMethod('cliq')}
                     type="button"
-                    className={[
-                      'flex-1 py-5 px-4 rounded-2xl border-2 font-black transition-all duration-300 relative overflow-hidden',
-                      paymentMethod === 'cliq'
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700 shadow-md shadow-indigo-500/10'
-                        : 'border-slate-100 text-slate-500 hover:bg-slate-50 hover:border-slate-300',
-                    ].join(' ')}
+                    className={['flex-1 py-5 px-4 rounded-2xl border-2 font-black transition-all duration-300 relative overflow-hidden', paymentMethod === 'cliq' ? 'border-indigo-500 bg-indigo-50 text-indigo-700 shadow-md shadow-indigo-500/10' : 'border-slate-100 text-slate-500 hover:bg-slate-50 hover:border-slate-300'].join(' ')}
                   >
                     {paymentMethod === 'cliq' && <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-indigo-200 to-transparent opacity-50 rounded-bl-full pointer-events-none" />}
                     <div className="flex flex-col items-center justify-center gap-2 relative z-10">
@@ -944,12 +849,7 @@ const Checkout: React.FC = () => {
                   <button
                     onClick={() => setPaymentMethod('cod')}
                     type="button"
-                    className={[
-                      'flex-1 py-5 px-4 rounded-2xl border-2 font-black transition-all duration-300 relative overflow-hidden',
-                      paymentMethod === 'cod'
-                        ? 'border-emerald-500 bg-emerald-50 text-emerald-700 shadow-md shadow-emerald-500/10'
-                        : 'border-slate-100 text-slate-500 hover:bg-slate-50 hover:border-slate-300',
-                    ].join(' ')}
+                    className={['flex-1 py-5 px-4 rounded-2xl border-2 font-black transition-all duration-300 relative overflow-hidden', paymentMethod === 'cod' ? 'border-emerald-500 bg-emerald-50 text-emerald-700 shadow-md shadow-emerald-500/10' : 'border-slate-100 text-slate-500 hover:bg-slate-50 hover:border-slate-300'].join(' ')}
                   >
                     {paymentMethod === 'cod' && <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-emerald-200 to-transparent opacity-50 rounded-bl-full pointer-events-none" />}
                     <div className="flex flex-col items-center justify-center gap-2 relative z-10">
@@ -966,7 +866,6 @@ const Checkout: React.FC = () => {
                         معلومات حساب CliQ الخاص بالمتجر:
                       </p>
                       
-                      {/* 🚀 تصميم فخم لبيانات CliQ الخاصة بك مع زر نسخ للرقم */}
                       <div className="flex flex-col gap-3 max-w-sm mx-auto mb-6">
                         <div className="bg-white px-5 py-4 rounded-xl shadow-sm border border-indigo-50 flex justify-between items-center">
                           <span className="text-slate-400 text-sm font-bold">الاسم (Name):</span>
@@ -1007,19 +906,18 @@ const Checkout: React.FC = () => {
                       </label>
                       <input
                         type="text"
-                        placeholder={tt('enterCliqRef', 'رقم مكون من أرقام أو أحرف', 'e.g. 1234567890')}
+                        placeholder="رقم مكون من أرقام أو أحرف (e.g. 1234567890)"
                         value={cliqRef}
                         onChange={(e) => setCliqRef(e.target.value)}
                         className={inputClass(false) + ' bg-white mb-5 text-center tracking-wider text-xl font-black'}
                       />
 
-                      {/* 🚀 إشعار الواتساب الجميل (بديل مربع الرفع اللي كان يعلق) */}
                       <div className="bg-[#25D366]/10 border border-[#25D366]/20 rounded-2xl p-4 flex flex-col sm:flex-row items-center gap-4 text-start">
                         <div className="w-12 h-12 shrink-0 bg-[#25D366]/20 text-[#25D366] rounded-full flex items-center justify-center">
                            <MessageCircle size={24} strokeWidth={2.5} />
                         </div>
                         <p className="text-sm font-bold text-slate-700 leading-relaxed">
-                          لتسريع العملية وضمان عدم التعليق، سيتم <span className="text-[#25D366] font-black">تحويلك إلى الواتساب</span> لإرسال صورة الإيصال بمجرد النقر على زر تأكيد الطلب بالأسفل.
+                          لتسريع العملية، سيتم <span className="text-[#25D366] font-black">تحويلك إلى الواتساب</span> لإرسال صورة الإيصال بمجرد النقر على زر تأكيد الطلب بالأسفل.
                         </p>
                       </div>
                     </div>
@@ -1035,10 +933,10 @@ const Checkout: React.FC = () => {
                       {tt('payOnDelivery', 'الدفع الآمن عند الاستلام', 'Secure Pay on Delivery')}
                     </h3>
                     <p className="text-emerald-700/80 font-bold mb-5 max-w-sm mx-auto">
-                      {tt('codDesc', 'لن يتم خصم أي مبلغ إلكترونياً. يرجى تجهيز المبلغ المطلوب نقداً لمندوب التوصيل.', 'No electronic charges will be made. Please prepare the exact cash amount for the courier.')}
+                      لن يتم خصم أي مبلغ إلكترونياً. يرجى تجهيز المبلغ المطلوب نقداً لمندوب التوصيل.
                     </p>
                     <div className="bg-white rounded-2xl py-4 px-6 inline-block shadow-sm border border-emerald-50">
-                      <span className="text-sm font-bold text-slate-500 uppercase tracking-widest block mb-1">{tt('totalToPay', 'المبلغ المطلوب دفعه', 'Amount to Pay')}</span>
+                      <span className="text-sm font-bold text-slate-500 uppercase tracking-widest block mb-1">المبلغ المطلوب دفعه</span>
                       <span className="text-3xl font-black text-emerald-600 tabular-nums">{formatMoney(total)}</span>
                     </div>
                   </div>
@@ -1108,7 +1006,7 @@ const Checkout: React.FC = () => {
                 )}
 
                 <div className="flex justify-between text-sm font-bold text-slate-500">
-                  <span>{tt('shipping', 'رسوم التوصيل', 'Shipping Fee')} <span className="text-[10px] font-medium block text-slate-400">{shippingLabel}</span></span>
+                  <span>{tt('shipping', 'رسوم التوصيل', 'Shipping Fee')}</span>
                   <span className="tabular-nums text-slate-700">{formatMoney(shippingCost)}</span>
                 </div>
 
@@ -1126,12 +1024,109 @@ const Checkout: React.FC = () => {
                   value={orderNote || ''}
                   onChange={(e) => setOrderNote(e.target.value)}
                   maxLength={600}
-                  placeholder={tt('orderNotePlaceholder', 'تعليمات لمندوب التوصيل أو تفاصيل تغليف الهدية...', 'Instructions for courier or gift wrapping details...')}
+                  placeholder="تعليمات لمندوب التوصيل أو تفاصيل تغليف الهدية..."
                   className="w-full min-h-[80px] resize-none p-4 rounded-2xl bg-slate-50 border border-slate-100 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-400/10 text-sm font-bold placeholder:font-medium placeholder:text-slate-400 transition-all"
                 />
               </div>
+<div className="mt-6 rounded-[2rem] border border-slate-100 bg-slate-50/70 p-4 sm:p-5">
+  <div className="mb-4">
+    <h4 className="text-sm font-black text-slate-900">خيارات الطلب والموافقات</h4>
+    <p className="mt-1 text-xs font-bold text-slate-400">
+      إعدادات إضافية لتسريع الطلب وتجهيز بياناته بشكل أفضل
+    </p>
+  </div>
 
-              <div className="mt-6 flex items-center justify-center gap-2 text-xs font-bold text-slate-400 bg-white border border-slate-100 py-3 rounded-2xl">
+  <div className="space-y-3">
+    <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:bg-slate-50 transition-all cursor-pointer">
+      <input
+        type="checkbox"
+        checked={formData.saveInfo}
+        onChange={(e) => setField('saveInfo', e.target.checked)}
+        className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-black text-slate-800">حفظ بياناتي لتسريع الدفع مستقبلاً</span>
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">اختياري</span>
+        </div>
+        <p className="mt-1 text-xs font-bold text-slate-400">
+          يحفظ بيانات الاستلام لتعبئة أسرع في الطلبات القادمة
+        </p>
+      </div>
+    </label>
+
+    <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:bg-slate-50 transition-all cursor-pointer">
+      <input
+        type="checkbox"
+        checked={formData.billingSameAsShipping}
+        onChange={(e) => setField('billingSameAsShipping', e.target.checked)}
+        className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-black text-slate-800">عنوان الفاتورة مطابق لعنوان الاستلام</span>
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">اختياري</span>
+        </div>
+        <p className="mt-1 text-xs font-bold text-slate-400">
+          نستخدم نفس العنوان للفواتير وبيانات الطلب
+        </p>
+      </div>
+    </label>
+
+    <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:bg-slate-50 transition-all cursor-pointer">
+      <input
+        type="checkbox"
+        checked={acceptDeliveryPolicy}
+        onChange={(e) => setAcceptDeliveryPolicy(e.target.checked)}
+        className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-black text-slate-800">اطلعت على سياسة التوصيل</span>
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">اختياري</span>
+        </div>
+        <p className="mt-1 text-xs font-bold text-slate-400">
+          يساعد في توضيح مواعيد وآلية التوصيل قبل تأكيد الطلب
+        </p>
+      </div>
+    </label>
+
+    <label
+      className={`flex items-start gap-3 rounded-2xl border p-4 transition-all cursor-pointer ${
+        errors.acceptPolicies
+          ? 'border-red-300 bg-red-50'
+          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={acceptPolicies}
+        onChange={(e) => {
+          setAcceptPolicies(e.target.checked);
+          setErrors((prev) => {
+            const next = { ...prev };
+            delete next.acceptPolicies;
+            return next;
+          });
+        }}
+        className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-black text-slate-800">أوافق على سياسات المتجر وأحكام الخدمة</span>
+          <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-black text-red-600">مطلوب</span>
+        </div>
+        <p className="mt-1 text-xs font-bold text-slate-400">
+          لا يمكن إتمام الطلب بدون الموافقة على سياسات المتجر
+        </p>
+      </div>
+    </label>
+  </div>
+
+  {errors.acceptPolicies && (
+    <p className="mt-3 ms-1 text-xs font-black text-red-500">{errors.acceptPolicies}</p>
+  )}
+</div>              <div className="mt-6 flex items-center justify-center gap-2 text-xs font-bold text-slate-400 bg-white border border-slate-100 py-3 rounded-2xl">
                 <Shield size={16} className="text-emerald-500" />
                 <span>{tt('secureCheckoutNote', 'بياناتك مشفرة ومحمية بالكامل 100%', 'Your data is 100% encrypted and secure')}</span>
               </div>
