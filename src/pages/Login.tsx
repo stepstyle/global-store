@@ -1,5 +1,5 @@
 // src/pages/Login.tsx
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Facebook,
   Eye,
@@ -20,8 +20,8 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
-// 🚀 استيراد أدوات التحويل الخاصة بالموبايل (Redirect & getRedirectResult)
-import { getAuth, sendEmailVerification, signOut, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, FacebookAuthProvider } from "firebase/auth";
+// 🚀 استيراد مباشر لأدوات الفايربيس
+import { getAuth, sendEmailVerification, signOut, signInWithPopup, GoogleAuthProvider, FacebookAuthProvider } from "firebase/auth";
 
 import SEO from '../components/SEO';
 import { useCart } from '../App';
@@ -37,24 +37,12 @@ const isValidEmail = (email: string) =>
 
 const safeText = (v: any) => String(v ?? '').trim();
 
-// 🚀 تجهيز المزودات خارج الـ Component لضمان السرعة
-const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({ prompt: "select_account" });
-
-const facebookProvider = new FacebookAuthProvider();
-facebookProvider.addScope('email');
-
-// 📱 دالة فحص نوع الجهاز (عشان نعطي الأيفون التحويل اللي بيحبه، والكمبيوتر النافذة السريعة)
-const isMobileDevice = () => {
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-};
-
 const Login: React.FC = () => {
   const navigate = useNavigate();
   const { t, login, language } = useCart() as any;
 
   const [isLoginMode, setIsLoginMode] = useState(true);
-  const [isLoading, setIsLoading] = useState(true); // 👈 خليناها True بالبداية عشان نفحص إذا الزبون راجع من جوجل
+  const [isLoading, setIsLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [isResendingEmail, setIsResendingEmail] = useState(false);
 
@@ -92,39 +80,6 @@ const Login: React.FC = () => {
   const tt = (ar: string, en: string) => (isRtl ? ar : en);
   const title = useMemo(() => (isLoginMode ? tt('تسجيل الدخول', 'Sign In') : tt('إنشاء حساب جديد', 'Create Account')), [isLoginMode, isRtl]);
   const desc = useMemo(() => (isLoginMode ? tt('أهلاً بك مجدداً في متجر دير شرف', 'Welcome back to Dair Sharaf') : tt('انضم إلينا واكتشف منتجاتنا', 'Join us and discover our products')), [isLoginMode, isRtl]);
-
-  // 🚀 🚀 🚀 الرادار (The Catcher): هذا الكود يصطاد الزبون فور عودته من صفحة جوجل على الأيفون 🚀 🚀 🚀
-  useEffect(() => {
-    const auth = getAuth();
-    
-    getRedirectResult(auth)
-      .then((result) => {
-        if (result && result.user) {
-          // الزبون رجع بنجاح من جوجل!
-          const u = result.user;
-          login({
-            id: u.uid,
-            name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
-            email: u.email || '',
-            password: '',
-            role: 'customer',
-            orders: [],
-          });
-          navigate('/', { replace: true });
-        } else {
-          // الزبون فاتح الصفحة بشكل عادي، بنطفي اللودينج وبنظهرله الفورم
-          setIsLoading(false);
-        }
-      })
-      .catch((error) => {
-        console.error("Redirect Error:", error);
-        setFormAlert({
-          type: 'error',
-          message: getErrorMessage(error)
-        });
-        setIsLoading(false);
-      });
-  }, [login, navigate, isRtl]);
 
   const clearMainFeedback = () => {
     setFormAlert({ type: '', message: '' });
@@ -321,56 +276,6 @@ const Login: React.FC = () => {
       setIsResetting(false);
     }
   };
-
-  // 🚀 دالة الدخول الذكية (Smart Auth) - تحويل للأيفون ونافذة للكمبيوتر
-  const handleSocialAuth = (providerType: 'google' | 'facebook') => {
-    if (isLoading) return;
-    setFormAlert({ type: '', message: '' });
-    
-    const auth = getAuth();
-    const provider = providerType === 'google' ? googleProvider : facebookProvider;
-
-    setIsLoading(true);
-
-    if (isMobileDevice()) {
-      // 📱 موبايل (أيفون أو أندرويد): نستخدم التحويل لضمان عدم الحظر من سفاري
-      signInWithRedirect(auth, provider).catch(err => {
-        setFormAlert({ type: 'error', message: getErrorMessage(err) });
-        setIsLoading(false);
-      });
-    } else {
-      // 💻 كمبيوتر: نستخدم النافذة المنبثقة للسرعة
-      signInWithPopup(auth, provider)
-        .then((res) => {
-          const u = res.user;
-          login({
-            id: u.uid,
-            name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
-            email: u.email || '',
-            password: '',
-            role: 'customer',
-            orders: [],
-          });
-          navigate('/');
-        })
-        .catch((err) => {
-          console.error("Auth Error:", err);
-          setFormAlert({ type: 'error', message: getErrorMessage(err) });
-          setIsLoading(false);
-        });
-    }
-  };
-
-  // 🔄 شاشة تحميل احترافية تظهر عندما يعود المستخدم من صفحة جوجل
-  if (isLoading && !formData.email) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-        <Loader2 className="animate-spin text-[#3B82F6] mb-4" size={48} />
-        <h2 className="text-xl font-black text-slate-800">{tt('جاري التحقق من الحساب...', 'Verifying account...')}</h2>
-        <p className="text-sm font-bold text-slate-500 mt-2">{tt('يرجى الانتظار لحظات', 'Please wait a moment')}</p>
-      </div>
-    );
-  }
 
   return (
     <div
@@ -588,29 +493,88 @@ const Login: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-2 gap-4">
+              {/* 🚀 الهجوم المباشر (Inline Popup): الحل الأقوى لمتصفح سفاري */}
               <button
                 type="button"
-                onClick={() => handleSocialAuth('google')}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (isLoading) return;
+                  
+                  const auth = getAuth();
+                  const provider = new GoogleAuthProvider();
+                  provider.setCustomParameters({ prompt: "select_account" });
+                  
+                  // استدعاء النافذة كأول أمر وبشكل فوري
+                  signInWithPopup(auth, provider)
+                    .then((res) => {
+                      setIsLoading(true);
+                      const u = res.user;
+                      login({
+                        id: u.uid,
+                        name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
+                        email: u.email || '',
+                        password: '',
+                        role: 'customer',
+                        orders: [],
+                      });
+                      navigate('/');
+                    })
+                    .catch((err) => {
+                      console.error("Auth Error:", err);
+                      setFormAlert({ type: 'error', message: getErrorMessage(err) });
+                      setIsLoading(false);
+                    });
+                }}
                 className="flex items-center justify-center gap-2 py-3.5 border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 transition-all text-xs font-black text-slate-700 shadow-sm disabled:opacity-50"
                 disabled={isLoading}
               >
+                {isLoading ? <Loader2 className="animate-spin" size={18} /> : <>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
                   <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
                   <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
                   <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
                 </svg>
-                Google
+                Google</>}
               </button>
 
+              {/* نفس الهجوم المباشر لفيسبوك */}
               <button
                 type="button"
-                onClick={() => handleSocialAuth('facebook')}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (isLoading) return;
+                  
+                  const auth = getAuth();
+                  const provider = new FacebookAuthProvider();
+                  provider.addScope('email');
+                  
+                  signInWithPopup(auth, provider)
+                    .then((res) => {
+                      setIsLoading(true);
+                      const u = res.user;
+                      login({
+                        id: u.uid,
+                        name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
+                        email: u.email || '',
+                        password: '',
+                        role: 'customer',
+                        orders: [],
+                      });
+                      navigate('/');
+                    })
+                    .catch((err) => {
+                      console.error("Auth Error:", err);
+                      setFormAlert({ type: 'error', message: getErrorMessage(err) });
+                      setIsLoading(false);
+                    });
+                }}
                 className="flex items-center justify-center gap-2 py-3.5 border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 transition-all text-xs font-black text-slate-700 shadow-sm disabled:opacity-50"
                 disabled={isLoading}
               >
+                {isLoading ? <Loader2 className="animate-spin" size={18} /> : <>
                 <Facebook size={18} className="text-[#1877F2]" fill="currentColor" stroke="none" />
-                Facebook
+                Facebook</>}
               </button>
             </div>
           </div>
