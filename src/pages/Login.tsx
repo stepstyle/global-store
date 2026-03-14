@@ -20,14 +20,12 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
-// 🚀 استيراد أدوات التحويل الخاصة بالموبايل (Redirect & getRedirectResult)
 import { getAuth, sendEmailVerification, signOut, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, FacebookAuthProvider } from "firebase/auth";
 
 import SEO from '../components/SEO';
 import { useCart } from '../App';
 import { db } from '../services/storage';
 import { User } from '../types';
-
 import { sendResetEmail } from '../services/passwordReset';
 
 const { useNavigate } = ReactRouterDOM as any;
@@ -37,24 +35,18 @@ const isValidEmail = (email: string) =>
 
 const safeText = (v: any) => String(v ?? '').trim();
 
-// 🚀 تجهيز المزودات خارج الـ Component لضمان السرعة
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
 
 const facebookProvider = new FacebookAuthProvider();
 facebookProvider.addScope('email');
 
-// 📱 دالة فحص نوع الجهاز (عشان نعطي الأيفون التحويل اللي بيحبه، والكمبيوتر النافذة السريعة)
-const isMobileDevice = () => {
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-};
-
 const Login: React.FC = () => {
   const navigate = useNavigate();
   const { t, login, language } = useCart() as any;
 
   const [isLoginMode, setIsLoginMode] = useState(true);
-  const [isLoading, setIsLoading] = useState(true); // 👈 خليناها True بالبداية عشان نفحص إذا الزبون راجع من جوجل
+  const [isLoading, setIsLoading] = useState(true); // يبدأ true عشان يفحص التحويل
   const [showPass, setShowPass] = useState(false);
   const [isResendingEmail, setIsResendingEmail] = useState(false);
 
@@ -93,8 +85,7 @@ const Login: React.FC = () => {
   const title = useMemo(() => (isLoginMode ? tt('تسجيل الدخول', 'Sign In') : tt('إنشاء حساب جديد', 'Create Account')), [isLoginMode, isRtl]);
   const desc = useMemo(() => (isLoginMode ? tt('أهلاً بك مجدداً في متجر دير شرف', 'Welcome back to Dair Sharaf') : tt('انضم إلينا واكتشف منتجاتنا', 'Join us and discover our products')), [isLoginMode, isRtl]);
 
-  // 🚀 🚀 🚀 الرادار (The Catcher): هذا الكود يصطاد الزبون فور عودته من صفحة جوجل على الأيفون 🚀 🚀 🚀
-// رادار سفاري: بيشتغل بس لما الزبون يرجع من صفحة جوجل
+  // 🚀 الرادار (تم إصلاح مشكلة التعليق هنا)
   useEffect(() => {
     const auth = getAuth();
     getRedirectResult(auth)
@@ -110,12 +101,18 @@ const Login: React.FC = () => {
             orders: [],
           });
           navigate('/', { replace: true });
+        } else {
+          // 🔥 هذا هو السطر اللي كان ناقص وعمل شلل للموقع!
+          setIsLoading(false);
         }
       })
       .catch((error) => {
         console.error("Redirect Error:", error);
+        // 🔥 وهنا كمان طفينا التحميل في حال صار خطأ
+        setIsLoading(false);
       });
   }, [login, navigate, isRtl]);
+
   const clearMainFeedback = () => {
     setFormAlert({ type: '', message: '' });
     setFieldErrors((prev) => ({
@@ -142,6 +139,7 @@ const Login: React.FC = () => {
   const getErrorMessage = (error: any) => {
     const code = error?.code;
     if (code === 'auth/popup-closed-by-user') return tt('تم إغلاق نافذة الدخول قبل إتمام العملية. يرجى المحاولة مجدداً.', 'Sign-in window was closed. Please try again.');
+    if (code === 'auth/popup-blocked') return tt('يرجى السماح بالنوافذ المنبثقة من إعدادات المتصفح.', 'Please allow popups in your browser settings.');
     if (code === 'auth/unauthorized-continue-uri') return tt('عذراً، هذا الدومين غير موثق حالياً. يرجى التواصل مع الإدارة.', 'Domain not authorized. Please contact support.');
     if (code === 'auth/email-already-in-use') return tt('يبدو أنك تملك حساباً مسبقاً. يرجى تسجيل الدخول بدلاً من ذلك.', 'An account with this email already exists. Please log in.');
     if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
@@ -187,7 +185,7 @@ const Login: React.FC = () => {
       if (auth.currentUser) {
         await sendEmailVerification(auth.currentUser);
         setFormAlert({ type: 'success', message: tt('تم إرسال الرابط مجدداً! تفقد بريدك الوارد (ومجلد الرسائل غير المرغوب فيها).', 'Verification link resent! Please check your inbox (and spam folder).') });
-        await signOut(auth); // طرده ليعود للدخول
+        await signOut(auth);
       }
     } catch (error: any) {
       if (error.code === 'auth/too-many-requests') {
@@ -312,23 +310,23 @@ const Login: React.FC = () => {
     }
   };
 
-  // 🚀 دالة الدخول الذكية (Smart Auth) - تحويل للأيفون ونافذة للكمبيوتر
- // 🚀 دالة الدخول (النافذة السريعة) - رجعناها لأننا حلينا مشكلة الدومين!
-  // 🚀 دالة الدخول (النافذة السريعة المعدلة لتخطي حظر الآيفون)
+  // 🚀 دالة الدخول الذكية (المدمجة والنهائية)
   const handleSocialAuth = (providerType: 'google' | 'facebook') => {
     if (isLoading) return;
     
     const auth = getAuth();
     const provider = providerType === 'google' ? googleProvider : facebookProvider;
 
-    // فحص ذكي: هل المستخدم فاتح من متصفح سفاري؟
-    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    // فحص ذكي لمتصفح سفاري وأجهزة أبل
+    const isSafariOrIOS = /^((?!chrome|android).)*safari/i.test(navigator.userAgent) || /iPad|iPhone|iPod/.test(navigator.userAgent);
 
-    if (isSafari) {
-      // لسفاري: نستخدم التوجيه المباشر عشان نتخطى حظر أبل
-      signInWithRedirect(auth, provider);
+    if (isSafariOrIOS) {
+      setIsLoading(true);
+      signInWithRedirect(auth, provider).catch(err => {
+        setFormAlert({ type: 'error', message: getErrorMessage(err) });
+        setIsLoading(false);
+      });
     } else {
-      // لباقي المتصفحات (كروم وغيرها): النافذة المنبثقة السريعة
       signInWithPopup(auth, provider)
         .then((res) => {
           setIsLoading(true);
@@ -350,7 +348,7 @@ const Login: React.FC = () => {
         });
     }
   };
-  // 🔄 شاشة تحميل احترافية تظهر عندما يعود المستخدم من صفحة جوجل
+
   if (isLoading && !formData.email) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
