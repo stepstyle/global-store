@@ -318,8 +318,12 @@ useEffect(() => {
         });
         navigate('/');
       })
-      .catch((err) => {
+     .catch((err) => {
         console.error("Auth Error:", err);
+        
+        // ضيف هذا السطر السحري عشان يفضح لنا المشكلة على الموبايل 👇
+        alert("رمز الخطأ من جوجل: " + err.code); 
+        
         setFormAlert({ type: 'error', message: getErrorMessage(err) });
         setIsLoading(false);
       });
