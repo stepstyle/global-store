@@ -94,10 +94,28 @@ const Login: React.FC = () => {
   const desc = useMemo(() => (isLoginMode ? tt('أهلاً بك مجدداً في متجر دير شرف', 'Welcome back to Dair Sharaf') : tt('انضم إلينا واكتشف منتجاتنا', 'Join us and discover our products')), [isLoginMode, isRtl]);
 
   // 🚀 🚀 🚀 الرادار (The Catcher): هذا الكود يصطاد الزبون فور عودته من صفحة جوجل على الأيفون 🚀 🚀 🚀
-useEffect(() => {
-    // طفينا اللودينج عشان يفتح الفورم فوراً
-    setIsLoading(false);
-  }, []);
+// رادار سفاري: بيشتغل بس لما الزبون يرجع من صفحة جوجل
+  useEffect(() => {
+    const auth = getAuth();
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result && result.user) {
+          const u = result.user;
+          login({
+            id: u.uid,
+            name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
+            email: u.email || '',
+            password: '',
+            role: 'customer',
+            orders: [],
+          });
+          navigate('/', { replace: true });
+        }
+      })
+      .catch((error) => {
+        console.error("Redirect Error:", error);
+      });
+  }, [login, navigate, isRtl]);
   const clearMainFeedback = () => {
     setFormAlert({ type: '', message: '' });
     setFieldErrors((prev) => ({
@@ -303,29 +321,35 @@ useEffect(() => {
     const auth = getAuth();
     const provider = providerType === 'google' ? googleProvider : facebookProvider;
 
-    // 🔥 السر هنا: شلنا اللودينج من هون عشان الآيفون يفتح النافذة فوراً بدون ما يحظرها
+    // فحص ذكي: هل المستخدم فاتح من متصفح سفاري؟
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
-    signInWithPopup(auth, provider)
-      .then((res) => {
-        setIsLoading(true); // بنشغل اللودينج بعد ما النافذة تفتح وتنجح
-        const u = res.user;
-        login({
-          id: u.uid,
-          name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
-          email: u.email || '',
-          password: '',
-          role: 'customer',
-          orders: [],
+    if (isSafari) {
+      // لسفاري: نستخدم التوجيه المباشر عشان نتخطى حظر أبل
+      signInWithRedirect(auth, provider);
+    } else {
+      // لباقي المتصفحات (كروم وغيرها): النافذة المنبثقة السريعة
+      signInWithPopup(auth, provider)
+        .then((res) => {
+          setIsLoading(true);
+          const u = res.user;
+          login({
+            id: u.uid,
+            name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
+            email: u.email || '',
+            password: '',
+            role: 'customer',
+            orders: [],
+          });
+          navigate('/');
+        })
+        .catch((err) => {
+          console.error("Auth Error:", err);
+          setFormAlert({ type: 'error', message: getErrorMessage(err) });
+          setIsLoading(false);
         });
-        navigate('/');
-      })
-      .catch((err) => {
-        console.error("Auth Error:", err);
-        setFormAlert({ type: 'error', message: getErrorMessage(err) });
-        setIsLoading(false);
-      });
+    }
   };
-
   // 🔄 شاشة تحميل احترافية تظهر عندما يعود المستخدم من صفحة جوجل
   if (isLoading && !formData.email) {
     return (
