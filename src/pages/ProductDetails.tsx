@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useParams } from 'react-router-dom';
 import {
   Star, ShoppingCart, Heart, Share2, Truck, RefreshCw, Bell, X, Trash2,
-  EyeOff, Eye, MessageSquare, Minus, Plus, Shield, Play, Volume2, VolumeX, ImageOff, Loader2
+  EyeOff, Eye, MessageSquare, Minus, Plus, Shield, Play, Volume2, VolumeX, ImageOff, Loader2, CheckCircle2
 } from 'lucide-react';
 
 import Button from '../components/Button';
@@ -80,53 +80,43 @@ const clampInt = (v: any, min: number, max: number) => {
   return Math.max(min, Math.min(max, Math.floor(n)));
 };
 
+// 🚀 دالة الوصف الذكية (Smart Parser) - تفصل النقاط تلقائياً وتضعها في بطاقات أنيقة
 const renderRichText = (raw: string) => {
   const text = safeStr(raw);
   if (!text) return null;
 
-  const lines = text.replace(/\r/g, '\n').split('\n').map((l) => l.trim());
-  const blocks: Array<{ type: 'p'; value: string } | { type: 'ul'; items: string[] }> = [];
-  let currentList: string[] = [];
+  // 💡 الخدعة السحرية: الكود بيبحث عن الإيموجيات أو الرموز وبضيف قبلها سطر جديد تلقائياً
+  const autoFormattedText = text.replace(/(✅|✔️|🛠️|🧩|🚀|🌈|🔒|🎲|✨|💡|📌|🎯|- |\* |• )/g, '\n$1');
 
-  const pushListIfAny = () => {
-    if (currentList.length > 0) {
-      blocks.push({ type: 'ul', items: currentList });
-      currentList = [];
-    }
-  };
-
-  for (const line of lines) {
-    if (!line) {
-      pushListIfAny();
-      continue;
-    }
-    const isBullet = /^(-|\*|•)\s+/.test(line);
-    if (isBullet) {
-      const item = line.replace(/^(-|\*|•)\s+/, '').trim();
-      if (item) currentList.push(item);
-      continue;
-    }
-    pushListIfAny();
-    blocks.push({ type: 'p', value: line });
-  }
-  pushListIfAny();
+  // تقسيم النص إلى أسطر نظيفة
+  const lines = autoFormattedText.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
 
   return (
-    <div className="space-y-4">
-      {blocks.map((b, idx) => {
-        if (b.type === 'ul') {
+    <div className="grid grid-cols-1 gap-3 py-2">
+      {lines.map((line, idx) => {
+        // فحص: هل السطر يعتبر نقطة مميزات؟ (يحتوي على إيموجي أو رمز)
+        const isBullet = /^(-|\*|•|✅|✔️|✨|🚀|🌈|🔒|🛠️|🧩|🎲|💡|📌|🎯)/.test(line);
+
+        if (isBullet) {
           return (
-            <ul
-              key={idx}
-              className="list-disc list-inside space-y-2 text-slate-700 leading-relaxed marker:text-slate-400 bg-slate-50 p-4 rounded-xl"
+            <div 
+              key={idx} 
+              className="flex items-start gap-4 p-4 md:p-5 bg-white rounded-2xl border border-slate-100 shadow-[0_4px_20px_-5px_rgba(0,0,0,0.04)] hover:border-yellow-400/40 hover:shadow-md transition-all duration-300"
             >
-              {b.items.map((it, i) => <li key={i}>{it}</li>)}
-            </ul>
+              <div className="shrink-0 mt-0.5">
+                <CheckCircle2 size={22} className="text-emerald-500" />
+              </div>
+              <p className="text-slate-700 leading-relaxed text-[15px] font-bold">
+                {line}
+              </p>
+            </div>
           );
         }
+
+        // إذا كان السطر عبارة عن فقرة عادية أو عنوان
         return (
-          <p key={idx} className="text-slate-700 leading-relaxed text-[15px]">
-            {b.value}
+          <p key={idx} className="text-slate-600 leading-[2] text-[15px] font-semibold px-2 py-1">
+            {line}
           </p>
         );
       })}
@@ -288,10 +278,8 @@ const ProductDetails: React.FC = () => {
 
   const productTitle = useMemo(() => (product ? getProductTitle(product) : ''), [product, getProductTitle]);
 
-  // 🚀 التعديل الجراحي: جلب الوصف المناسب للغة الموقع الحالية
   const displayDesc = useMemo(() => {
     if (!product) return '';
-    // إذا كانت اللغة إنجليزي ويوجد وصف إنجليزي في الداتا، اعرضه. وإلا اعرض الوصف العربي كبديل.
     if (!isAR && (product as any).descriptionEn) {
       return (product as any).descriptionEn;
     }
@@ -528,7 +516,6 @@ const ProductDetails: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50/50 py-4 lg:py-12 relative">
-      {/* 🚀 تعديل ה- SEO ليقرأ الوصف الإنجليزي في حال وجوده */}
       <SEO title={productTitle} description={displayDesc} image={heroPoster || ''} type="product" />
 
       {showNotifyModal && (
@@ -646,7 +633,6 @@ const ProductDetails: React.FC = () => {
 
           <div className="min-h-[250px] animate-in fade-in duration-300">
             {activeTab === 'desc' ? (
-              /* 🚀 التعديل الجراحي: عرض الوصف بناءً على اللغة */
               <div className="max-w-4xl">{renderRichText(displayDesc)}</div>
             ) : (
               <div className="space-y-8 max-w-4xl">
