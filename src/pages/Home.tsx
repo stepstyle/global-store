@@ -136,8 +136,10 @@ const SubCard: React.FC<SubCardProps> = ({ title, Icon, image, to, subtitle }) =
             alt={title} 
             className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" 
             draggable={false}
-            loading="lazy"
-            onError={() => setImgError(true)}
+            loading="eager"           
+            decoding="sync"
+            fetchpriority="high"
+           onError={() => setImgError(true)}
           />
         ) : (
           /* الأيقونة تظهر في حال عدم وجود صورة */
