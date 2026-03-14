@@ -296,17 +296,18 @@ useEffect(() => {
 
   // 🚀 دالة الدخول الذكية (Smart Auth) - تحويل للأيفون ونافذة للكمبيوتر
  // 🚀 دالة الدخول (النافذة السريعة) - رجعناها لأننا حلينا مشكلة الدومين!
+  // 🚀 دالة الدخول (النافذة السريعة المعدلة لتخطي حظر الآيفون)
   const handleSocialAuth = (providerType: 'google' | 'facebook') => {
     if (isLoading) return;
-    setFormAlert({ type: '', message: '' });
     
     const auth = getAuth();
     const provider = providerType === 'google' ? googleProvider : facebookProvider;
 
-    setIsLoading(true);
+    // 🔥 السر هنا: شلنا اللودينج من هون عشان الآيفون يفتح النافذة فوراً بدون ما يحظرها
 
     signInWithPopup(auth, provider)
       .then((res) => {
+        setIsLoading(true); // بنشغل اللودينج بعد ما النافذة تفتح وتنجح
         const u = res.user;
         login({
           id: u.uid,
@@ -318,12 +319,8 @@ useEffect(() => {
         });
         navigate('/');
       })
-     .catch((err) => {
+      .catch((err) => {
         console.error("Auth Error:", err);
-        
-        // ضيف هذا السطر السحري عشان يفضح لنا المشكلة على الموبايل 👇
-        alert("رمز الخطأ من جوجل: " + err.code); 
-        
         setFormAlert({ type: 'error', message: getErrorMessage(err) });
         setIsLoading(false);
       });
