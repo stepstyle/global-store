@@ -20,8 +20,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
-// 🚀 تم إزالة أدوات التحويل (Redirect) والاكتفاء بالنافذة المنبثقة (Popup) لحل مشكلة فقدان الذاكرة
-import { getAuth, sendEmailVerification, signOut, signInWithPopup, GoogleAuthProvider, FacebookAuthProvider } from "firebase/auth";
+import { getAuth, sendEmailVerification, signOut, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, FacebookAuthProvider } from "firebase/auth";
 
 import SEO from '../components/SEO';
 import { useCart } from '../App';
@@ -47,7 +46,7 @@ const Login: React.FC = () => {
   const { t, login, language } = useCart() as any;
 
   const [isLoginMode, setIsLoginMode] = useState(true);
-  const [isLoading, setIsLoading] = useState(false); // 👈 خليناها False عشان يفتح فوراً بدون ما يعلق يستنى الرادار
+  const [isLoading, setIsLoading] = useState(true); // 👈 خليناها True عشان الرادار يشتغل
   const [showPass, setShowPass] = useState(false);
   const [isResendingEmail, setIsResendingEmail] = useState(false);
 
@@ -86,10 +85,34 @@ const Login: React.FC = () => {
   const title = useMemo(() => (isLoginMode ? tt('تسجيل الدخول', 'Sign In') : tt('إنشاء حساب جديد', 'Create Account')), [isLoginMode, isRtl]);
   const desc = useMemo(() => (isLoginMode ? tt('أهلاً بك مجدداً في متجر دير شرف', 'Welcome back to Dair Sharaf') : tt('انضم إلينا واكتشف منتجاتنا', 'Join us and discover our products')), [isLoginMode, isRtl]);
 
-  // 🚀 تم إيقاف عمل الرادار لأنه لم يعد هناك تحويل يخرج الزبون من الموقع
+  // 🚀 🚀 الرادار (The Catcher): بيصطاد الزبون لما يرجع من صفحة جوجل على الموبايل
   useEffect(() => {
-    setIsLoading(false);
-  }, []);
+    const auth = getAuth();
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result && result.user) {
+          const u = result.user;
+          login({
+            id: u.uid,
+            name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
+            email: u.email || '',
+            password: '',
+            role: 'customer',
+            orders: [],
+          });
+          navigate('/', { replace: true });
+        } else {
+          setIsLoading(false); // إذا ما في تحويل، طفي التحميل واعرض الصفحة عادي
+        }
+      })
+      .catch((error) => {
+        console.error("Redirect Error:", error);
+        if (error.code !== 'auth/redirect-cancelled-by-user') {
+           setFormAlert({ type: 'error', message: getErrorMessage(error) });
+        }
+        setIsLoading(false);
+      });
+  }, [login, navigate, isRtl]);
 
   const clearMainFeedback = () => {
     setFormAlert({ type: '', message: '' });
@@ -287,36 +310,44 @@ const Login: React.FC = () => {
     }
   };
 
-  // 🚀 دالة الدخول الذكية والنهائية (نافذة منبثقة للكل عشان ما نفقد الذاكرة)
-  const handleSocialAuth = async (providerType: 'google' | 'facebook') => {
+  // 🚀 دالة الدخول الذكية للكمبيوتر والموبايل (آمنة 100% بعد ربط الدومين)
+  const handleSocialAuth = (providerType: 'google' | 'facebook') => {
     if (isLoading) return;
     
     const auth = getAuth();
     const provider = providerType === 'google' ? googleProvider : facebookProvider;
 
-    try {
-      // نفتح النافذة فوراً بدون أي أوامر تأخير أو تحميل عشان سفاري ما يحظرها
-      const res = await signInWithPopup(auth, provider);
-      
-      // بس يخلص تسجيل من النافذة بنجاح، بنشغل التحميل وبندخله الحساب
+    // فحص: هل الزبون فاتح من موبايل أو آيباد أو سفاري؟
+    const isMobileOrSafari = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    if (isMobileOrSafari) {
+      // 📱 للموبايل: نستخدم التحويل المباشر. (بما إننا وثقنا الرابط في جوجل، رح يشتغل بدون خطأ mismatch).
       setIsLoading(true);
-      const u = res.user;
-      login({
-        id: u.uid,
-        name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
-        email: u.email || '',
-        password: '',
-        role: 'customer',
-        orders: [],
-      });
-      navigate('/');
-    } catch (err: any) {
-      console.error("Auth Error:", err);
-      setIsLoading(false);
-      // إذا الزبون سكر النافذة بيده ما بنطلعله رسالة خطأ مزعجة
-      if (err.code !== 'auth/popup-closed-by-user') {
+      signInWithRedirect(auth, provider).catch(err => {
         setFormAlert({ type: 'error', message: getErrorMessage(err) });
-      }
+        setIsLoading(false);
+      });
+    } else {
+      // 💻 للكمبيوتر: نافذة منبثقة سريعة.
+      signInWithPopup(auth, provider)
+        .then((res) => {
+          setIsLoading(true);
+          const u = res.user;
+          login({
+            id: u.uid,
+            name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
+            email: u.email || '',
+            password: '',
+            role: 'customer',
+            orders: [],
+          });
+          navigate('/');
+        })
+        .catch((err) => {
+          console.error("Auth Error:", err);
+          setFormAlert({ type: 'error', message: getErrorMessage(err) });
+          setIsLoading(false);
+        });
     }
   };
 
