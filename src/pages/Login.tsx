@@ -296,17 +296,16 @@ useEffect(() => {
 
   // 🚀 دالة الدخول الذكية (Smart Auth) - تحويل للأيفون ونافذة للكمبيوتر
  // 🚀 دالة الدخول (النافذة السريعة) - رجعناها لأننا حلينا مشكلة الدومين!
+  // 🚀 دالة الدخول العالمية (هجوم مباشر بدون أي تأخير لتخطي حظر سفاري)
   const handleSocialAuth = (providerType: 'google' | 'facebook') => {
-    if (isLoading) return;
-    setFormAlert({ type: '', message: '' });
-    
+    // 🔥 ممنوع وضع أي أوامر تحميل (Loading) أو انتظار هنا!
     const auth = getAuth();
     const provider = providerType === 'google' ? googleProvider : facebookProvider;
 
-    setIsLoading(true);
-
+    // فتح النافذة فوراً مع ضغطة الزر (عشان سفاري ما يعتبرها نافذة مزعجة)
     signInWithPopup(auth, provider)
       .then((res) => {
+        setIsLoading(true); // هسا بنشغل التحميل براحتنا
         const u = res.user;
         login({
           id: u.uid,
@@ -318,12 +317,8 @@ useEffect(() => {
         });
         navigate('/');
       })
-     .catch((err) => {
+      .catch((err) => {
         console.error("Auth Error:", err);
-        
-        // ضيف هذا السطر السحري عشان يفضح لنا المشكلة على الموبايل 👇
-        alert("رمز الخطأ من جوجل: " + err.code); 
-        
         setFormAlert({ type: 'error', message: getErrorMessage(err) });
         setIsLoading(false);
       });
