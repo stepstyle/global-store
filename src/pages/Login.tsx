@@ -20,14 +20,12 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
-// 🚀 استيراد أدوات التحويل الخاصة بالموبايل (Redirect & getRedirectResult)
 import { getAuth, sendEmailVerification, signOut, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, FacebookAuthProvider } from "firebase/auth";
 
 import SEO from '../components/SEO';
 import { useCart } from '../App';
 import { db } from '../services/storage';
 import { User } from '../types';
-
 import { sendResetEmail } from '../services/passwordReset';
 
 const { useNavigate } = ReactRouterDOM as any;
@@ -37,24 +35,18 @@ const isValidEmail = (email: string) =>
 
 const safeText = (v: any) => String(v ?? '').trim();
 
-// 🚀 تجهيز المزودات خارج الـ Component لضمان السرعة
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
 
 const facebookProvider = new FacebookAuthProvider();
 facebookProvider.addScope('email');
 
-// 📱 دالة فحص نوع الجهاز (عشان نعطي الأيفون التحويل اللي بيحبه، والكمبيوتر النافذة السريعة)
-const isMobileDevice = () => {
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-};
-
 const Login: React.FC = () => {
   const navigate = useNavigate();
   const { t, login, language } = useCart() as any;
 
   const [isLoginMode, setIsLoginMode] = useState(true);
-  const [isLoading, setIsLoading] = useState(true); // 👈 خليناها True بالبداية عشان نفحص إذا الزبون راجع من جوجل
+  const [isLoading, setIsLoading] = useState(true); // 👈 خليناها True عشان الرادار يشتغل
   const [showPass, setShowPass] = useState(false);
   const [isResendingEmail, setIsResendingEmail] = useState(false);
 
@@ -93,11 +85,35 @@ const Login: React.FC = () => {
   const title = useMemo(() => (isLoginMode ? tt('تسجيل الدخول', 'Sign In') : tt('إنشاء حساب جديد', 'Create Account')), [isLoginMode, isRtl]);
   const desc = useMemo(() => (isLoginMode ? tt('أهلاً بك مجدداً في متجر دير شرف', 'Welcome back to Dair Sharaf') : tt('انضم إلينا واكتشف منتجاتنا', 'Join us and discover our products')), [isLoginMode, isRtl]);
 
-  // 🚀 🚀 🚀 الرادار (The Catcher): هذا الكود يصطاد الزبون فور عودته من صفحة جوجل على الأيفون 🚀 🚀 🚀
-useEffect(() => {
-    // طفينا اللودينج عشان يفتح الفورم فوراً
-    setIsLoading(false);
-  }, []);
+  // 🚀 🚀 الرادار (The Catcher): بيصطاد الزبون لما يرجع من صفحة جوجل على الموبايل
+  useEffect(() => {
+    const auth = getAuth();
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result && result.user) {
+          const u = result.user;
+          login({
+            id: u.uid,
+            name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
+            email: u.email || '',
+            password: '',
+            role: 'customer',
+            orders: [],
+          });
+          navigate('/', { replace: true });
+        } else {
+          setIsLoading(false); // إذا ما في تحويل، طفي التحميل واعرض الصفحة عادي
+        }
+      })
+      .catch((error) => {
+        console.error("Redirect Error:", error);
+        if (error.code !== 'auth/redirect-cancelled-by-user') {
+           setFormAlert({ type: 'error', message: getErrorMessage(error) });
+        }
+        setIsLoading(false);
+      });
+  }, [login, navigate, isRtl]);
+
   const clearMainFeedback = () => {
     setFormAlert({ type: '', message: '' });
     setFieldErrors((prev) => ({
@@ -169,7 +185,7 @@ useEffect(() => {
       if (auth.currentUser) {
         await sendEmailVerification(auth.currentUser);
         setFormAlert({ type: 'success', message: tt('تم إرسال الرابط مجدداً! تفقد بريدك الوارد (ومجلد الرسائل غير المرغوب فيها).', 'Verification link resent! Please check your inbox (and spam folder).') });
-        await signOut(auth); // طرده ليعود للدخول
+        await signOut(auth);
       }
     } catch (error: any) {
       if (error.code === 'auth/too-many-requests') {
@@ -294,34 +310,45 @@ useEffect(() => {
     }
   };
 
-  // 🚀 دالة الدخول الذكية (Smart Auth) - تحويل للأيفون ونافذة للكمبيوتر
- // 🚀 دالة الدخول (النافذة السريعة) - رجعناها لأننا حلينا مشكلة الدومين!
-  // 🚀 دالة الدخول العالمية (هجوم مباشر بدون أي تأخير لتخطي حظر سفاري)
+  // 🚀 دالة الدخول الذكية للكمبيوتر والموبايل (آمنة 100% بعد ربط الدومين)
   const handleSocialAuth = (providerType: 'google' | 'facebook') => {
-    // 🔥 ممنوع وضع أي أوامر تحميل (Loading) أو انتظار هنا!
+    if (isLoading) return;
+    
     const auth = getAuth();
     const provider = providerType === 'google' ? googleProvider : facebookProvider;
 
-    // فتح النافذة فوراً مع ضغطة الزر (عشان سفاري ما يعتبرها نافذة مزعجة)
-    signInWithPopup(auth, provider)
-      .then((res) => {
-        setIsLoading(true); // هسا بنشغل التحميل براحتنا
-        const u = res.user;
-        login({
-          id: u.uid,
-          name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
-          email: u.email || '',
-          password: '',
-          role: 'customer',
-          orders: [],
-        });
-        navigate('/');
-      })
-      .catch((err) => {
-        console.error("Auth Error:", err);
+    // فحص: هل الزبون فاتح من موبايل أو آيباد أو سفاري؟
+    const isMobileOrSafari = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    if (isMobileOrSafari) {
+      // 📱 للموبايل: نستخدم التحويل المباشر. (بما إننا وثقنا الرابط في جوجل، رح يشتغل بدون خطأ mismatch).
+      setIsLoading(true);
+      signInWithRedirect(auth, provider).catch(err => {
         setFormAlert({ type: 'error', message: getErrorMessage(err) });
         setIsLoading(false);
       });
+    } else {
+      // 💻 للكمبيوتر: نافذة منبثقة سريعة.
+      signInWithPopup(auth, provider)
+        .then((res) => {
+          setIsLoading(true);
+          const u = res.user;
+          login({
+            id: u.uid,
+            name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
+            email: u.email || '',
+            password: '',
+            role: 'customer',
+            orders: [],
+          });
+          navigate('/');
+        })
+        .catch((err) => {
+          console.error("Auth Error:", err);
+          setFormAlert({ type: 'error', message: getErrorMessage(err) });
+          setIsLoading(false);
+        });
+    }
   };
 
   // 🔄 شاشة تحميل احترافية تظهر عندما يعود المستخدم من صفحة جوجل
