@@ -95,7 +95,7 @@ const getEnvConfig = (): FirebaseWebConfig | null => {
   // Option B: Your current inline config (OK for dev/project)
   const cfg: Partial<FirebaseWebConfig> = {
     apiKey: 'AIzaSyClkSIiIkMIXgIafRh4PwnAQTgUdg2SmpM',
-    authDomain: 'antastore1-82b50.firebaseapp.com',
+    authDomain: "auth.dairsharaf.com",
     projectId: 'antastore1-82b50',
     storageBucket: 'antastore1-82b50.firebasestorage.app',
     messagingSenderId: '503316431812',
