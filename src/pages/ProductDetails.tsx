@@ -288,6 +288,16 @@ const ProductDetails: React.FC = () => {
 
   const productTitle = useMemo(() => (product ? getProductTitle(product) : ''), [product, getProductTitle]);
 
+  // 🚀 التعديل الجراحي: جلب الوصف المناسب للغة الموقع الحالية
+  const displayDesc = useMemo(() => {
+    if (!product) return '';
+    // إذا كانت اللغة إنجليزي ويوجد وصف إنجليزي في الداتا، اعرضه. وإلا اعرض الوصف العربي كبديل.
+    if (!isAR && (product as any).descriptionEn) {
+      return (product as any).descriptionEn;
+    }
+    return product.description || '';
+  }, [product, isAR]);
+
   useEffect(() => {
     const sp = new URLSearchParams(location.search);
     if (sp.get('tab') === 'reviews') {
@@ -447,7 +457,6 @@ const ProductDetails: React.FC = () => {
         comment: c,
       });
       
-      // رسالة النجاح الأنيقة بدون Alert
       showToast(tt('reviewPosted', 'تم نشر تقييمك بنجاح، شكراً لك!', 'Review posted successfully!'), 'success');
       
       setMyComment('');
@@ -519,7 +528,8 @@ const ProductDetails: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50/50 py-4 lg:py-12 relative">
-      <SEO title={productTitle} description={product.description} image={heroPoster || ''} type="product" />
+      {/* 🚀 تعديل ה- SEO ليقرأ الوصف الإنجليزي في حال وجوده */}
+      <SEO title={productTitle} description={displayDesc} image={heroPoster || ''} type="product" />
 
       {showNotifyModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -636,14 +646,13 @@ const ProductDetails: React.FC = () => {
 
           <div className="min-h-[250px] animate-in fade-in duration-300">
             {activeTab === 'desc' ? (
-              <div className="max-w-4xl">{renderRichText(product.description)}</div>
+              /* 🚀 التعديل الجراحي: عرض الوصف بناءً على اللغة */
+              <div className="max-w-4xl">{renderRichText(displayDesc)}</div>
             ) : (
               <div className="space-y-8 max-w-4xl">
                 
-                {/* 🚨 التعديل الشامل لتجربة المستخدم (مسجل شاري، مسجل لم يشتري، زائر) */}
                 {viewer?.id ? (
                   canReview ? (
-                    // ✅ 1. مسجل + اشترى (يستطيع التقييم)
                     <div ref={reviewFormRef} className="bg-slate-50 p-6 md:p-8 rounded-3xl border border-slate-100">
                       <h3 className="text-xl font-extrabold mb-4 text-slate-900">{tt('addReview', 'أضف تقييمك', 'Add Review')}</h3>
                       <div className="flex gap-2 mb-5 bg-white inline-flex p-3 rounded-2xl shadow-sm border border-slate-100">
@@ -675,7 +684,6 @@ const ProductDetails: React.FC = () => {
                       </div>
                     </div>
                   ) : (
-                    // ⛔ 2. مسجل + لم يشتري
                     <div className="bg-sky-50/50 p-8 md:p-10 rounded-3xl border border-sky-100 flex flex-col items-center text-center shadow-sm">
                       <div className="flex gap-2 mb-5 opacity-60">
                         {[1, 2, 3, 4, 5].map((s) => (
@@ -695,7 +703,6 @@ const ProductDetails: React.FC = () => {
                     </div>
                   )
                 ) : (
-                  // 🔒 3. الزائر (غير مسجل الدخول) - اللمسة الاحترافية الجديدة
                   <div className="bg-slate-50 p-8 md:p-10 rounded-3xl border border-slate-200 flex flex-col items-center text-center shadow-sm">
                     <MessageSquare className="text-slate-300 mb-4" size={40} />
                     <h3 className="text-xl font-extrabold mb-2 text-slate-900">

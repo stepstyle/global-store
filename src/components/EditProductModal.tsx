@@ -55,44 +55,117 @@ const clampNumber = (value: unknown, min: number, max: number) => {
   return Math.min(max, Math.max(min, parsed));
 };
 
-const SUBCATEGORIES: Record<Category, { value: string; labelAr: string; labelEn: string }[]> = {
+const compressImage = async (file: File): Promise<File> => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 1000; 
+        const MAX_HEIGHT = 1000; 
+
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              const newFile = new File([blob], file.name.replace(/\.[^/.]+$/, ".webp"), {
+                type: 'image/webp',
+                lastModified: Date.now(),
+              });
+              resolve(newFile);
+            } else {
+              resolve(file); 
+            }
+          },
+          'image/webp',
+          0.8
+        );
+      };
+      img.onerror = () => resolve(file);
+    };
+    reader.onerror = () => resolve(file);
+  });
+};
+
+const SUBCATEGORIES: Record<string, { value: string; labelAr: string; labelEn: string }[]> = {
   Games: [
-    { value: '0-9m', labelAr: 'ألعاب (من شهر إلى 9 أشهر)', labelEn: 'Games (0–9 months)' },
-    { value: '1-2y', labelAr: 'ألعاب (من سنة إلى سنتين)', labelEn: 'Games (1–2 years)' },
-    { value: '2-3y', labelAr: 'ألعاب (من سنتين إلى 3 سنوات)', labelEn: 'Games (2–3 years)' },
-    { value: 'girls', labelAr: 'ألعاب بناتي', labelEn: 'Girls Games' },
-    { value: 'boys', labelAr: 'ألعاب ولادي', labelEn: 'Boys Games' },
-    { value: 'edu', labelAr: 'ألعاب تعليمية', labelEn: 'Educational Games' },
+    { value: 'all-toys', labelAr: 'جميع الألعاب', labelEn: 'All Toys' },
+    { value: 'baby-toys', labelAr: 'ألعاب البيبي', labelEn: 'Baby Toys' },
+    { value: 'girls-toys', labelAr: 'ألعاب للبنات', labelEn: 'Girls Toys' },
+    { value: 'boys-toys', labelAr: 'ألعاب للأولاد', labelEn: 'Boys Toys' },
+    { value: 'montessori', labelAr: 'ألعاب منتسوري', labelEn: 'Montessori' },
+    { value: 'memory-focus', labelAr: 'الذاكرة والتركيز', labelEn: 'Memory & Focus' },
+    { value: 'challenge-iq', labelAr: 'التحدي والذكاء', labelEn: 'Challenge & IQ' },
+    { value: 'letters-words', labelAr: 'الحروف والكلمات', labelEn: 'Letters & Words' },
+    { value: 'math-numbers', labelAr: 'الرياضيات والحساب', labelEn: 'Math & Numbers' },
+    { value: 'science-experiments', labelAr: 'التجارب العلمية', labelEn: 'Science Experiments' },
+    { value: 'drawing-coloring', labelAr: 'الرسم والتلوين', labelEn: 'Drawing & Coloring' },
+    { value: 'kitchen-toys', labelAr: 'العاب مطابخ', labelEn: 'Kitchen Toys' },
+    { value: 'kids-tents', labelAr: 'خيم الاطفال', labelEn: 'Kids Tents' },
+    { value: 'audio-books', labelAr: 'الكتب الصوتية', labelEn: 'Audio Books' },
+    { value: 'activity-books', labelAr: 'الكتب والانشطة', labelEn: 'Activity Books' },
+    { value: 'sensory-toys', labelAr: 'ألعاب حسية', labelEn: 'Sensory Toys' },
+    { value: 'building-blocks', labelAr: 'العاب التركيب', labelEn: 'Building Blocks' },
+    { value: 'wooden-toys', labelAr: 'ألعاب خشبية', labelEn: 'Wooden Toys' },
+    { value: 'magnetic-toys', labelAr: 'الالعاب المغناطيسية', labelEn: 'Magnetic Toys' },
+    { value: 'group-games', labelAr: 'العاب جماعية', labelEn: 'Group Games' },
+    { value: 'premium-toys', labelAr: 'الالعاب المميزة', labelEn: 'Premium Toys' },
+    { value: 'matching-games', labelAr: 'ألعاب التطابق', labelEn: 'Matching Games' },
+  ],
+  BabyGear: [
+    { value: 'bicycles', labelAr: 'بسكليتات', labelEn: 'Bicycles' },
+    { value: 'ride-on-cars', labelAr: 'سيارات ركوب', labelEn: 'Ride-on Cars' },
+    { value: 'kids-trucks', labelAr: 'شاحنات أطفال', labelEn: 'Kids Trucks' },
+    { value: 'scooters', labelAr: 'سكوترات', labelEn: 'Scooters' },
+    { value: 'rc-cars', labelAr: 'سيارات التحكم', labelEn: 'RC Cars' },
+    { value: 'strollers', labelAr: 'عربيات الأطفال', labelEn: 'Strollers' },
+    { value: 'bouncers-rockers', labelAr: 'كراسي هزازة / جلاسات', labelEn: 'Bouncers & Rockers' },
+    { value: 'walkers', labelAr: 'مشايات أطفال', labelEn: 'Baby Walkers' },
+    { value: 'playmats', labelAr: 'سجاد وفرشات لعب', labelEn: 'Playmats & Gyms' },
   ],
   Stationery: [
+    { value: 'school-bags', labelAr: 'حقائب مدرسية', labelEn: 'School Bags' },
+    { value: 'pencil-cases', labelAr: 'مقالم / حافظات أقلام', labelEn: 'Pencil Cases' },
+    { value: 'lunch-bags', labelAr: 'حقائب طعام / لانش بوكس', labelEn: 'Lunch Bags' },
+    { value: 'pens-ballpoint', labelAr: 'أقلام حبر وجاف', labelEn: 'Pens & Ballpoints' },
     { value: 'pencils', labelAr: 'أقلام رصاص', labelEn: 'Pencils' },
-    { value: 'pens', labelAr: 'أقلام حبر', labelEn: 'Pens' },
-    { value: 'markers', labelAr: 'أقلام تخطيط', labelEn: 'Markers' },
-    { value: 'erasers', labelAr: 'محايات', labelEn: 'Erasers' },
-    { value: 'sharpeners', labelAr: 'برايات', labelEn: 'Sharpeners' },
-    { value: 'notebooks', labelAr: 'دفاتر', labelEn: 'Notebooks' },
-    { value: 'files', labelAr: 'ملفات/حافظات', labelEn: 'Files/Folders' },
+    { value: 'colors-markers', labelAr: 'أقلام تلوين وماركرز', labelEn: 'Colors & Markers' },
+    { value: 'erasers-sharpeners', labelAr: 'محايات وبرايات', labelEn: 'Erasers & Sharpeners' },
+    { value: 'notebooks', labelAr: 'دفاتر مدرسية بجميع الأحجام', labelEn: 'Notebooks' },
+    { value: 'drawing-books', labelAr: 'دفاتر رسم وتلوين', labelEn: 'Drawing Books' },
+    { value: 'covers-notes', labelAr: 'تجليد وورق ملاحظات', labelEn: 'Covers & Sticky Notes' },
+    { value: 'geometry-rulers', labelAr: 'أدوات هندسة ومساطر', labelEn: 'Geometry & Rulers' },
+    { value: 'glue-tape', labelAr: 'صمغ ولاصق', labelEn: 'Glue & Tape' },
+    { value: 'clay-dough', labelAr: 'صلصال ومعجون', labelEn: 'Clay & Dough' },
+    { value: 'safe-scissors', labelAr: 'مقصات آمنة', labelEn: 'Safe Scissors' },
   ],
-  ArtSupplies: [
-    { value: 'colors', labelAr: 'ألوان', labelEn: 'Colors' },
-    { value: 'brushes', labelAr: 'فُرش رسم', labelEn: 'Brushes' },
-    { value: 'canvas', labelAr: 'كانفاس', labelEn: 'Canvas' },
-    { value: 'craft', labelAr: 'أشغال يدوية', labelEn: 'Craft' },
-  ],
-  Bags: [
-    { value: 'school', labelAr: 'شنط مدرسية', labelEn: 'School Bags' },
-    { value: 'backpack', labelAr: 'حقائب ظهر', labelEn: 'Backpacks' },
-    { value: 'lunch', labelAr: 'شنط طعام', labelEn: 'Lunch Bags' },
-  ],
-  EducationalCards: [
-    { value: 'arabic', labelAr: 'بطاقات عربية', labelEn: 'Arabic Cards' },
-    { value: 'english', labelAr: 'بطاقات إنجليزي', labelEn: 'English Cards' },
-    { value: 'math', labelAr: 'بطاقات رياضيات', labelEn: 'Math Cards' },
-  ],
-  Courses: [
-    { value: 'kids', labelAr: 'دورات للأطفال', labelEn: 'Kids Courses' },
-    { value: 'art', labelAr: 'دورات رسم', labelEn: 'Art Courses' },
-    { value: 'programming', labelAr: 'دورات برمجة', labelEn: 'Programming Courses' },
+  Gifts: [
+    { value: 'gift-boxes', labelAr: 'صناديق وباكجات هدايا', labelEn: 'Gift Boxes & Bundles' },
+    { value: 'wrapping-paper', labelAr: 'ورق تغليف وأكياس', labelEn: 'Wrapping Paper & Bags' },
+    { value: 'greeting-cards', labelAr: 'بطاقات تهنئة', labelEn: 'Greeting Cards' },
+    { value: 'party-supplies', labelAr: 'مستلزمات حفلات', labelEn: 'Party Supplies' },
   ],
   Offers: [
     { value: 'bundle', labelAr: 'باكج/حزمة', labelEn: 'Bundle' },
@@ -101,14 +174,12 @@ const SUBCATEGORIES: Record<Category, { value: string; labelAr: string; labelEn:
   ],
 };
 
-const CATEGORY_LABELS: Record<Category, { ar: string; en: string }> = {
-  Stationery: { ar: 'قرطاسية', en: 'Stationery' },
-  Bags: { ar: 'شنط وحقائب', en: 'Bags' },
-  Offers: { ar: 'عروض', en: 'Offers' },
-  ArtSupplies: { ar: 'مستلزمات فنية', en: 'Art Supplies' },
-  Courses: { ar: 'دورات', en: 'Courses' },
-  EducationalCards: { ar: 'بطاقات تعليمية', en: 'Educational Cards' },
-  Games: { ar: 'ألعاب', en: 'Games' },
+const CATEGORY_LABELS: Record<string, { ar: string; en: string }> = {
+  Games: { ar: 'الألعاب', en: 'Toys' },
+  BabyGear: { ar: 'مستلزمات بيبي وركوب', en: 'Baby Gear & Ride-ons' },
+  Stationery: { ar: 'قرطاسية ومدرسية', en: 'Stationery & School' },
+  Gifts: { ar: 'الهدايا والمناسبات', en: 'Gifts & Occasions' },
+  Offers: { ar: 'العروض والتصفيات', en: 'Offers & Clearance' },
 };
 
 const cleanUndefinedDeep = <T,>(value: T): T => {
@@ -157,6 +228,8 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
         image: cloned.image || imgs[0] || '',
         images: imgs.length > 0 ? imgs : undefined,
         subCategory: parsedSubs, 
+        // 🚀 إضافة الحقل الإنجليزي في الداتا المبدئية
+        descriptionEn: cloned.descriptionEn || '',
       };
     }
 
@@ -166,10 +239,11 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
       nameEn: '',
       price: 0,
       originalPrice: undefined,
-      category: 'Stationery' as Category,
+      category: 'Games' as Category, 
       subCategory: [], 
       stock: 0,
       description: '',
+      descriptionEn: '', // 🚀 تهيئة الحقل الجديد
       details: '',
       brand: '',
       videoUrl: '',
@@ -209,7 +283,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
   useEffect(() => {
     if (!isOpen) return;
 
-    const cat = ((formData as any).category || 'Stationery') as Category;
+    const cat = String((formData as any).category || 'Games');
     const list = SUBCATEGORIES[cat] || [];
     const currentSubs = ((formData as any).subCategory as string[]) || [];
     
@@ -281,7 +355,8 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
       const urls: string[] = [];
 
       for (const file of list) {
-        const url = await uploadToCloudinary(file);
+        const compressedFile = await compressImage(file);
+        const url = await uploadToCloudinary(compressedFile);
         urls.push(url);
       }
 
@@ -316,14 +391,13 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
     syncImagesFromInput(next.join(' | '));
   };
 
-  // 🚨 قمنا بتعزيز التنبيهات عشان يخبرك بالضبط وين النقص
   const validate = (): boolean => {
     const triggerError = (msg: string) => {
       console.error("Validation Error:", msg);
       if (typeof showToast === 'function') {
         showToast(msg, 'error');
       } else {
-        alert(msg); // كبديل طوارئ في حال تعطلت الـ Toast
+        alert(msg); 
       }
       return false;
     };
@@ -385,7 +459,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
       e.stopPropagation();
     }
     
-    if (!validate()) return; // إذا في نقص، رح يطلع تنبيه ويوقف الحفظ
+    if (!validate()) return; 
 
     setSaving(true);
 
@@ -403,7 +477,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
         ...(formData as Product),
         id,
 
-        category: (((formData as any).category || product?.category || 'Stationery') as Category),
+        category: (((formData as any).category || product?.category || 'Games') as Category),
 
         subCategory: finalSubCategory,
 
@@ -415,6 +489,9 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
           sanitizeText(String((formData as any).name || '')),
 
         description: sanitizeText(String((formData as any).description || product?.description || '')),
+        // 🚀 حفظ الوصف الإنجليزي في الداتا
+        descriptionEn: sanitizeText(String((formData as any).descriptionEn || (product as any)?.descriptionEn || '')),
+        
         details: sanitizeText(String((formData as any).details || product?.details || '')) || undefined,
         brand: sanitizeText(String((formData as any).brand || product?.brand || '')) || undefined,
         videoUrl: String((formData as any).videoUrl || product?.videoUrl || '').trim() || undefined,
@@ -444,7 +521,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
 
   if (!isOpen) return null;
 
-  const selectedCategory = (((formData as any).category || 'Stationery') as Category);
+  const selectedCategory = String((formData as any).category || 'Games');
   const subList = SUBCATEGORIES[selectedCategory] || [];
 
   return (
@@ -454,7 +531,6 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
         onClick={() => !saving && onClose()}
       />
 
-      {/* 🚨 التعديل السحري: تغليف المودال بالكامل بـ Form ليتمكن زر الحفظ من العمل */}
       <form 
         onSubmit={handleSubmit} 
         className="relative bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 fade-in duration-300 flex flex-col max-h-[90vh]"
@@ -508,14 +584,14 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
                 <label className="block text-sm font-bold text-slate-700 mb-2">الصنف الرئيسي</label>
                 <select
                   name="category"
-                  value={String((formData as any).category || 'Stationery')}
+                  value={String((formData as any).category || 'Games')}
                   onChange={(e) => {
                     const nextCat = e.target.value as Category;
                     setFormData((prev) => ({ ...prev, category: nextCat, subCategory: [] })); 
                   }}
                   className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-secondary-DEFAULT outline-none"
                 >
-                  {(Object.keys(CATEGORY_LABELS) as Category[]).map((cat) => (
+                  {Object.keys(CATEGORY_LABELS).map((cat) => (
                     <option key={cat} value={cat}>
                       {language === 'ar' ? CATEGORY_LABELS[cat].ar : CATEGORY_LABELS[cat].en}
                     </option>
@@ -786,19 +862,40 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
               </div>
             </div>
 
-            {/* Description */}
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
-                <FileText size={16} /> {t('description')}
-              </label>
-              <textarea
-                name="description"
-                value={String((formData as any).description || '')}
-                onChange={handleChange}
-                rows={4}
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-secondary-DEFAULT outline-none resize-none"
-              />
+            {/* Description (Arabic & English) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* 🚀 الوصف العربي */}
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                  <FileText size={16} className="text-secondary-DEFAULT" /> الوصف (عربي)
+                </label>
+                <textarea
+                  name="description"
+                  value={String((formData as any).description || '')}
+                  onChange={handleChange}
+                  rows={6}
+                  placeholder="اكتب وصف المنتج باللغة العربية هنا..."
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-secondary-DEFAULT outline-none resize-none text-right"
+                />
+              </div>
+
+              {/* 🚀 الوصف الإنجليزي الجديد */}
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                  <FileText size={16} className="text-sky-500" /> الوصف (إنجليزي)
+                </label>
+                <textarea
+                  name="descriptionEn"
+                  value={String((formData as any).descriptionEn || '')}
+                  onChange={handleChange}
+                  rows={6}
+                  placeholder="Write the English description here..."
+                  dir="ltr"
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-sky-500 outline-none resize-none text-left"
+                />
+              </div>
             </div>
+
           </div>
         </div>
 
@@ -808,7 +905,6 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
             {t('cancel')}
           </Button>
 
-          {/* 🚨 حولناه لـ type="submit" عشان يتجاوب مباشرة مع الفورم */}
           <Button
             type="submit"
             className="shadow-lg shadow-secondary-light/20"

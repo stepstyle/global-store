@@ -1,6 +1,6 @@
 // src/pages/Shop.tsx
 import React, { useEffect, useMemo, useState, useDeferredValue } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import {
   Filter,
   SlidersHorizontal,
@@ -14,13 +14,10 @@ import {
 } from 'lucide-react';
 
 import ProductCard from '../components/ProductCard';
-import { CATEGORIES } from '../constants';
 import { useCart } from '../App';
-import { Category, SortOption } from '../types';
+import { SortOption } from '../types';
 import { ProductSkeletonGrid } from '../components/Skeleton';
 import SEO from '../components/SEO';
-
-import { GAMES_SUBCATEGORIES } from '../config/nav';
 
 const ITEMS_PER_PAGE = 24;
 const PRICE_MIN = 0;
@@ -28,69 +25,79 @@ const PRICE_MAX = 1000;
 
 type SubOption = { value: string; labelAr: string; labelEn: string };
 
-const CATEGORY_SUBCATEGORIES: Partial<Record<Category, SubOption[]>> = {
-  Games: GAMES_SUBCATEGORIES.filter((x) => x.sub !== 'all').map((x) => ({
-    value: x.sub,
-    labelAr: x.labelAr,
-    labelEn: x.labelEn,
-  })),
+// 🚀 الأقسام الرئيسية الجديدة (موحدة عشان تظهر بالقائمة الجانبية بشكل سليم)
+const DISPLAY_CATEGORIES = [
+  { id: 'Games', labelAr: 'الألعاب', labelEn: 'Toys' },
+  { id: 'BabyGear', labelAr: 'مستلزمات بيبي وركوب', labelEn: 'Baby Gear & Ride-ons' },
+  { id: 'Stationery', labelAr: 'قرطاسية ومدرسية', labelEn: 'Stationery & School' },
+  { id: 'Gifts', labelAr: 'الهدايا والمناسبات', labelEn: 'Gifts & Occasions' },
+  { id: 'Offers', labelAr: 'العروض والتصفيات', labelEn: 'Offers & Clearance' },
+];
 
+// 🚀 القاموس الشامل للأقسام الفرعية
+const CATEGORY_SUBCATEGORIES: Record<string, SubOption[]> = {
+  Games: [
+    { value: 'all-toys', labelAr: 'جميع الألعاب', labelEn: 'All Toys' },
+    { value: 'baby-toys', labelAr: 'ألعاب البيبي', labelEn: 'Baby Toys' },
+    { value: 'girls-toys', labelAr: 'ألعاب للبنات', labelEn: 'Girls Toys' },
+    { value: 'boys-toys', labelAr: 'ألعاب للأولاد', labelEn: 'Boys Toys' },
+    { value: 'montessori', labelAr: 'ألعاب منتسوري', labelEn: 'Montessori' },
+    { value: 'memory-focus', labelAr: 'الذاكرة والتركيز', labelEn: 'Memory & Focus' },
+    { value: 'challenge-iq', labelAr: 'التحدي والذكاء', labelEn: 'Challenge & IQ' },
+    { value: 'letters-words', labelAr: 'الحروف والكلمات', labelEn: 'Letters & Words' },
+    { value: 'math-numbers', labelAr: 'الرياضيات والحساب', labelEn: 'Math & Numbers' },
+    { value: 'science-experiments', labelAr: 'التجارب العلمية', labelEn: 'Science Experiments' },
+    { value: 'drawing-coloring', labelAr: 'الرسم والتلوين', labelEn: 'Drawing & Coloring' },
+    { value: 'kitchen-toys', labelAr: 'العاب مطابخ', labelEn: 'Kitchen Toys' },
+    { value: 'kids-tents', labelAr: 'خيم الاطفال', labelEn: 'Kids Tents' },
+    { value: 'audio-books', labelAr: 'الكتب الصوتية', labelEn: 'Audio Books' },
+    { value: 'activity-books', labelAr: 'الكتب والانشطة', labelEn: 'Activity Books' },
+    { value: 'sensory-toys', labelAr: 'ألعاب حسية', labelEn: 'Sensory Toys' },
+    { value: 'building-blocks', labelAr: 'العاب التركيب', labelEn: 'Building Blocks' },
+    { value: 'wooden-toys', labelAr: 'ألعاب خشبية', labelEn: 'Wooden Toys' },
+    { value: 'magnetic-toys', labelAr: 'الالعاب المغناطيسية', labelEn: 'Magnetic Toys' },
+    { value: 'group-games', labelAr: 'العاب جماعية', labelEn: 'Group Games' },
+    { value: 'premium-toys', labelAr: 'الالعاب المميزة', labelEn: 'Premium Toys' },
+    { value: 'matching-games', labelAr: 'ألعاب التطابق', labelEn: 'Matching Games' },
+  ],
+  BabyGear: [
+    { value: 'bicycles', labelAr: 'بسكليتات', labelEn: 'Bicycles' },
+    { value: 'ride-on-cars', labelAr: 'سيارات ركوب', labelEn: 'Ride-on Cars' },
+    { value: 'kids-trucks', labelAr: 'شاحنات أطفال', labelEn: 'Kids Trucks' },
+    { value: 'scooters', labelAr: 'سكوترات', labelEn: 'Scooters' },
+    { value: 'rc-cars', labelAr: 'سيارات التحكم', labelEn: 'RC Cars' },
+    { value: 'strollers', labelAr: 'عربيات الأطفال', labelEn: 'Strollers' },
+    { value: 'bouncers-rockers', labelAr: 'كراسي هزازة / جلاسات', labelEn: 'Bouncers & Rockers' },
+    { value: 'walkers', labelAr: 'مشايات أطفال', labelEn: 'Baby Walkers' },
+    { value: 'playmats', labelAr: 'سجاد وفرشات لعب', labelEn: 'Playmats & Gyms' },
+  ],
   Stationery: [
+    { value: 'school-bags', labelAr: 'حقائب مدرسية', labelEn: 'School Bags' },
+    { value: 'pencil-cases', labelAr: 'مقالم / حافظات أقلام', labelEn: 'Pencil Cases' },
+    { value: 'lunch-bags', labelAr: 'حقائب طعام / لانش بوكس', labelEn: 'Lunch Bags' },
+    { value: 'pens-ballpoint', labelAr: 'أقلام حبر وجاف', labelEn: 'Pens & Ballpoints' },
     { value: 'pencils', labelAr: 'أقلام رصاص', labelEn: 'Pencils' },
-    { value: 'pens', labelAr: 'أقلام حبر', labelEn: 'Pens' },
-    { value: 'markers', labelAr: 'أقلام تخطيط', labelEn: 'Markers' },
-    { value: 'erasers', labelAr: 'محايات', labelEn: 'Erasers' },
-    { value: 'sharpeners', labelAr: 'برايات', labelEn: 'Sharpeners' },
-    { value: 'notebooks', labelAr: 'دفاتر', labelEn: 'Notebooks' },
-    { value: 'colors', labelAr: 'ألوان', labelEn: 'Colors' },
-    { value: 'geometry', labelAr: 'مساطر وأدوات هندسية', labelEn: 'Geometry Tools' },
-    { value: 'stickers', labelAr: 'لواصق وستيكرات', labelEn: 'Stickers' },
-    { value: 'files', labelAr: 'ملفات وفواصل', labelEn: 'Files/Folders' },
-    { value: 'misc', labelAr: 'قرطاسية متنوعة', labelEn: 'Misc' },
+    { value: 'colors-markers', labelAr: 'أقلام تلوين وماركرز', labelEn: 'Colors & Markers' },
+    { value: 'erasers-sharpeners', labelAr: 'محايات وبرايات', labelEn: 'Erasers & Sharpeners' },
+    { value: 'notebooks', labelAr: 'دفاتر مدرسية بجميع الأحجام', labelEn: 'Notebooks' },
+    { value: 'drawing-books', labelAr: 'دفاتر رسم وتلوين', labelEn: 'Drawing Books' },
+    { value: 'covers-notes', labelAr: 'تجليد وورق ملاحظات', labelEn: 'Covers & Sticky Notes' },
+    { value: 'geometry-rulers', labelAr: 'أدوات هندسة ومساطر', labelEn: 'Geometry & Rulers' },
+    { value: 'glue-tape', labelAr: 'صمغ ولاصق', labelEn: 'Glue & Tape' },
+    { value: 'clay-dough', labelAr: 'صلصال ومعجون', labelEn: 'Clay & Dough' },
+    { value: 'safe-scissors', labelAr: 'مقصات آمنة', labelEn: 'Safe Scissors' },
   ],
-
+  Gifts: [
+    { value: 'gift-boxes', labelAr: 'صناديق وباكجات هدايا', labelEn: 'Gift Boxes & Bundles' },
+    { value: 'wrapping-paper', labelAr: 'ورق تغليف وأكياس', labelEn: 'Wrapping Paper & Bags' },
+    { value: 'greeting-cards', labelAr: 'بطاقات تهنئة', labelEn: 'Greeting Cards' },
+    { value: 'party-supplies', labelAr: 'مستلزمات حفلات', labelEn: 'Party Supplies' },
+  ],
   Offers: [
-    { value: 'occasion', labelAr: 'هدايا مناسبات', labelEn: 'Occasion Gifts' },
-    { value: 'kids', labelAr: 'هدايا للأطفال', labelEn: 'Kids Gifts' },
-    { value: 'wrap', labelAr: 'تغليف وورق هدايا', labelEn: 'Gift Wrap' },
-    { value: 'bouquets', labelAr: 'بوكيهات وورد', labelEn: 'Bouquets' },
-    { value: 'bundle', labelAr: 'باكج/حزمة', labelEn: 'Bundle' },
-    { value: 'discount', labelAr: 'خصم', labelEn: 'Discount' },
-    { value: 'clearance', labelAr: 'تصفية', labelEn: 'Clearance' },
+    { value: 'bundle', labelAr: 'باكج/حزمة التوفير', labelEn: 'Bundles' },
+    { value: 'discount', labelAr: 'خصومات حصرية', labelEn: 'Discounts' },
+    { value: 'clearance', labelAr: 'تصفية المخزون', labelEn: 'Clearance' },
   ],
-
-  Bags: [
-    { value: 'school', labelAr: 'شنط مدرسية', labelEn: 'School Bags' },
-    { value: 'backpack', labelAr: 'حقائب ظهر', labelEn: 'Backpacks' },
-    { value: 'pencilcase', labelAr: 'مقلمات', labelEn: 'Pencil Cases' },
-    { value: 'kids', labelAr: 'شنط أطفال', labelEn: 'Kids Bags' },
-    { value: 'travel-mini', labelAr: 'شنط سفر صغيرة', labelEn: 'Small Travel Bags' },
-  ],
-
-  ArtSupplies: [
-    { value: 'colors', labelAr: 'ألوان', labelEn: 'Colors' },
-    { value: 'brushes', labelAr: 'فرش', labelEn: 'Brushes' },
-    { value: 'canvas', labelAr: 'كانفاس', labelEn: 'Canvas' },
-    { value: 'drawing-tools', labelAr: 'أدوات رسم', labelEn: 'Drawing Tools' },
-    { value: 'clay', labelAr: 'صلصال', labelEn: 'Clay' },
-  ],
-
-  Courses: [
-    { value: 'kids', labelAr: 'دورات أطفال', labelEn: 'Kids Courses' },
-    { value: 'art', labelAr: 'دورات رسم', labelEn: 'Art Courses' },
-    { value: 'support', labelAr: 'دورات تقوية', labelEn: 'Support Courses' },
-    { value: 'languages', labelAr: 'دورات لغات', labelEn: 'Language Courses' },
-  ],
-
-  EducationalCards: [
-    { value: 'letters', labelAr: 'بطاقات حروف', labelEn: 'Letters Cards' },
-    { value: 'numbers', labelAr: 'بطاقات أرقام', labelEn: 'Numbers Cards' },
-    { value: 'mix', labelAr: 'بطاقات تعليمية متنوعة', labelEn: 'Mixed Educational Cards' },
-  ],
-};
-
-const CATEGORY_ALIASES: Record<string, Category> = {
-  Gifts: 'Offers' as Category,
 };
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
@@ -156,7 +163,7 @@ const Shop: React.FC = () => {
   };
 
   const [isMobile, setIsMobile] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<Category | 'All'>('All');
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedSubCategory, setSelectedSubCategory] = useState<string>('');
   const [priceRange, setPriceRange] = useState<[number, number]>([PRICE_MIN, PRICE_MAX]);
   const [minRating, setMinRating] = useState<number>(0);
@@ -187,9 +194,10 @@ const Shop: React.FC = () => {
   }, [spKey]);
 
   useEffect(() => {
-    const rawCat = searchParams.get('filter');
-    const aliased = rawCat ? CATEGORY_ALIASES[rawCat] || rawCat : null;
-    const cat = CATEGORIES.some((c) => c.id === aliased) ? (aliased as Category) : 'All';
+    // 🚨 قراءة الرابط بناءً على النظام الجديد
+    const rawCat = searchParams.get('category') || searchParams.get('filter');
+    const isValidCategory = DISPLAY_CATEGORIES.some((c) => c.id === rawCat) || Object.keys(CATEGORY_SUBCATEGORIES).includes(rawCat as string);
+    const cat = isValidCategory ? (rawCat as string) : 'All';
 
     const rawSub = (searchParams.get('sub') || '').trim();
     const pageNum = Number(searchParams.get('page')) || 1;
@@ -221,7 +229,6 @@ const Shop: React.FC = () => {
     return map;
   }, [products]);
 
-  // 🚨 التعديل السحري هنا لدعم الأصناف الفرعية المتعددة 🚨
   const filteredProducts = useMemo(() => {
     let result = Array.isArray(products) ? [...products] : [];
 
@@ -238,13 +245,8 @@ const Shop: React.FC = () => {
       
       if (selectedSubCategory) {
         result = result.filter((p) => {
-          // جلب قيمة الفئة الفرعية من المنتج (التي قد تكون "girls" أو "girls,edu")
           const prodSubValue = String(p?.subCategory || p?.subcategory || '').trim();
-          
-          // إذا لم يكن لدى المنتج فئة فرعية، نستبعده
           if (!prodSubValue) return false;
-          
-          // تقسيم النص المدمج إلى مصفوفة وفحص ما إذا كانت تحتوي على الفئة المختارة
           return prodSubValue.split(',').map(s => s.trim()).includes(selectedSubCategory);
         });
       }
@@ -313,14 +315,19 @@ const Shop: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleCategoryChange = (cat: Category | 'All') => {
+  const handleCategoryChange = (cat: string) => {
     setSelectedCategory(cat);
     setSelectedSubCategory('');
     setCurrentPage(1);
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
-      if (cat === 'All') next.delete('filter');
-      else next.set('filter', cat);
+      if (cat === 'All') {
+        next.delete('category');
+        next.delete('filter');
+      } else {
+        next.set('category', cat);
+        next.delete('filter');
+      }
       next.delete('sub');
       next.delete('page');
       return next;
@@ -356,11 +363,11 @@ const Shop: React.FC = () => {
     return (CATEGORY_SUBCATEGORIES[selectedCategory] || []) as SubOption[];
   }, [selectedCategory]);
 
-  const getCategoryLabel = (cat: Category | 'All') => {
+  const getCategoryLabel = (cat: string) => {
     if (cat === 'All') return tx('allProducts', 'كل المنتجات', 'All products');
-    const item = CATEGORIES.find((c) => c.id === cat);
+    const item = DISPLAY_CATEGORIES.find((c) => c.id === cat);
     if (!item) return cat;
-    return isRTL ? item.label : item.labelEn;
+    return isRTL ? item.labelAr : item.labelEn;
   };
 
   const getSubCategoryLabel = (sub: string) => {
@@ -557,7 +564,8 @@ const Shop: React.FC = () => {
                       {tx('allProducts', 'كل المنتجات', 'All products')}
                     </button>
 
-                    {CATEGORIES.map((cat) => (
+                    {/* 🚨 عرض الأقسام الرئيسية الجديدة هنا */}
+                    {DISPLAY_CATEGORIES.map((cat) => (
                       <button
                         key={cat.id}
                         onClick={() => handleCategoryChange(cat.id)}
@@ -567,7 +575,7 @@ const Shop: React.FC = () => {
                             : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                         }`}
                       >
-                        {isRTL ? cat.label : cat.labelEn}
+                        {isRTL ? cat.labelAr : cat.labelEn}
                       </button>
                     ))}
                   </div>

@@ -1,5 +1,5 @@
 // src/pages/Checkout.tsx
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { useCart } from '../App';
 import Button from '../components/Button';
 import {
@@ -13,7 +13,10 @@ import {
   Mail,
   Phone,
   MessageCircle,
-  Copy
+  Copy,
+  Search,
+  Zap,
+  Clock
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
 import { db } from '../services/storage';
@@ -37,7 +40,6 @@ const STORE_WHATSAPP = '962796969081';
 
 const JO_COUNTRY = { code: 'JO', nameAr: 'الأردن', nameEn: 'Jordan' };
 
-// 🚀 هذا هو تعريف REGIONS اللي ناقص عندك
 const REGIONS = [
   {
     labelAr: 'محافظات الوسط',
@@ -71,25 +73,28 @@ const REGIONS = [
   }
 ];
 
-// استخراج المحافظات كقائمة مسطحة عشان الكود القديم ما يضرب
 const JO_GOVS = REGIONS.flatMap(r => r.govs);
-// 🚀 قائمة احترافية بأسماء مناطق عمان الحقيقية مبرمجة مع التسعيرة الذكية المخفية عن الزبون
+
+// 🚀 قائمة مناطق عمان الذكية (مضاف إليها خيار المنطقة الأخرى للحماية)
 const AMMAN_AREAS = [
-  { id: 'a1', nameAr: 'النزهة / طبربور / طارق', nameEn: 'Nuzha / Tabarbour / Tariq', price: 1.5, isOutskirt: false },
-  { id: 'a2', nameAr: 'جبل الحسين / اللويبدة / العبدلي', nameEn: 'Jabal Hussein / Lweibdeh / Abdali', price: 1.5, isOutskirt: false },
-  { id: 'a3', nameAr: 'الهاشمي الشمالي والجنوبي / ماركا', nameEn: 'Hashimi / Marka', price: 1.5, isOutskirt: false },
-  { id: 'a4', nameAr: 'ضاحية الأقصى / الاستقلال', nameEn: 'Dahiyet Al Aqsa / Istiqlal', price: 1.5, isOutskirt: false },
+  { id: 'a1', nameAr: 'النزهة / طبربور / طارق', nameEn: 'Nuzha / Tabarbour / Tariq', price: 2.0, isOutskirt: false },
+  { id: 'a2', nameAr: 'جبل الحسين / اللويبدة / العبدلي', nameEn: 'Jabal Hussein / Lweibdeh / Abdali', price: 2.0, isOutskirt: false },
+  { id: 'a3', nameAr: 'الهاشمي الشمالي والجنوبي / ماركا', nameEn: 'Hashimi / Marka', price: 2.0, isOutskirt: false },
+  { id: 'a4', nameAr: 'ضاحية الأقصى / الاستقلال', nameEn: 'Dahiyet Al Aqsa / Istiqlal', price: 2.0, isOutskirt: false },
   { id: 'a5', nameAr: 'وسط البلد / الأشرفية / الوحدات', nameEn: 'Downtown / Ashrafieh / Wehdat', price: 2.5, isOutskirt: false },
   { id: 'a6', nameAr: 'تلاع العلي / خلدا / أم السماق', nameEn: 'Tlaa Al Ali / Khalda / Um Al Summaq', price: 2.5, isOutskirt: false },
-  { id: 'a7', nameAr: 'الشميساني / عبدون / دير غبار / الصويفية', nameEn: 'Shmeisani / Abdoun / Sweifieh', price: 2.5, isOutskirt: false },
+  { id: 'a7', nameAr: 'الشميساني / عبدون / دير غبار / الصويفية', nameEn: 'Shmeisani / Abdoun / Sweifieh', price: 3.0, isOutskirt: false },
   { id: 'a8', nameAr: 'الدوار السابع والثامن / البيادر', nameEn: '7th & 8th Circle / Bayader', price: 2.5, isOutskirt: false },
   { id: 'a9', nameAr: 'الجبيهة / أبو نصير / شفا بدران', nameEn: 'Jubeiha / Abu Nuseir / Shafa Badran', price: 3.5, isOutskirt: false },
   { id: 'a10', nameAr: 'دابوق / بدر الجديدة / الفحيص', nameEn: 'Dabouq / Badr Al Jadeedah', price: 3.5, isOutskirt: false },
   { id: 'a11', nameAr: 'مرج الحمام / المقابلين / البنيات', nameEn: 'Marj Al Hamam / Muqabalain', price: 3.5, isOutskirt: false },
-  { id: 'a12', nameAr: 'سحاب / أبو علندا / اليادودة', nameEn: 'Sahab / Abu Alanda / Yadoudeh', price: 0, isOutskirt: true },
-  { id: 'a13', nameAr: 'الجيزة / خريبة السوق / القسطل', nameEn: 'Jizah / Khreibet Souq', price: 0, isOutskirt: true },
-  { id: 'a14', nameAr: 'ناعور / طريق المطار', nameEn: 'Naour / Airport Road', price: 0, isOutskirt: true },
+  { id: 'a12', nameAr: 'سحاب / أبو علندا / اليادودة', nameEn: 'Sahab / Abu Alanda / Yadoudeh', price:3.5, isOutskirt: true },
+  { id: 'a13', nameAr: 'الجيزة / خريبة السوق / القسطل', nameEn: 'Jizah / Khreibet Souq', price: 3.5, isOutskirt: true },
+  { id: 'a14', nameAr: 'ناعور / طريق المطار', nameEn: 'Naour / Airport Road', price: 3.5, isOutskirt: true },
+  // 🛡️ الخيار البديل (Fallback)
+  { id: 'other', nameAr: 'منطقة أخرى (غير مذكورة في القائمة)', nameEn: 'Other Area (Not Listed)', price: 3.0, isOutskirt: true },
 ];
+
 type DialOption = { code: string; dial: string; flag: string; nameAr: string; nameEn: string };
 const DIAL_OPTIONS: DialOption[] = [
   { code: 'JO', dial: '+962', flag: '🇯🇴', nameAr: 'الأردن', nameEn: 'Jordan' },
@@ -170,27 +175,25 @@ const Checkout: React.FC = () => {
   const [dialCode, setDialCode] = useState<string>(() => '+962');
   const [cliqRef, setCliqRef] = useState('');
 
+  // 🚀 حالات البحث الذكي
+  const [areaSearchQuery, setAreaSearchQuery] = useState('');
+  const [isAreaDropdownOpen, setIsAreaDropdownOpen] = useState(false);
+
   const [formData, setFormData] = useState({
     fullName: '',
     country: JO_COUNTRY.nameEn,
     citySlug: '',
-    ammanAreaId: '', // المنطقة المختارة في عمان
-    ammanOutskirtSpeed: 'nextDay', // لخيارات التوصيل في أطراف عمان
-    streetAddress: '',
+    ammanAreaId: '', 
+    streetAddress: '', // اختياري الآن
     postalCode: '',
     phoneLocal: '',
     saveInfo: true,
     billingSameAsShipping: true,
-    billingFullName: '',
-    billingCitySlug: '',
-    billingStreetAddress: '',
-    billingPhoneLocal: '',
-    billingPostalCode: '',
   });
 
   const [acceptPolicies, setAcceptPolicies] = useState(true);
-const [acceptDeliveryPolicy, setAcceptDeliveryPolicy] = useState(false);
-const [errors, setErrors] = useState<Record<string, string>>({});
+  const [acceptDeliveryPolicy, setAcceptDeliveryPolicy] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const changeStep = (newStep: number) => {
     setStep(newStep);
@@ -212,67 +215,56 @@ const [errors, setErrors] = useState<Record<string, string>>({});
   const formatMoney = (value: number) =>
     fmt ? fmt.format(value) : `JOD ${Number(value || 0).toFixed(2)}`;
 
-  // 🚀 النظام الذكي لاحتساب التكلفة حسب المنطقة
+  // فلترة المناطق بناءً على البحث
+  const filteredAreas = useMemo(() => {
+    if (!areaSearchQuery) return AMMAN_AREAS;
+    const q = areaSearchQuery.toLowerCase();
+    return AMMAN_AREAS.filter(a =>
+      a.nameAr.toLowerCase().includes(q) || a.nameEn.toLowerCase().includes(q)
+    );
+  }, [areaSearchQuery]);
+
   const selectedAmmanArea = useMemo(() => {
     return AMMAN_AREAS.find(a => a.id === formData.ammanAreaId);
   }, [formData.ammanAreaId]);
 
+  // تسعيرة التوصيل الأساسية بناءً على المنطقة
   const baseShippingCost = useMemo(() => {
     const slug = formData.citySlug;
-if (!slug) return 0;
+    if (!slug) return 0;
 
-if (slug === 'amman') {
-  const area = AMMAN_AREAS.find(a => a.id === formData.ammanAreaId);
-  if (!area) return 0;
-  if (area.isOutskirt) {
-    // إذا اختار سحاب/ماركا: اليوم 4 دنانير، بكرة 3 دنانير
-    return formData.ammanOutskirtSpeed === 'sameDay' ? 4.0 : 3.0;
-  }
-  return area.price;
-}
+    if (slug === 'amman') {
+      const area = AMMAN_AREAS.find(a => a.id === formData.ammanAreaId);
+      if (!area) return 0;
+      return area.price;
+    }
+    // باقي المحافظات
+    return 3.0;
+  }, [formData.citySlug, formData.ammanAreaId]);
 
-// أي محافظة ثانية سعر ثابت 3 دنانير
-return 3.0;
-  }, [formData.citySlug, selectedAmmanArea, formData.ammanOutskirtSpeed]);
-
+  // 🚀 خيارات التوصيل الذكية (عادي وسريع)
   const dynamicShippingMethods = useMemo(() => {
-    // المحافظات
-    if (formData.citySlug !== 'amman') {
-      return [{
+    return [
+      {
         id: 'standard',
-        nameAr: 'توصيل للمحافظات',
-        nameEn: 'Governorates Delivery',
-        durationAr: 'يصلك خلال 48 ساعة',
-        durationEn: 'Within 48 hours',
+        nameAr: 'توصيل عادي (خلال 48 ساعة)',
+        nameEn: 'Standard Delivery (48 Hours)',
+        durationAr: 'نفس التسعيرة الأساسية لمنطقتك',
+        durationEn: 'Base price for your area',
         price: baseShippingCost,
         icon: Truck,
-      }];
-    }
-
-    // عمان (الأطراف)
-    if (selectedAmmanArea?.isOutskirt) {
-       return [{
-        id: 'standard',
-        nameAr: 'توصيل لمنطقة الأطراف',
-        nameEn: 'Outskirts Delivery',
-        durationAr: formData.ammanOutskirtSpeed === 'sameDay' ? 'توصيل في نفس اليوم' : 'توصيل خلال 24 ساعة',
-        durationEn: formData.ammanOutskirtSpeed === 'sameDay' ? 'Same Day Delivery' : 'Next Day Delivery',
-        price: baseShippingCost,
-        icon: Truck,
-      }];
-    }
-
-    // عمان (المناطق الداخلية)
-    return [{
-      id: 'standard',
-      nameAr: 'توصيل داخل عمان',
-      nameEn: 'Amman Delivery',
-      durationAr: 'توصيل سريع ومباشر',
-      durationEn: 'Fast & Direct Delivery',
-      price: baseShippingCost,
-      icon: Truck,
-    }];
-  }, [baseShippingCost, formData.citySlug, selectedAmmanArea, formData.ammanOutskirtSpeed]);
+      },
+      {
+        id: 'fast',
+        nameAr: 'توصيل سريع (خلال 12 ساعة)',
+        nameEn: 'Fast Delivery (12 Hours)',
+        durationAr: 'أولوية التجهيز (+ 1 دينار)',
+        durationEn: 'Priority fulfillment (+ 1 JD)',
+        price: baseShippingCost + 1.0, // زيادة دينار واحد
+        icon: Zap,
+      }
+    ];
+  }, [baseShippingCost]);
 
   const selectedShipping = useMemo(
     () => dynamicShippingMethods.find((m) => m.id === shippingMethodId) || dynamicShippingMethods[0],
@@ -333,62 +325,40 @@ return 3.0;
   };
 
   const validateStep1 = () => {
-  const nextErr: Record<string, string> = {};
-  const currentEmail = safeTrim(email || user?.email || '');
+    const nextErr: Record<string, string> = {};
+    const currentEmail = safeTrim(email || user?.email || '');
 
-  if (!isLoggedIn && !currentEmail) {
-    nextErr.email = tr('البريد الإلكتروني مطلوب للضيوف', 'Email is required for guests');
-  } else if (currentEmail && !emailRegex.test(currentEmail)) {
-    nextErr.email = tr('البريد الإلكتروني غير صحيح', 'Invalid email');
-  }
+    if (!isLoggedIn && !currentEmail) {
+      nextErr.email = tr('البريد الإلكتروني مطلوب للضيوف', 'Email is required for guests');
+    } else if (currentEmail && !emailRegex.test(currentEmail)) {
+      nextErr.email = tr('البريد الإلكتروني غير صحيح', 'Invalid email');
+    }
 
-  const name = normalizeName(formData.fullName);
-  if (name.length < 5) {
-    nextErr.fullName = tt(
-      'nameMin5',
-      'الاسم يجب أن يكون 5 أحرف على الأقل',
-      'Name must be at least 5 characters.'
-    );
-  }
+    const name = normalizeName(formData.fullName);
+    if (name.length < 5) {
+      nextErr.fullName = tt('nameMin5', 'الاسم يجب أن يكون 5 أحرف على الأقل', 'Name must be at least 5 characters.');
+    }
 
-  if (!safeTrim(formData.citySlug)) {
-    nextErr.citySlug = tt('cityRequired', 'المدينة مطلوبة', 'City is required.');
-  } else if (formData.citySlug === 'amman' && !safeTrim(formData.ammanAreaId)) {
-    nextErr.ammanAreaId = tt(
-      'areaRequired',
-      'يرجى تحديد منطقتك السكنية',
-      'Please select your residential area.'
-    );
-  }
+    if (!safeTrim(formData.citySlug)) {
+      nextErr.citySlug = tt('cityRequired', 'المحافظة مطلوبة', 'City is required.');
+    } else if (formData.citySlug === 'amman' && !safeTrim(formData.ammanAreaId)) {
+      nextErr.ammanAreaId = tt('areaRequired', 'يرجى تحديد منطقتك السكنية', 'Please select your residential area.');
+    }
 
-  const addr = normalizeAddress(formData.streetAddress);
-  if (addr.length < 8) {
-    nextErr.streetAddress = tt(
-      'addressMin8',
-      'يرجى كتابة العنوان بالتفصيل (8 أحرف على الأقل)',
-      'Please write a detailed address (at least 8 characters).'
-    );
-  }
+    // 🚀 تمت إزالة الفحص الإجباري لحقل (العنوان التفصيلي) بناءً على طلبك
 
-  if (!isValidJordanPhone(formData.phoneLocal)) {
-    nextErr.phoneLocal = tt(
-      'phoneInvalid',
-      'يرجى إدخال رقم أردني صحيح (يبدأ بـ 079, 078, 077)',
-      'Please enter a valid Jordanian number (079, 078, 077).'
-    );
-  }
+    if (!isValidJordanPhone(formData.phoneLocal)) {
+      nextErr.phoneLocal = tt('phoneInvalid', 'يرجى إدخال رقم أردني صحيح (يبدأ بـ 079, 078, 077)', 'Please enter a valid Jordanian number (079, 078, 077).');
+    }
 
-  if (!acceptPolicies) {
-    nextErr.acceptPolicies = tt(
-      'acceptPoliciesRequired',
-      'يجب الموافقة على سياسات المتجر لإتمام الطلب',
-      'You must accept the store policies to place the order.'
-    );
-  }
+    if (!acceptPolicies) {
+      nextErr.acceptPolicies = tt('acceptPoliciesRequired', 'يجب الموافقة على سياسات المتجر لإتمام الطلب', 'You must accept the store policies to place the order.');
+    }
 
-  setErrors(nextErr);
-  return Object.keys(nextErr).length === 0;
-};
+    setErrors(nextErr);
+    return Object.keys(nextErr).length === 0;
+  };
+
   const goToShipping = () => {
     const ok = validateStep1();
     if (!ok) {
@@ -433,19 +403,17 @@ return 3.0;
     try {
       const shippingPhoneE164 = normalizePhoneGlobal(dialCode, formData.phoneLocal) || safeTrim(formData.phoneLocal);
       
-      // جلب اسم المحافظة
       let shippingCityName = '';
       REGIONS.forEach(r => {
         const gov = r.govs.find(g => g.slug === formData.citySlug);
         if (gov) shippingCityName = isAR ? gov.ar : gov.en;
       });
 
-      // إضافة اسم المنطقة الدقيق في عمان للعنوان
       if (formData.citySlug === 'amman' && selectedAmmanArea) {
         shippingCityName = `${shippingCityName} - ${isAR ? selectedAmmanArea.nameAr : selectedAmmanArea.nameEn}`;
       }
 
-      const shippingStreet = normalizeAddress(formData.streetAddress);
+      const shippingStreet = normalizeAddress(formData.streetAddress) || 'لم يتم إدخال عنوان تفصيلي';
       
       const now = new Date();
       const nowIso = now.toISOString();
@@ -476,19 +444,18 @@ return 3.0;
         shippingMethod: isAR ? selectedShipping.nameAr : selectedShipping.nameEn,
         paymentMethod,
         customerEmail: safeTrim(email) || safeTrim(user?.email || ''),
-consents: {
-  acceptedStorePolicies: !!acceptPolicies,
-  acceptedDeliveryPolicy: !!acceptDeliveryPolicy,
-  saveInfo: !!formData.saveInfo,
-  billingSameAsShipping: !!formData.billingSameAsShipping,
-},
-note: safeTrim(orderNote) || undefined,
+        consents: {
+          acceptedStorePolicies: !!acceptPolicies,
+          acceptedDeliveryPolicy: !!acceptDeliveryPolicy,
+          saveInfo: !!formData.saveInfo,
+          billingSameAsShipping: !!formData.billingSameAsShipping,
+        },
+        note: safeTrim(orderNote) || undefined,
         paymentDetails: paymentMethod === 'cliq' ? { cliqReference: safeTrim(cliqRef), isPaid: false } : undefined,
         address: { fullName: normalizeName(formData.fullName) || 'Guest', city: shippingCityName, street: shippingStreet, phone: shippingPhoneE164 },
         addressMeta: { country: JO_COUNTRY.nameEn, countryCode: JO_COUNTRY.code, citySlug: formData.citySlug, ammanAreaId: formData.ammanAreaId, saveInfo: !!formData.saveInfo, phoneDial: dialCode, phoneLocal: safeTrim(formData.phoneLocal) },
       };
 
-      // إرسال للسيرفر فوراً بدون تأخير
       const workerUrl = import.meta.env.VITE_WORKER_URL;
       if (workerUrl && workerUrl.trim() !== '') {
         fetch(`${workerUrl}/create-order`, {
@@ -511,7 +478,6 @@ note: safeTrim(orderNote) || undefined,
       
       showToast(tt('alertSet', 'تم استلام طلبك بنجاح', 'Order placed successfully.'), 'success');
 
-      // 🚀 التحويل التلقائي للواتساب
       if (paymentMethod === 'cliq') {
         const waMsg = `مرحباً متجر دير شرف 👋\nتم الدفع عبر CliQ، وهذا طلبي الجديد.\n\n*الاسم:* ${normalizeName(formData.fullName)}\n*رقم الطلب:* #${orderId}\n*الرقم المرجعي للتحويل:* ${safeTrim(cliqRef)}\n\n(يرجى إرفاق صورة إيصال التحويل مع هذه الرسالة لتأكيد طلبك ✅)`;
         const waUrl = `https://wa.me/${STORE_WHATSAPP}?text=${encodeURIComponent(waMsg)}`;
@@ -557,7 +523,6 @@ note: safeTrim(orderNote) || undefined,
       <SEO title={tt('checkout', 'إتمام الطلب', 'Checkout')} noIndex={true} />
 
       <div className="container mx-auto px-4 lg:px-8 max-w-7xl">
-        {/* Header */}
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-5 mb-10">
           <div className="min-w-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <h1 className="text-4xl font-heading font-black text-slate-900 flex items-center gap-3">
@@ -613,35 +578,36 @@ note: safeTrim(orderNote) || undefined,
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <div className="md:col-span-2">
-  <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
-    {tt('emailAddress', 'البريد الإلكتروني', 'Email Address')}
-    {!isLoggedIn && <span className="text-red-500">*</span>}
-  </label>
+                    <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
+                      {tt('emailAddress', 'البريد الإلكتروني', 'Email Address')}
+                      {!isLoggedIn && <span className="text-red-500">*</span>}
+                    </label>
 
-  <div className="relative">
-    <Mail size={18} className="absolute left-4 rtl:left-auto rtl:right-4 top-1/2 -translate-y-1/2 text-slate-400" />
-    <input
-      value={email}
-      onChange={(e) => setEmailField(e.target.value)}
-      type="email"
-      inputMode="email"
-      autoComplete="email"
-      placeholder={isLoggedIn ? 'name@example.com (اختياري)' : 'name@example.com'}
-      className={inputClass(!!errors.email) + ' pl-12 pr-4 rtl:pl-4 rtl:pr-12'}
-      dir="ltr"
-    />
-  </div>
+                    <div className="relative">
+                      <Mail size={18} className="absolute left-4 rtl:left-auto rtl:right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        value={email}
+                        onChange={(e) => setEmailField(e.target.value)}
+                        type="email"
+                        inputMode="email"
+                        autoComplete="email"
+                        placeholder={isLoggedIn ? 'name@example.com (اختياري)' : 'name@example.com'}
+                        className={inputClass(!!errors.email) + ' pl-12 pr-4 rtl:pl-4 rtl:pr-12'}
+                        dir="ltr"
+                      />
+                    </div>
 
-  <p className="mt-1.5 ms-1 text-[11px] font-bold text-slate-400">
-    {isLoggedIn
-      ? 'إذا تركته فارغًا سيتم استخدام بريد الحساب المسجل.'
-      : 'مطلوب لإرسال تأكيد الطلب ومتابعة الحالة.'}
-  </p>
+                    <p className="mt-1.5 ms-1 text-[11px] font-bold text-slate-400">
+                      {isLoggedIn
+                        ? 'إذا تركته فارغًا سيتم استخدام بريد الحساب المسجل.'
+                        : 'مطلوب لإرسال تأكيد الطلب ومتابعة الحالة.'}
+                    </p>
 
-  {errors.email && (
-    <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.email}</p>
-  )}
-</div>
+                    {errors.email && (
+                      <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.email}</p>
+                    )}
+                  </div>
+                  
                   <div className="md:col-span-2">
                     <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
                       {tt('fullName', 'الاسم الكامل', 'Full Name')} <span className="text-red-500">*</span>
@@ -680,7 +646,7 @@ note: safeTrim(orderNote) || undefined,
                     {errors.phoneLocal && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.phoneLocal}</p>}
                   </div>
 
-                  {/* 🚀 القائمة المنسدلة الاحترافية للمحافظات */}
+                  {/* اختيار المحافظة */}
                   <div>
                     <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
                       المحافظة <span className="text-red-500">*</span>
@@ -690,6 +656,7 @@ note: safeTrim(orderNote) || undefined,
                       onChange={(e) => {
                         setField('citySlug', e.target.value);
                         setField('ammanAreaId', ''); // مسح المنطقة إذا غير المحافظة
+                        setAreaSearchQuery('');
                       }}
                       className={inputClass(!!errors.citySlug) + ' appearance-none cursor-pointer'}
                     >
@@ -707,65 +674,72 @@ note: safeTrim(orderNote) || undefined,
                     {errors.citySlug && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.citySlug}</p>}
                   </div>
 
-                  {/* 🚀 قائمة مناطق عمان الحقيقية */}
+                  {/* 🚀 نظام البحث الذكي لمناطق عمان */}
                   {formData.citySlug === 'amman' && (
-                    <div className="md:col-span-2 animate-in fade-in slide-in-from-top-4 duration-300">
+                    <div className="md:col-span-2 animate-in fade-in slide-in-from-top-4 duration-300 relative">
                       <label className="block text-xs font-black uppercase tracking-widest text-sky-600 mb-2 ms-1">
-                        يرجى تحديد منطقتك السكنية داخل عمان <span className="text-red-500">*</span>
+                        تحديد المنطقة (أو القريبة منها إذا لم تكن منطقتك موجودة) <span className="text-red-500">*</span>
                       </label>
-                      <select
-                        value={formData.ammanAreaId}
-                        onChange={(e) => {
-                          setField('ammanAreaId', e.target.value);
-                          setField('ammanOutskirtSpeed', 'nextDay');
-                        }}
-                        className={inputClass(!!errors.ammanAreaId) + ' appearance-none cursor-pointer bg-sky-50/30 border-sky-200'}
-                      >
-                        <option value="" disabled>— تصفح واختر منطقتك —</option>
-                        {AMMAN_AREAS.map((area) => (
-                          <option key={area.id} value={area.id} className="font-bold text-slate-800">
-                            {isAR ? area.nameAr : area.nameEn}
-                          </option>
-                        ))}
-                      </select>
-                      {errors.ammanAreaId && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.ammanAreaId}</p>}
-
-                      {/* خيارات السرعة إذا كانت المنطقة أطراف */}
-                      {selectedAmmanArea?.isOutskirt && (
-                        <div className="mt-4 p-5 rounded-2xl border-2 border-sky-100 bg-white space-y-3">
-                          <p className="text-sm font-black text-slate-800 mb-2">اختر سرعة التوصيل لمنطقتك:</p>
-                          <label className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-colors ${formData.ammanOutskirtSpeed === 'sameDay' ? 'border-sky-500 bg-sky-50' : 'border-slate-200 hover:bg-slate-50'}`}>
-                            <div className="flex items-center gap-3">
-                              <input type="radio" name="outskirtSpeed" value="sameDay" checked={formData.ammanOutskirtSpeed === 'sameDay'} onChange={(e) => setField('ammanOutskirtSpeed', e.target.value)} className="w-4 h-4 text-sky-500 focus:ring-sky-500" />
-                              <span className="text-sm font-bold text-slate-700">توصيل في نفس اليوم</span>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={formData.ammanAreaId ? (AMMAN_AREAS.find(a => a.id === formData.ammanAreaId)?.nameAr || areaSearchQuery) : areaSearchQuery}
+                          onChange={(e) => {
+                            setAreaSearchQuery(e.target.value);
+                            setField('ammanAreaId', ''); 
+                            setIsAreaDropdownOpen(true);
+                          }}
+                          onFocus={() => setIsAreaDropdownOpen(true)}
+                          onBlur={() => setTimeout(() => setIsAreaDropdownOpen(false), 200)}
+                          placeholder="اكتب اسم منطقتك للبحث السريع..."
+                          className={inputClass(!!errors.ammanAreaId) + ' w-full pr-12 rtl:pr-12 rtl:pl-4 bg-sky-50/30 border-sky-200'}
+                        />
+                        <Search size={20} className="absolute left-4 rtl:left-auto rtl:right-4 top-1/2 -translate-y-1/2 text-sky-400 pointer-events-none" />
+                      </div>
+                      
+                      {isAreaDropdownOpen && (
+                        <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 shadow-2xl rounded-2xl max-h-60 overflow-y-auto z-50 p-2 animate-in fade-in zoom-in-95 duration-200">
+                          {filteredAreas.length > 0 ? (
+                            filteredAreas.map(area => (
+                              <div
+                                key={area.id}
+                                className={`p-3 cursor-pointer rounded-xl transition-colors flex justify-between items-center ${area.id === 'other' ? 'bg-orange-50 hover:bg-orange-100 border border-orange-100 mt-2' : 'hover:bg-sky-50'}`}
+                                onMouseDown={(e) => {
+                                  e.preventDefault(); 
+                                  setField('ammanAreaId', area.id);
+                                  setAreaSearchQuery(area.nameAr);
+                                  setIsAreaDropdownOpen(false);
+                                }}
+                              >
+                                <span className={`font-bold ${area.id === 'other' ? 'text-orange-700' : 'text-slate-800'}`}>
+                                  {area.nameAr}
+                                </span>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="p-4 text-center text-slate-500 font-bold text-sm">
+                              لا توجد منطقة مطابقة. يرجى اختيار "منطقة أخرى"
                             </div>
-                            <span className="text-sm font-black text-slate-900">4.0 JD</span>
-                          </label>
-                          <label className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-colors ${formData.ammanOutskirtSpeed === 'nextDay' ? 'border-sky-500 bg-sky-50' : 'border-slate-200 hover:bg-slate-50'}`}>
-                            <div className="flex items-center gap-3">
-                              <input type="radio" name="outskirtSpeed" value="nextDay" checked={formData.ammanOutskirtSpeed === 'nextDay'} onChange={(e) => setField('ammanOutskirtSpeed', e.target.value)} className="w-4 h-4 text-sky-500 focus:ring-sky-500" />
-                              <span className="text-sm font-bold text-slate-700">توصيل ثاني يوم</span>
-                            </div>
-                            <span className="text-sm font-black text-slate-900">3.0 JD</span>
-                          </label>
+                          )}
                         </div>
                       )}
+                      {errors.ammanAreaId && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.ammanAreaId}</p>}
                     </div>
                   )}
 
+                  {/* 🚀 العنوان التفصيلي (اختياري) */}
                   <div className="md:col-span-2">
                     <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2 ms-1">
-                      {tt('detailedAddress', 'العنوان التفصيلي', 'Detailed Address')} <span className="text-red-500">*</span>
+                      {tt('detailedAddress', 'العنوان التفصيلي', 'Detailed Address')} <span className="text-slate-400 normal-case">(اختياري)</span>
                     </label>
                     <input
                       name="streetAddress"
                       value={formData.streetAddress}
                       onChange={(e) => setField('streetAddress', e.target.value)}
                       type="text"
-                      placeholder="اسم الشارع - رقم البناية - رقم الشقة"
-                      className={inputClass(!!errors.streetAddress)}
+                      placeholder="اسم الشارع - رقم البناية - الشقة (اختياري)"
+                      className={inputClass(false)} // أزلنا فحص الخطأ لأنه اختياري
                     />
-                    {errors.streetAddress && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.streetAddress}</p>}
                   </div>
                 </div>
 
@@ -777,39 +751,47 @@ note: safeTrim(orderNote) || undefined,
               </div>
             )}
 
-            {/* STEP 2: Shipping Confirmation */}
+            {/* STEP 2: Shipping Confirmation (الـ Upsell الذكي) */}
             {step === 2 && (
               <div className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-sm border border-slate-100 animate-in fade-in slide-in-from-right-4 duration-500">
                 <h2 className="text-2xl font-black text-slate-900 mb-8 pb-4 border-b border-slate-100 flex items-center gap-3">
                   <Truck className="text-sky-500" size={28} strokeWidth={2.5} />
-                  تأكيد تسعيرة التوصيل
+                  تأكيد تسعيرة وسرعة التوصيل
                 </h2>
 
                 <div className="space-y-4">
                   {dynamicShippingMethods.map((method) => {
-                    const active = true; // الخيار يكون فعالاً وتلقائياً بناءً على المحافظة/المنطقة
-                    const Icon = method.icon || Truck;
+                    const active = shippingMethodId === method.id;
+                    const Icon = method.icon;
 
                     return (
-                      <div key={method.id} className="flex items-center justify-between p-5 rounded-2xl border-2 border-sky-500 bg-sky-50 shadow-md shadow-sky-500/10">
+                      <label 
+                        key={method.id} 
+                        className={`flex items-center justify-between p-5 rounded-2xl border-2 cursor-pointer transition-all duration-300 ${active ? 'border-sky-500 bg-sky-50 shadow-md shadow-sky-500/10' : 'border-slate-200 hover:border-sky-300 hover:bg-slate-50'}`}
+                      >
                         <div className="flex items-center gap-4">
-                          <div className="w-6 h-6 rounded-full border-2 border-sky-500 flex items-center justify-center shrink-0">
-                            <div className="w-3 h-3 rounded-full bg-sky-500" />
-                          </div>
+                          <input 
+                            type="radio" 
+                            name="shippingMethod" 
+                            value={method.id} 
+                            checked={active} 
+                            onChange={() => setShippingMethodId(method.id)} 
+                            className="w-5 h-5 accent-sky-500" 
+                          />
                           <div className="min-w-0">
-                            <p className="font-black flex items-center gap-2 text-sky-700">
-                              <Icon size={18} strokeWidth={2.5} className="text-sky-500" />
+                            <p className={`font-black flex items-center gap-2 ${active ? 'text-sky-700' : 'text-slate-800'}`}>
+                              <Icon size={18} strokeWidth={2.5} className={active ? 'text-sky-500' : 'text-slate-400'} />
                               {isAR ? method.nameAr : method.nameEn}
                             </p>
-                            <p className="text-xs font-bold mt-1.5 text-sky-600/80">
+                            <p className={`text-xs font-bold mt-1.5 ${active ? 'text-sky-600/80' : 'text-slate-500'}`}>
                               {isAR ? method.durationAr : method.durationEn}
                             </p>
                           </div>
                         </div>
-                        <span className="font-black text-lg tabular-nums shrink-0 text-sky-700 ml-4 rtl:ml-0 rtl:mr-4">
+                        <span className={`font-black text-lg tabular-nums shrink-0 ml-4 rtl:ml-0 rtl:mr-4 ${active ? 'text-sky-700' : 'text-slate-700'}`}>
                           {formatMoney(Number(method.price || 0))}
                         </span>
-                      </div>
+                      </label>
                     );
                   })}
                 </div>
@@ -818,7 +800,7 @@ note: safeTrim(orderNote) || undefined,
                   <Button variant="outline" onClick={() => changeStep(1)} disabled={isProcessing} className="w-full sm:w-auto px-8 py-4">
                     {tt('back', 'تعديل العنوان', 'Edit Address')}
                   </Button>
-                  <Button onClick={() => changeStep(3)} disabled={isProcessing} className="w-full sm:w-auto px-10 py-4 text-lg">
+                  <Button onClick={() => changeStep(3)} disabled={isProcessing} className="w-full sm:w-auto px-10 py-4 text-lg shadow-xl shadow-sky-500/20">
                     {tt('continueToPayment', 'متابعة للدفع', 'Proceed to Payment')}
                   </Button>
                 </div>
@@ -1028,105 +1010,89 @@ note: safeTrim(orderNote) || undefined,
                   className="w-full min-h-[80px] resize-none p-4 rounded-2xl bg-slate-50 border border-slate-100 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-400/10 text-sm font-bold placeholder:font-medium placeholder:text-slate-400 transition-all"
                 />
               </div>
-<div className="mt-6 rounded-[2rem] border border-slate-100 bg-slate-50/70 p-4 sm:p-5">
-  <div className="mb-4">
-    <h4 className="text-sm font-black text-slate-900">خيارات الطلب والموافقات</h4>
-    <p className="mt-1 text-xs font-bold text-slate-400">
-      إعدادات إضافية لتسريع الطلب وتجهيز بياناته بشكل أفضل
-    </p>
-  </div>
 
-  <div className="space-y-3">
-    <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:bg-slate-50 transition-all cursor-pointer">
-      <input
-        type="checkbox"
-        checked={formData.saveInfo}
-        onChange={(e) => setField('saveInfo', e.target.checked)}
-        className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-black text-slate-800">حفظ بياناتي لتسريع الدفع مستقبلاً</span>
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">اختياري</span>
-        </div>
-        <p className="mt-1 text-xs font-bold text-slate-400">
-          يحفظ بيانات الاستلام لتعبئة أسرع في الطلبات القادمة
-        </p>
-      </div>
-    </label>
+              <div className="mt-6 rounded-[2rem] border border-slate-100 bg-slate-50/70 p-4 sm:p-5">
+                <div className="mb-4">
+                  <h4 className="text-sm font-black text-slate-900">خيارات الطلب والموافقات</h4>
+                  <p className="mt-1 text-xs font-bold text-slate-400">
+                    إعدادات إضافية لتسريع الطلب وتجهيز بياناته بشكل أفضل
+                  </p>
+                </div>
 
-    <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:bg-slate-50 transition-all cursor-pointer">
-      <input
-        type="checkbox"
-        checked={formData.billingSameAsShipping}
-        onChange={(e) => setField('billingSameAsShipping', e.target.checked)}
-        className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-black text-slate-800">عنوان الفاتورة مطابق لعنوان الاستلام</span>
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">اختياري</span>
-        </div>
-        <p className="mt-1 text-xs font-bold text-slate-400">
-          نستخدم نفس العنوان للفواتير وبيانات الطلب
-        </p>
-      </div>
-    </label>
+                <div className="space-y-3">
+                  <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:bg-slate-50 transition-all cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.saveInfo}
+                      onChange={(e) => setField('saveInfo', e.target.checked)}
+                      className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-black text-slate-800">حفظ بياناتي لتسريع الدفع مستقبلاً</span>
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">اختياري</span>
+                      </div>
+                      <p className="mt-1 text-xs font-bold text-slate-400">
+                        يحفظ بيانات الاستلام لتعبئة أسرع في الطلبات القادمة
+                      </p>
+                    </div>
+                  </label>
 
-    <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:bg-slate-50 transition-all cursor-pointer">
-      <input
-        type="checkbox"
-        checked={acceptDeliveryPolicy}
-        onChange={(e) => setAcceptDeliveryPolicy(e.target.checked)}
-        className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-black text-slate-800">اطلعت على سياسة التوصيل</span>
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">اختياري</span>
-        </div>
-        <p className="mt-1 text-xs font-bold text-slate-400">
-          يساعد في توضيح مواعيد وآلية التوصيل قبل تأكيد الطلب
-        </p>
-      </div>
-    </label>
+                  <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:bg-slate-50 transition-all cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={acceptDeliveryPolicy}
+                      onChange={(e) => setAcceptDeliveryPolicy(e.target.checked)}
+                      className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-black text-slate-800">اطلعت على سياسة التوصيل</span>
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">اختياري</span>
+                      </div>
+                      <p className="mt-1 text-xs font-bold text-slate-400">
+                        يساعد في توضيح مواعيد وآلية التوصيل قبل تأكيد الطلب
+                      </p>
+                    </div>
+                  </label>
 
-    <label
-      className={`flex items-start gap-3 rounded-2xl border p-4 transition-all cursor-pointer ${
-        errors.acceptPolicies
-          ? 'border-red-300 bg-red-50'
-          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-      }`}
-    >
-      <input
-        type="checkbox"
-        checked={acceptPolicies}
-        onChange={(e) => {
-          setAcceptPolicies(e.target.checked);
-          setErrors((prev) => {
-            const next = { ...prev };
-            delete next.acceptPolicies;
-            return next;
-          });
-        }}
-        className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-black text-slate-800">أوافق على سياسات المتجر وأحكام الخدمة</span>
-          <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-black text-red-600">مطلوب</span>
-        </div>
-        <p className="mt-1 text-xs font-bold text-slate-400">
-          لا يمكن إتمام الطلب بدون الموافقة على سياسات المتجر
-        </p>
-      </div>
-    </label>
-  </div>
+                  <label
+                    className={`flex items-start gap-3 rounded-2xl border p-4 transition-all cursor-pointer ${
+                      errors.acceptPolicies
+                        ? 'border-red-300 bg-red-50'
+                        : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={acceptPolicies}
+                      onChange={(e) => {
+                        setAcceptPolicies(e.target.checked);
+                        setErrors((prev) => {
+                          const next = { ...prev };
+                          delete next.acceptPolicies;
+                          return next;
+                        });
+                      }}
+                      className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-black text-slate-800">أوافق على سياسات المتجر وأحكام الخدمة</span>
+                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-black text-red-600">مطلوب</span>
+                      </div>
+                      <p className="mt-1 text-xs font-bold text-slate-400">
+                        لا يمكن إتمام الطلب بدون الموافقة على سياسات المتجر
+                      </p>
+                    </div>
+                  </label>
+                </div>
 
-  {errors.acceptPolicies && (
-    <p className="mt-3 ms-1 text-xs font-black text-red-500">{errors.acceptPolicies}</p>
-  )}
-</div>              <div className="mt-6 flex items-center justify-center gap-2 text-xs font-bold text-slate-400 bg-white border border-slate-100 py-3 rounded-2xl">
+                {errors.acceptPolicies && (
+                  <p className="mt-3 ms-1 text-xs font-black text-red-500">{errors.acceptPolicies}</p>
+                )}
+              </div>
+              <div className="mt-6 flex items-center justify-center gap-2 text-xs font-bold text-slate-400 bg-white border border-slate-100 py-3 rounded-2xl">
                 <Shield size={16} className="text-emerald-500" />
                 <span>{tt('secureCheckoutNote', 'بياناتك مشفرة ومحمية بالكامل 100%', 'Your data is 100% encrypted and secure')}</span>
               </div>
