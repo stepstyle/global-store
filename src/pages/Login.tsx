@@ -321,7 +321,7 @@ const Login: React.FC = () => {
     }
   };
 
-  // 🚀 دالة الدخول الذكية المُحسنة لحل مشاكل سفاري
+  // 🚀 دالة الدخول الذكية المُحسنة لحل مشاكل سفاري (نفس هيكلك بالملي)
   const handleSocialAuth = (providerType: 'google' | 'facebook') => {
     if (isLoading) return;
     
@@ -329,13 +329,28 @@ const Login: React.FC = () => {
     const provider = providerType === 'google' ? googleProvider : facebookProvider;
 
     if (isMobileOrSafari()) {
-      // 📱 للموبايل وسفاري: توجيه مباشر آمن جداً
-      setIsLoading(true);
-      signInWithRedirect(auth, provider).catch(err => {
-        console.error("Redirect Trigger Error:", err);
-        setFormAlert({ type: 'error', message: getErrorMessage(err) });
-        setIsLoading(false);
-      });
+      // 📱 التعديل السحري: استخدام النافذة المنبثقة فوراً لتخطي حظر أبل بدون حذف الشرط
+      signInWithPopup(auth, provider)
+        .then((res) => {
+          setIsLoading(true);
+          const u = res.user;
+          login({
+            id: u.uid,
+            name: u.displayName || (isRtl ? 'عضو جديد' : 'New Member'),
+            email: u.email || '',
+            password: '',
+            role: 'customer',
+            orders: [],
+          });
+          navigate('/');
+        })
+        .catch(err => {
+          console.error("Popup Trigger Error:", err);
+          if (err.code !== 'auth/popup-closed-by-user') {
+            setFormAlert({ type: 'error', message: getErrorMessage(err) });
+          }
+          setIsLoading(false);
+        });
     } else {
       // 💻 للكمبيوتر (كروم/ايدج): نافذة سريعة
       signInWithPopup(auth, provider)

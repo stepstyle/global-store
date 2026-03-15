@@ -38,9 +38,9 @@ import ProductCard from '../components/ProductCard';
 import { useCart } from '../App';
 import SEO from '../components/SEO';
 import { ProductSkeletonGrid } from '../components/Skeleton';
-
-// ✅ استدعاء الروابط الجديدة من nav.ts
 import { shopTo } from '../config/nav';
+// 🚀 استدعاء المكتشف الذكي
+import SmartFinder from '../components/SmartFinder'; 
 
 type HeroImageSet = {
   s600: string;
@@ -74,7 +74,6 @@ const MAPS_URL = 'https://maps.app.goo.gl/JeK1tvF4jysnLgjM9?g_st=iw';
 const WA_NUMBER = '9627XXXXXXXX'; 
 const WA_URL = `https://wa.me/${WA_NUMBER}`;
 
-// 🚀 الأقسام الدائرية (مربوطة بالصور، ومحمية بأيقونات قياسية 100%)
 const GAMES_SHOWCASE = [
   { sub: 'montessori', labelAr: 'ألعاب اطفال ', labelEn: 'Montessori', Icon: Shapes, image: '/images/categories/montessori.png' },
   { sub: 'girls-toys', labelAr: 'ألعاب للبنات', labelEn: 'Girls Toys', Icon: Heart, image: '/images/categories/girls.png' },
@@ -118,7 +117,6 @@ type SubCardProps = {
   subtitle: string;
 };
 
-// 🎨 التعديل الاحترافي 1: تحويل الكرت إلى مربع تملأه الصورة والكلام بالأسفل
 const SubCard: React.FC<SubCardProps> = ({ title, Icon, image, to, subtitle }) => {
   const [imgError, setImgError] = useState(false);
 
@@ -128,7 +126,6 @@ const SubCard: React.FC<SubCardProps> = ({ title, Icon, image, to, subtitle }) =
       className="group flex flex-col bg-white rounded-3xl border border-slate-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)] overflow-hidden transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_20px_40px_-15px_rgba(14,165,233,0.15)] hover:border-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-100"
       aria-label={title}
     >
-      {/* 📸 مساحة الصورة: تعبئ الجزء العلوي بالكامل */}
       <div className="relative w-full aspect-square bg-slate-50 flex items-center justify-center overflow-hidden">
         {image && !imgError ? (
           <img 
@@ -136,21 +133,16 @@ const SubCard: React.FC<SubCardProps> = ({ title, Icon, image, to, subtitle }) =
             alt={title} 
             className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" 
             draggable={false}
-            loading="eager"           
+            loading="eager"          
             decoding="sync"
             fetchpriority="high"
            onError={() => setImgError(true)}
           />
         ) : (
-          /* الأيقونة تظهر في حال عدم وجود صورة */
           <Icon size={48} strokeWidth={1.5} className="text-slate-300 transition-all duration-500 group-hover:text-sky-500 group-hover:scale-110" />
         )}
-        
-        {/* تأثير لمعان خفيف عند وضع الماوس على الصورة */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
       </div>
-
-      {/* 📝 مساحة النصوص: في الجزء السفلي بخلفية بيضاء */}
       <div className="p-4 sm:p-5 flex flex-col items-center text-center bg-white z-10 border-t border-slate-50">
         <h3 className="text-sm sm:text-base font-black text-slate-800 tracking-tight group-hover:text-sky-600 transition-colors duration-300 line-clamp-1">{title}</h3>
         <p className="mt-1 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">{subtitle}</p>
@@ -464,6 +456,13 @@ const Home: React.FC = () => {
         
         <CategorySection titleAr="مركبات ومستلزمات الأطفال" titleEn="Kids Ride-ons & Gear" descAr="بسكليتات، سيارات ركوب، ومستلزمات العناية" descEn="Bicycles, ride-on cars, and baby gear" viewAllTo={shopTo('BabyGear')} Icon={Truck} variant="babygear" items={BABY_GEAR_SHOWCASE} toFn={(sub) => shopTo('BabyGear', sub)} L={L} />
 
+        {/* 🚀 مكان المكتشف الذكي الجديد: بين الأقسام */}
+        <section className="py-6 lg:py-10">
+          <div className="container mx-auto px-4 lg:px-8">
+             <SmartFinder products={products} L={L} isRtl={isRTL} />
+          </div>
+        </section>
+
         <CategorySection titleAr="تسوّق القرطاسية حسب القسم" titleEn="Shop Stationery by Section" descAr="كل مستلزمات المدرسة والمكتب بشكل مرتب" descEn="Neatly organized school & office essentials" viewAllTo={shopTo('Stationery')} Icon={PencilRuler} variant="stationery" items={STATIONERY_SHOWCASE} toFn={(sub) => shopTo('Stationery', sub)} L={L} />
         
         <CategorySection titleAr="تسوّق الهدايا حسب النوع" titleEn="Shop Gifts by Type" descAr="هدايا مرتبة لكل المناسبات" descEn="Curated gifts for every occasion" viewAllTo={shopTo('Gifts')} Icon={Gift} variant="gifts" items={GIFTS_SHOWCASE} toFn={(sub) => shopTo('Gifts', sub)} L={L} />
@@ -498,29 +497,36 @@ const Home: React.FC = () => {
       {/* Offer Banner */}
       <section className="py-10">
         <div className="container mx-auto px-4 lg:px-8">
-          <div className="relative rounded-3xl overflow-hidden p-8 lg:p-12 flex flex-col md:flex-row items-center justify-between text-center md:text-start">
-            <div className="absolute inset-0 rtl:bg-gradient-to-l ltr:bg-gradient-to-r from-secondary-DEFAULT to-primary-DEFAULT z-0" />
+          <div className="relative rounded-3xl overflow-hidden p-8 lg:p-12 flex flex-col md:flex-row items-center justify-between text-center md:text-start bg-gradient-to-r from-slate-900 via-indigo-900 to-slate-900 shadow-2xl">
+            {/* تأثير ولمعان في الخلفية */}
+            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20 pointer-events-none"></div>
+            <div className="absolute -top-20 -right-20 w-64 h-64 bg-indigo-500/30 rounded-full blur-3xl pointer-events-none"></div>
+            
             <div className="relative z-10 max-w-xl mb-8 md:mb-0">
-              <div className="flex items-center justify-center md:justify-start gap-2 text-white font-bold mb-4">
-                <Sparkles size={18} /> {String(t('specialOffer') ?? 'Special Offer')}
+              <div className="flex items-center justify-center md:justify-start gap-2 text-amber-400 font-black mb-4 uppercase tracking-widest text-sm">
+                <Sparkles size={18} className="animate-pulse" /> {String(t('specialOffer') ?? 'عرض خاص')}
               </div>
-              <h2 className="text-3xl lg:text-4xl font-black text-white mb-4 leading-tight">
+              <h2 className="text-3xl lg:text-4xl font-black text-white mb-4 leading-tight drop-shadow-md">
                 {isRTL ? 'خصومات تصل إلى 50% على تشكيلة مختارة' : 'Up to 50% off on selected items'}
               </h2>
-              <p className="text-white/90 text-sm lg:text-base mb-8">
+              <p className="text-indigo-100 text-sm lg:text-base mb-8 leading-relaxed font-semibold">
                 {isRTL ? 'لا تفوت الفرصة! تسوق الآن واحصل على أفضل العروض قبل نفاذ الكمية.' : 'Don\'t miss out! Shop now and get the best deals before stock runs out.'}
               </p>
               <Link to={shopTo('Offers')} aria-label="Shop Offer">
-                <Button className="bg-white text-primary-DEFAULT hover:bg-slate-50 px-8 py-3 rounded-xl font-bold shadow-lg transition-transform hover:-translate-y-1 active:scale-95">
+                {/* تعديل الزر ليكون بارز جداً */}
+                <button className="bg-white text-indigo-900 hover:bg-slate-100 px-8 py-3.5 rounded-xl font-black shadow-[0_10px_20px_rgba(0,0,0,0.3)] transition-all hover:-translate-y-1 active:scale-95 flex items-center justify-center gap-2 mx-auto md:mx-0">
                   {isRTL ? 'تسوق العرض الآن' : 'Shop Offer Now'}
-                </Button>
+                </button>
               </Link>
             </div>
+            
             <div className="relative z-10 w-full md:w-1/3 max-w-xs mx-auto md:mx-0">
+              {/* توهج خلف الصورة */}
+              <div className="absolute inset-0 bg-white/10 blur-2xl rounded-full" />
               <img 
                 src={FALLBACK_HERO.s600} 
                 alt="Offer image" 
-                className="w-full h-auto rounded-2xl shadow-2xl rotate-3 hover:rotate-0 transition-transform duration-500 border-4 border-white/20" 
+                className="relative w-full h-auto rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.4)] rotate-3 hover:rotate-0 transition-transform duration-500 border-4 border-white/10" 
               />
             </div>
           </div>

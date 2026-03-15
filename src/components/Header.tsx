@@ -1,4 +1,4 @@
-// src/components/Header.tsx (أو حسب مسار الملف عندك)
+// src/components/Header.tsx
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -24,11 +24,18 @@ import {
 import { useCart } from '../App';
 import { shopTo } from '../config/nav';
 
+// 🚀 استدعاء شريط الإعلانات
+import AnnouncementBanner from './AnnouncementBanner'; 
+
 const Header: React.FC = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [mobileExpanded, setMobileExpanded] = useState<string | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
 
   const {
     cartCount,
@@ -51,7 +58,6 @@ const Header: React.FC = () => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
 
-  // 🚀 حالة جديدة مخصصة لإظهار/إخفاء شريط البحث في الموبايل والآيباد
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const mobileSearchInputRef = useRef<HTMLInputElement>(null);
 
@@ -77,10 +83,9 @@ const Header: React.FC = () => {
     setOpenDropdown(null);
     setIsUserMenuOpen(false);
     setMobileExpanded(null);
-    setIsMobileSearchOpen(false); // 🚀 إغلاق بحث الموبايل
+    setIsMobileSearchOpen(false);
   }, []);
 
-  // 🚀 التركيز التلقائي على شريط بحث الموبايل عند فتحه
   useEffect(() => {
     if (isMobileSearchOpen && mobileSearchInputRef.current) {
       setTimeout(() => mobileSearchInputRef.current?.focus(), 100);
@@ -261,7 +266,6 @@ const Header: React.FC = () => {
 
   useEffect(() => {
     const prev = document.body.style.overflow;
-    // 🚀 تحديث عشان الموبايل ما يعمل سكرول لما يفتح البحث كمان
     if (isMenuOpen || isMobileSearchOpen) {
       document.body.style.overflow = 'hidden';
     } else {
@@ -390,6 +394,14 @@ const Header: React.FC = () => {
 
   return (
     <>
+      {/* 🚀 الإعلان في أعلى نقطة بالموقع تماماً */}
+      <AnnouncementBanner 
+        isActive={true} 
+        isRtl={isRtl}
+        messageAr="أهلاً بك في الإطلاق التجريبي! ✨ نقوم يومياً برفع منتجات جديدة. جميع المعروض الآن متوفر وجاهز للطلب."
+        messageEn="Welcome to our Soft Launch! ✨ We are adding new products daily. All displayed items are ready to order."
+      />
+
       <header
         className={[
           'sticky top-0 z-50 w-full font-sans transition-all duration-300',
@@ -431,7 +443,6 @@ const Header: React.FC = () => {
 
         <div className={`w-full flex items-center justify-between px-5 sm:px-6 lg:px-14 2xl:px-24 transition-all duration-300 ${isScrolled ? 'h-[72px]' : 'h-20'}`}>
           
-          {/* Logo Section */}
           <Link to="/" className="flex items-center group shrink-0 min-w-0" onClick={handleHomeClick}>
             <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center text-white font-extrabold text-xl shadow-lg group-hover:rotate-12 transition-transform duration-300 backdrop-blur-sm border border-white/30 shrink-0">
               A
@@ -446,7 +457,6 @@ const Header: React.FC = () => {
             </div>
           </Link>
 
-          {/* Desktop Navigation (Mega Menu) */}
           <nav ref={desktopNavRef} className="hidden lg:flex items-center justify-center flex-1 space-s-2 px-4">
             
             <Link to="/" onClick={handleHomeClick} className={`text-sm font-bold transition-colors duration-300 relative py-2 px-3 rounded-lg group flex items-center gap-2 ${isActivePath('/') ? 'text-slate-900 bg-white/30 shadow-sm' : 'text-slate-900 hover:bg-white/20 hover:text-slate-950 hover:shadow-sm'}`}>
@@ -517,9 +527,7 @@ const Header: React.FC = () => {
             ))}
           </nav>
 
-          {/* Actions Section */}
           <div className="flex items-center gap-3 shrink-0">
-            {/* Search Bar - Desktop */}
             <div ref={searchRef} className="relative group hidden xl:block">
               <form onSubmit={handleSearch}>
                 <div className="relative">
@@ -569,7 +577,6 @@ const Header: React.FC = () => {
             <div className="hidden lg:block w-px h-8 bg-slate-800/10 mx-1"></div>
 
             <div className="flex items-center gap-2 sm:gap-3">
-              {/* 🚀 زر بحث الموبايل والآيباد: تم تعديله ليفتح شريط البحث بدل ما ينقلك للصفحة */}
               <button 
                 onClick={() => setIsMobileSearchOpen(true)} 
                 className="xl:hidden p-2 text-slate-900 hover:bg-white/20 rounded-full transition-colors active:scale-95" 
@@ -632,10 +639,8 @@ const Header: React.FC = () => {
         </div>
       </header>
 
-      {/* 🚀 التعديل الأهم: شريط البحث الأنيق الخاص بالموبايل والآيباد (يظهر عند الضغط على العدسة) */}
       {isMobileSearchOpen && (
         <div className="fixed inset-0 z-[99999] flex flex-col items-center p-4 sm:p-6 animate-in fade-in duration-200">
-          {/* الخلفية المعتمة لإغلاق البحث */}
           <button type="button" onClick={() => setIsMobileSearchOpen(false)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" />
           
           <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl overflow-hidden mt-4 sm:mt-10 animate-in slide-in-from-top-10 duration-300 flex flex-col">
@@ -654,7 +659,6 @@ const Header: React.FC = () => {
               </button>
             </form>
 
-            {/* اقتراحات البحث للموبايل */}
             {searchQuery && suggestions.length > 0 && (
               <div className="max-h-[60vh] overflow-y-auto custom-scrollbar bg-slate-50/50 p-2">
                 {suggestions.map((item) => (
@@ -698,7 +702,6 @@ const Header: React.FC = () => {
         </div>
       )}
 
-      {/* Mobile Drawer Menu */}
       {isMenuOpen && (
         <div className="fixed inset-0 z-[9999] flex justify-end rtl:justify-start">
           <button type="button" onClick={() => setIsMenuOpen(false)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" />
