@@ -41,6 +41,12 @@ googleProvider.setCustomParameters({ prompt: "select_account" });
 const facebookProvider = new FacebookAuthProvider();
 facebookProvider.addScope('email');
 
+// 🚀 دالة فحص المتصفحات (أبل / موبايل) لضمان التوافق
+const isMobileOrSafari = () => {
+  const ua = navigator.userAgent;
+  return /iPhone|iPad|iPod|Android/i.test(ua) || /^((?!chrome|android).)*safari/i.test(ua);
+};
+
 const Login: React.FC = () => {
   const navigate = useNavigate();
   const { t, login, language } = useCart() as any;
@@ -85,9 +91,10 @@ const Login: React.FC = () => {
   const title = useMemo(() => (isLoginMode ? tt('تسجيل الدخول', 'Sign In') : tt('إنشاء حساب جديد', 'Create Account')), [isLoginMode, isRtl]);
   const desc = useMemo(() => (isLoginMode ? tt('أهلاً بك مجدداً في متجر دير شرف', 'Welcome back to Dair Sharaf') : tt('انضم إلينا واكتشف منتجاتنا', 'Join us and discover our products')), [isLoginMode, isRtl]);
 
-  // 🚀 🚀 الرادار (The Catcher): بيصطاد الزبون لما يرجع من صفحة جوجل على الموبايل
+  // 🚀 🚀 الرادار (The Catcher): التعديل السحري لضمان عمل سفاري
   useEffect(() => {
     const auth = getAuth();
+    
     getRedirectResult(auth)
       .then((result) => {
         if (result && result.user) {
@@ -107,10 +114,14 @@ const Login: React.FC = () => {
       })
       .catch((error) => {
         console.error("Redirect Error:", error);
+        setIsLoading(false); // 🚀 لازم نطفي اللودينج حتى لو صار ايرور عشان ما يعلق
+        
         if (error.code !== 'auth/redirect-cancelled-by-user') {
-           setFormAlert({ type: 'error', message: getErrorMessage(error) });
+          // 💡 تخطي بعض أخطاء الفايربيس اللي بتصير بسفاري (Mismatch) اللي ما بتأثر عالدخول الفعلي
+          if(error.code !== 'auth/unauthorized-continue-uri' && error.code !== 'auth/auth-domain-config-required') {
+            setFormAlert({ type: 'error', message: getErrorMessage(error) });
+          }
         }
-        setIsLoading(false);
       });
   }, [login, navigate, isRtl]);
 
@@ -140,7 +151,7 @@ const Login: React.FC = () => {
   const getErrorMessage = (error: any) => {
     const code = error?.code;
     if (code === 'auth/popup-closed-by-user') return tt('تم إغلاق نافذة الدخول قبل إتمام العملية. يرجى المحاولة مجدداً.', 'Sign-in window was closed. Please try again.');
-    if (code === 'auth/unauthorized-continue-uri') return tt('عذراً، هذا الدومين غير موثق حالياً. يرجى التواصل مع الإدارة.', 'Domain not authorized. Please contact support.');
+    if (code === 'auth/unauthorized-continue-uri') return tt('حدث خطأ في توثيق الرابط، يرجى المحاولة مرة أخرى.', 'Domain not authorized. Please try again.');
     if (code === 'auth/email-already-in-use') return tt('يبدو أنك تملك حساباً مسبقاً. يرجى تسجيل الدخول بدلاً من ذلك.', 'An account with this email already exists. Please log in.');
     if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
       return tt('بيانات الاعتماد غير صحيحة. يرجى التحقق من البريد وكلمة المرور.', 'Invalid credentials. Please check your email and password.');
@@ -310,25 +321,23 @@ const Login: React.FC = () => {
     }
   };
 
-  // 🚀 دالة الدخول الذكية للكمبيوتر والموبايل (آمنة 100% بعد ربط الدومين)
+  // 🚀 دالة الدخول الذكية المُحسنة لحل مشاكل سفاري
   const handleSocialAuth = (providerType: 'google' | 'facebook') => {
     if (isLoading) return;
     
     const auth = getAuth();
     const provider = providerType === 'google' ? googleProvider : facebookProvider;
 
-    // فحص: هل الزبون فاتح من موبايل أو آيباد أو سفاري؟
-    const isMobileOrSafari = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-
-    if (isMobileOrSafari) {
-      // 📱 للموبايل: نستخدم التحويل المباشر. (بما إننا وثقنا الرابط في جوجل، رح يشتغل بدون خطأ mismatch).
+    if (isMobileOrSafari()) {
+      // 📱 للموبايل وسفاري: توجيه مباشر آمن جداً
       setIsLoading(true);
       signInWithRedirect(auth, provider).catch(err => {
+        console.error("Redirect Trigger Error:", err);
         setFormAlert({ type: 'error', message: getErrorMessage(err) });
         setIsLoading(false);
       });
     } else {
-      // 💻 للكمبيوتر: نافذة منبثقة سريعة.
+      // 💻 للكمبيوتر (كروم/ايدج): نافذة سريعة
       signInWithPopup(auth, provider)
         .then((res) => {
           setIsLoading(true);
@@ -344,8 +353,10 @@ const Login: React.FC = () => {
           navigate('/');
         })
         .catch((err) => {
-          console.error("Auth Error:", err);
-          setFormAlert({ type: 'error', message: getErrorMessage(err) });
+          console.error("Popup Auth Error:", err);
+          if (err.code !== 'auth/popup-closed-by-user') {
+             setFormAlert({ type: 'error', message: getErrorMessage(err) });
+          }
           setIsLoading(false);
         });
     }

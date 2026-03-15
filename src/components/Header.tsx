@@ -1,3 +1,4 @@
+// src/components/Header.tsx (أو حسب مسار الملف عندك)
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -50,6 +51,10 @@ const Header: React.FC = () => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
 
+  // 🚀 حالة جديدة مخصصة لإظهار/إخفاء شريط البحث في الموبايل والآيباد
+  const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
+  const mobileSearchInputRef = useRef<HTMLInputElement>(null);
+
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const dropdownCloseTimer = useRef<any>(null);
   const desktopNavRef = useRef<HTMLDivElement>(null);
@@ -72,9 +77,16 @@ const Header: React.FC = () => {
     setOpenDropdown(null);
     setIsUserMenuOpen(false);
     setMobileExpanded(null);
+    setIsMobileSearchOpen(false); // 🚀 إغلاق بحث الموبايل
   }, []);
 
-  // 🚀 دالة العودة للرئيسية باحترافية (Smooth Scroll)
+  // 🚀 التركيز التلقائي على شريط بحث الموبايل عند فتحه
+  useEffect(() => {
+    if (isMobileSearchOpen && mobileSearchInputRef.current) {
+      setTimeout(() => mobileSearchInputRef.current?.focus(), 100);
+    }
+  }, [isMobileSearchOpen]);
+
   const handleHomeClick = (e: React.MouseEvent) => {
     closeAllOverlays();
     if (location.pathname === '/') {
@@ -249,7 +261,8 @@ const Header: React.FC = () => {
 
   useEffect(() => {
     const prev = document.body.style.overflow;
-    if (isMenuOpen) {
+    // 🚀 تحديث عشان الموبايل ما يعمل سكرول لما يفتح البحث كمان
+    if (isMenuOpen || isMobileSearchOpen) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = prev || 'unset';
@@ -257,7 +270,7 @@ const Header: React.FC = () => {
     return () => {
       document.body.style.overflow = prev || 'unset';
     }
-  }, [isMenuOpen]);
+  }, [isMenuOpen, isMobileSearchOpen]);
 
   const goTo = useCallback(
     (path: string) => {
@@ -386,7 +399,7 @@ const Header: React.FC = () => {
         ].join(' ')}
       >
         <div className="border-b border-white/15 bg-black/15">
-          <div className="w-full max-w-[1550px] mx-auto px-5 sm:px-6 lg:px-14">
+          <div className="w-full px-5 sm:px-6 lg:px-14 2xl:px-24">
             <div className="h-10 flex items-center justify-between gap-3">
               <div
                 className="flex-1 min-w-0 inline-flex items-center gap-2 px-2 sm:px-3 py-1.5 rounded-full bg-white/15 border border-white/25 backdrop-blur-sm select-none"
@@ -416,9 +429,9 @@ const Header: React.FC = () => {
           </div>
         </div>
 
-        <div className={`w-full max-w-[1550px] mx-auto flex items-center justify-between px-5 sm:px-6 lg:px-14 transition-all duration-300 ${isScrolled ? 'h-[72px]' : 'h-20'}`}>
+        <div className={`w-full flex items-center justify-between px-5 sm:px-6 lg:px-14 2xl:px-24 transition-all duration-300 ${isScrolled ? 'h-[72px]' : 'h-20'}`}>
           
-          {/* Logo Section - 🚀 تم ربطه بدالة Smooth Scroll */}
+          {/* Logo Section */}
           <Link to="/" className="flex items-center group shrink-0 min-w-0" onClick={handleHomeClick}>
             <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center text-white font-extrabold text-xl shadow-lg group-hover:rotate-12 transition-transform duration-300 backdrop-blur-sm border border-white/30 shrink-0">
               A
@@ -436,7 +449,6 @@ const Header: React.FC = () => {
           {/* Desktop Navigation (Mega Menu) */}
           <nav ref={desktopNavRef} className="hidden lg:flex items-center justify-center flex-1 space-s-2 px-4">
             
-            {/* 🚀 زر الرئيسية - تم ربطه بدالة Smooth Scroll */}
             <Link to="/" onClick={handleHomeClick} className={`text-sm font-bold transition-colors duration-300 relative py-2 px-3 rounded-lg group flex items-center gap-2 ${isActivePath('/') ? 'text-slate-900 bg-white/30 shadow-sm' : 'text-slate-900 hover:bg-white/20 hover:text-slate-950 hover:shadow-sm'}`}>
               <Home size={18} />
               <span>{t('home')}</span>
@@ -507,7 +519,7 @@ const Header: React.FC = () => {
 
           {/* Actions Section */}
           <div className="flex items-center gap-3 shrink-0">
-            {/* Search Bar */}
+            {/* Search Bar - Desktop */}
             <div ref={searchRef} className="relative group hidden xl:block">
               <form onSubmit={handleSearch}>
                 <div className="relative">
@@ -525,7 +537,6 @@ const Header: React.FC = () => {
                 </div>
               </form>
 
-              {/* 🚀 التعديل الجراحي السحري لصور البحث (محمية ومحبوسة في إطار) */}
               {showSuggestions && suggestions.length > 0 && (
                 <div className="absolute top-full mt-2 w-full bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden text-start z-50 max-h-[400px] overflow-y-auto custom-scrollbar">
                   {suggestions.map((item) => (
@@ -535,7 +546,6 @@ const Header: React.FC = () => {
                       onClick={() => { setSearchQuery(''); closeAllOverlays(); }} 
                       className="flex items-center gap-3 p-3 hover:bg-sky-50 border-b border-slate-50 transition-colors"
                     >
-                      {/* 🔥 إطار محمي ومربع ثابت يمنع خروج الصورة 🔥 */}
                       <div className="w-12 h-12 shrink-0 rounded-xl overflow-hidden bg-white border border-slate-200 shadow-sm flex items-center justify-center">
                         <img 
                           src={item.image} 
@@ -559,7 +569,12 @@ const Header: React.FC = () => {
             <div className="hidden lg:block w-px h-8 bg-slate-800/10 mx-1"></div>
 
             <div className="flex items-center gap-2 sm:gap-3">
-              <button onClick={() => goTo('/shop')} className="lg:hidden p-2 text-slate-900 hover:bg-white/20 rounded-full transition-colors active:scale-95" title={t('search')}>
+              {/* 🚀 زر بحث الموبايل والآيباد: تم تعديله ليفتح شريط البحث بدل ما ينقلك للصفحة */}
+              <button 
+                onClick={() => setIsMobileSearchOpen(true)} 
+                className="xl:hidden p-2 text-slate-900 hover:bg-white/20 rounded-full transition-colors active:scale-95" 
+                title={t('search')}
+              >
                 <Search size={22} strokeWidth={2.5} />
               </button>
 
@@ -617,6 +632,72 @@ const Header: React.FC = () => {
         </div>
       </header>
 
+      {/* 🚀 التعديل الأهم: شريط البحث الأنيق الخاص بالموبايل والآيباد (يظهر عند الضغط على العدسة) */}
+      {isMobileSearchOpen && (
+        <div className="fixed inset-0 z-[99999] flex flex-col items-center p-4 sm:p-6 animate-in fade-in duration-200">
+          {/* الخلفية المعتمة لإغلاق البحث */}
+          <button type="button" onClick={() => setIsMobileSearchOpen(false)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" />
+          
+          <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl overflow-hidden mt-4 sm:mt-10 animate-in slide-in-from-top-10 duration-300 flex flex-col">
+            <form onSubmit={handleSearch} className="relative flex items-center border-b border-slate-100 p-2">
+              <Search size={22} className="text-slate-400 absolute start-5 pointer-events-none" />
+              <input
+                ref={mobileSearchInputRef}
+                type="search"
+                placeholder={t('search')}
+                className="w-full py-4 ps-14 pe-14 text-lg font-bold text-slate-800 placeholder:text-slate-300 outline-none bg-transparent"
+                value={searchQuery}
+                onChange={(e) => { setSearchQuery(e.target.value); setShowSuggestions(true); }}
+              />
+              <button type="button" onClick={() => setIsMobileSearchOpen(false)} className="absolute end-4 p-2 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-500 transition-colors">
+                <X size={18} />
+              </button>
+            </form>
+
+            {/* اقتراحات البحث للموبايل */}
+            {searchQuery && suggestions.length > 0 && (
+              <div className="max-h-[60vh] overflow-y-auto custom-scrollbar bg-slate-50/50 p-2">
+                {suggestions.map((item) => (
+                  <Link 
+                    key={item.id} 
+                    to={`/product/${item.id}`} 
+                    onClick={() => { setSearchQuery(''); closeAllOverlays(); }} 
+                    className="flex items-center gap-4 p-3 rounded-2xl hover:bg-white hover:shadow-sm border border-transparent hover:border-slate-100 transition-all mb-2"
+                  >
+                    <div className="w-14 h-14 shrink-0 rounded-xl overflow-hidden bg-white shadow-sm flex items-center justify-center">
+                      <img 
+                        src={item.image} 
+                        alt={item.name} 
+                        className="w-full h-full object-cover" 
+                        draggable={false}
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[14px] font-bold text-slate-800 line-clamp-1 leading-snug mb-1">{getProductTitle(item)}</p>
+                      <p className="text-[13px] font-black text-sky-500">{item.price} JOD</p>
+                    </div>
+                    <ChevronLeft size={20} className="text-slate-300 shrink-0 rtl:rotate-180" />
+                  </Link>
+                ))}
+                <button 
+                  onClick={handleSearch}
+                  className="w-full mt-2 py-4 bg-slate-900 text-white font-black text-[15px] rounded-2xl shadow-lg shadow-slate-900/20 active:scale-95 transition-all"
+                >
+                  {L('عرض جميع النتائج', 'View All Results')}
+                </button>
+              </div>
+            )}
+            {searchQuery && suggestions.length === 0 && (
+              <div className="p-8 text-center">
+                <Search size={40} className="mx-auto text-slate-200 mb-3" />
+                <p className="text-slate-500 font-bold">{L('لا توجد نتائج مطابقة', 'No results found')}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Mobile Drawer Menu */}
       {isMenuOpen && (
         <div className="fixed inset-0 z-[9999] flex justify-end rtl:justify-start">
@@ -631,7 +712,6 @@ const Header: React.FC = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar pb-24 space-y-2">
-              {/* 🚀 زر الرئيسية في الموبايل - تم ربطه بـ Smooth Scroll */}
               <button onClick={(e) => { setIsMenuOpen(false); handleHomeClick(e); }} className="w-full flex items-center gap-3 p-4 rounded-2xl bg-slate-50 hover:bg-sky-50 text-slate-800 font-bold transition-colors">
                 <Home size={20} className="text-sky-500" /> {t('home')}
               </button>
