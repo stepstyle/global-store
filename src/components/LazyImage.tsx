@@ -1,6 +1,7 @@
 // src/components/LazyImage.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ImageOff } from 'lucide-react';
+// 🚀 تم استدعاء ImageIcon عشان شاشة التحميل (Skeleton)
+import { ImageOff, ImageIcon } from 'lucide-react';
 
 type FetchPriority = 'high' | 'low' | 'auto';
 
@@ -61,11 +62,9 @@ const cloudinaryTransform = (url: string, w?: number, h?: number, mode?: 'limit'
 
     /**
      * ✅ iOS-safe:
-     * - نتجنب f_auto لأنه قد يرجع AVIF ويخرب على أجهزة/إعدادات معينة
-     * - نستخدم f_jpg كخيار متوافق جداً
-     * - q_auto:good + dpr_auto لذكاء الجودة
+     * 🚀 تم التعديل لتسريع الصور: استخدام f_auto و q_auto:eco لتقليل الحجم بشكل هائل
      */
-    const t: string[] = ['f_jpg', 'q_auto:good', 'dpr_auto'];
+    const t: string[] = ['f_auto', 'q_auto:eco', 'dpr_auto'];
 
     if (typeof w === 'number' && w > 0) t.push(`w_${Math.round(w)}`);
     if (typeof h === 'number' && h > 0) t.push(`h_${Math.round(h)}`);
@@ -162,7 +161,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
   alt = '',
   className = '',
   containerClassName = '',
-  placeholderClassName = 'bg-slate-200/60', // تم التحديث ليتطابق مع الـ Skeletons
+  placeholderClassName = 'bg-slate-100/80', // 🚀 تم تفتيح لون شاشة التحميل ليكون أنيق
   fallbackSrc,
   fetchPriority = 'auto',
   style,
@@ -202,16 +201,16 @@ const LazyImage: React.FC<LazyImageProps> = ({
     setWebpSupported(detectWebPSupport());
   }, []);
 
-  // ✅ reset when src/eager changes
+  // 🚀 تم حل مشكلة (لازم أروح لصفحة ثانية عشان تظهر الصورة) هنا
   useEffect(() => {
     setIsLoaded(false);
     setHasError(false);
-    setInView(derivedEager);
-  }, [normalizedSrc, derivedEager]);
+    // تم إزالة setInView من هنا عشان ما تطفي الصورة وهي قدامك
+  }, [normalizedSrc]);
 
-  // ✅ IntersectionObserver only when needed
+  // 🚀 تحديث المراقب عشان يضل شغال
   useEffect(() => {
-    if (derivedEager) return;
+    if (derivedEager || inView) return;
 
     if (typeof window === 'undefined' || typeof IntersectionObserver === 'undefined') {
       setInView(true);
@@ -234,7 +233,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
 
     obs.observe(el);
     return () => obs.disconnect();
-  }, [derivedEager, rootMargin]);
+  }, [derivedEager, rootMargin, inView]);
 
   // ✅ Only convert Picsum -> webp if supported
   const finalSrc = useMemo(() => {
@@ -318,8 +317,11 @@ const LazyImage: React.FC<LazyImageProps> = ({
       className={`relative overflow-hidden ${containerClassName}`}
       style={{ ...clsStyle }}
     >
+      {/* 🚀 إضافة الأيقونة لشاشة التحميل */}
       {!hasError && !isLoaded && (
-        <div className={`absolute inset-0 ${placeholderClassName} animate-pulse`} aria-hidden="true" />
+        <div className={`absolute inset-0 flex items-center justify-center ${placeholderClassName} animate-pulse`} aria-hidden="true">
+          <ImageIcon size={32} className="text-slate-300 opacity-50" strokeWidth={1.5} />
+        </div>
       )}
 
       {noSrc ? (
