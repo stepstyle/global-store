@@ -1,3 +1,4 @@
+// src/components/EditProductModal.tsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   X,
@@ -13,11 +14,16 @@ import {
   PlusCircle,
   Video as VideoIcon,
   Play,
+  
   Loader2,
-  CheckSquare
+  CheckSquare,
+  Layers,
+  Palette,
+  
 } from 'lucide-react';
 import Button from './Button';
-import { Product, Category } from '../types';
+// 🚀 التعديل 1: إضافة ProductVariant إلى قائمة الاستيرادات
+import { Product, Category, ProductVariant } from '../types';
 import { useCart } from '../App';
 import { uploadToCloudinary } from '../services/cloudinary';
 
@@ -182,6 +188,14 @@ const CATEGORY_LABELS: Record<string, { ar: string; en: string }> = {
   Offers: { ar: 'العروض والتصفيات', en: 'Offers & Clearance' },
 };
 
+const VARIANT_TYPES = [
+  { value: 'size', ar: 'حجم / مقاس', en: 'Size' },
+  { value: 'color', ar: 'لون', en: 'Color' },
+  { value: 'weight', ar: 'وزن / جرام', en: 'Weight' },
+  { value: 'pages', ar: 'عدد الأوراق', en: 'Pages' },
+  { value: 'other', ar: 'أخرى (خيارات عامة)', en: 'Other' },
+];
+
 const cleanUndefinedDeep = <T,>(value: T): T => {
   if (Array.isArray(value)) {
     return value.map(cleanUndefinedDeep).filter((v) => v !== undefined) as any;
@@ -202,6 +216,7 @@ const cleanUndefinedDeep = <T,>(value: T): T => {
 
 const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, product, onSave }) => {
   const { t, showToast, products, language } = useCart();
+  const isAR = language === 'ar';
   const isCreate = !product;
 
   const initialData = useMemo<Partial<Product>>(() => {
@@ -228,7 +243,8 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
         image: cloned.image || imgs[0] || '',
         images: imgs.length > 0 ? imgs : undefined,
         subCategory: parsedSubs, 
-        // 🚀 إضافة الحقل الإنجليزي في الداتا المبدئية
+        categories: cloned.categories || [cloned.category || 'Games'], // 🚀 الدعم الجديد لعدة أقسام
+        variants: cloned.variants || [], // 🚀 تهيئة مصفوفة الخيارات
         descriptionEn: cloned.descriptionEn || '',
       };
     }
@@ -240,10 +256,12 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
       price: 0,
       originalPrice: undefined,
       category: 'Games' as Category, 
+      categories: ['Games'], // 🚀
       subCategory: [], 
+      variants: [], // 🚀
       stock: 0,
       description: '',
-      descriptionEn: '', // 🚀 تهيئة الحقل الجديد
+      descriptionEn: '', 
       details: '',
       brand: '',
       videoUrl: '',
@@ -313,6 +331,48 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
     } else {
       setFormData((prev) => ({ ...prev, subCategory: [...currentSubs, val] }));
     }
+  };
+
+  // 🚀 التعديل 2: إدارة التصنيفات المتعددة (Multi-Category)
+  const handleExtraCategoryToggle = (catValue: Category) => {
+    const currentCats = (formData.categories as Category[]) || [formData.category as Category];
+    let nextCats = [...currentCats];
+
+    // لا تسمح بإزالة التصنيف الرئيسي من المصفوفة
+    if (catValue === formData.category) return;
+
+    if (nextCats.includes(catValue)) {
+      nextCats = nextCats.filter(c => c !== catValue);
+    } else {
+      nextCats.push(catValue);
+    }
+    setFormData((prev) => ({ ...prev, categories: nextCats }));
+  };
+
+  // 🚀 التعديل 3: دوال إدارة الخيارات (Variants Engine)
+  const addVariant = () => {
+    const currentVariants = formData.variants || [];
+    const newVariant: ProductVariant = {
+      id: `var_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      label: '',
+      type: currentVariants.length > 0 ? currentVariants[0].type : 'size', // نسخ نفس نوع آخر خيار
+      price: formData.price || 0,
+      stock: 10,
+      colorCode: '#000000', // لون افتراضي
+    };
+    setFormData(prev => ({ ...prev, variants: [...currentVariants, newVariant] }));
+  };
+
+  const updateVariant = (index: number, field: keyof ProductVariant, value: any) => {
+    const currentVariants = [...(formData.variants || [])];
+    currentVariants[index] = { ...currentVariants[index], [field]: value };
+    setFormData(prev => ({ ...prev, variants: currentVariants }));
+  };
+
+  const removeVariant = (index: number) => {
+    const currentVariants = [...(formData.variants || [])];
+    currentVariants.splice(index, 1);
+    setFormData(prev => ({ ...prev, variants: currentVariants }));
   };
 
   const syncImagesFromInput = useCallback((val: string) => {
@@ -416,8 +476,8 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
       return triggerError('اكتب اسم المنتج (عربي أو انجليزي)');
     }
 
-    if (!Number.isFinite(price) || price <= 0) {
-      return triggerError('يرجى إضافة سعر صالح للمنتج (أكبر من صفر)');
+    if (!Number.isFinite(price) || price < 0) {
+      return triggerError('يرجى إضافة سعر صالح للمنتج');
     }
 
     if (!Number.isFinite(stock) || stock < 0) {
@@ -450,6 +510,14 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
       return triggerError('اختار الصنف الرئيسي للمنتج');
     }
 
+    // 🚀 التحقق من صحة الخيارات (Variants)
+    const currentVariants = formData.variants || [];
+    for (let i = 0; i < currentVariants.length; i++) {
+      const v = currentVariants[i];
+      if (!v.label.trim()) return triggerError(`يرجى كتابة اسم للخيار رقم ${i + 1} (مثلاً: أحمر، 100 ورقة)`);
+      if (Number(v.price) < 0) return triggerError(`سعر الخيار "${v.label}" غير صالح`);
+    }
+
     return true;
   };
 
@@ -471,6 +539,9 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
 
       const subsArray = ((formData as any).subCategory as string[]) || [];
       const finalSubCategory = subsArray.length > 0 ? subsArray.join(',') : undefined;
+      
+      // ضمان وجود التصنيف الرئيسي في مصفوفة التصنيفات
+      const finalCategories = Array.from(new Set([...(formData.categories || []), formData.category as Category]));
 
       const mergedProduct: Product = cleanUndefinedDeep({
         ...(product ?? ({} as Product)),
@@ -478,6 +549,8 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
         id,
 
         category: (((formData as any).category || product?.category || 'Games') as Category),
+        categories: finalCategories, // 🚀 حفظ التصنيفات المتعددة
+        variants: formData.variants || [], // 🚀 حفظ الخيارات المتعددة
 
         subCategory: finalSubCategory,
 
@@ -489,7 +562,6 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
           sanitizeText(String((formData as any).name || '')),
 
         description: sanitizeText(String((formData as any).description || product?.description || '')),
-        // 🚀 حفظ الوصف الإنجليزي في الداتا
         descriptionEn: sanitizeText(String((formData as any).descriptionEn || (product as any)?.descriptionEn || '')),
         
         details: sanitizeText(String((formData as any).details || product?.details || '')) || undefined,
@@ -510,6 +582,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
         rating: product?.rating ?? (formData as any).rating ?? 0,
         reviews: product?.reviews ?? (formData as any).reviews ?? 0,
       });
+
       await onSave(mergedProduct);
       onClose();
     } catch (err: any) {
@@ -523,6 +596,8 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
 
   const selectedCategory = String((formData as any).category || 'Games');
   const subList = SUBCATEGORIES[selectedCategory] || [];
+  const currentCategories = formData.categories || [formData.category];
+  const currentVariants = formData.variants || [];
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
@@ -533,7 +608,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
 
       <form 
         onSubmit={handleSubmit} 
-        className="relative bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 fade-in duration-300 flex flex-col max-h-[90vh]"
+        className="relative bg-white rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden animate-in zoom-in-95 fade-in duration-300 flex flex-col max-h-[95vh]"
       >
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-slate-100 bg-slate-50 shrink-0">
@@ -553,8 +628,9 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-8">
-          <div className="space-y-6">
+        <div className="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar">
+          <div className="space-y-8">
+            
             {/* Basic Info */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
@@ -578,77 +654,278 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
                   className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-secondary-DEFAULT outline-none text-right"
                 />
               </div>
+            </div>
 
-              {/* Category */}
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">الصنف الرئيسي</label>
-                <select
-                  name="category"
-                  value={String((formData as any).category || 'Games')}
-                  onChange={(e) => {
-                    const nextCat = e.target.value as Category;
-                    setFormData((prev) => ({ ...prev, category: nextCat, subCategory: [] })); 
-                  }}
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-secondary-DEFAULT outline-none"
-                >
-                  {Object.keys(CATEGORY_LABELS).map((cat) => (
-                    <option key={cat} value={cat}>
-                      {language === 'ar' ? CATEGORY_LABELS[cat].ar : CATEGORY_LABELS[cat].en}
-                    </option>
-                  ))}
-                </select>
+            {/* التصنيفات (المتعددة) */}
+            <div className="bg-slate-50/50 p-6 rounded-3xl border border-slate-100">
+              <h3 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <Layers size={18} className="text-secondary-DEFAULT" /> التصنيفات
+              </h3>
+              
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-2">الصنف الرئيسي (يحدد الأقسام الفرعية المتاحة)</label>
+                  <select
+                    name="category"
+                    value={selectedCategory}
+                    onChange={(e) => {
+                      const nextCat = e.target.value as Category;
+                      setFormData((prev) => ({ 
+                        ...prev, 
+                        category: nextCat, 
+                        categories: Array.from(new Set([...(prev.categories || []), nextCat])), // نضمن وجوده في الأقسام
+                        subCategory: [] 
+                      })); 
+                    }}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-secondary-DEFAULT outline-none font-bold text-slate-800"
+                  >
+                    {Object.keys(CATEGORY_LABELS).map((cat) => (
+                      <option key={cat} value={cat}>
+                        {language === 'ar' ? CATEGORY_LABELS[cat].ar : CATEGORY_LABELS[cat].en}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-2">أقسام إضافية (أين يظهر أيضاً؟)</label>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.keys(CATEGORY_LABELS).map((cat) => {
+                      const isMain = cat === selectedCategory;
+                      const isSelected = currentCategories.includes(cat as Category);
+                      return (
+                        <label 
+                          key={`extra-${cat}`} 
+                          className={`
+                            px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border
+                            ${isMain ? 'bg-secondary-DEFAULT text-white border-secondary-DEFAULT cursor-not-allowed opacity-70' : 
+                              isSelected ? 'bg-sky-100 text-sky-700 border-sky-300' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}
+                          `}
+                          title={isMain ? "هذا هو الصنف الرئيسي" : "اضغط لاختيار/إلغاء"}
+                        >
+                          <input 
+                            type="checkbox" 
+                            className="hidden" 
+                            disabled={isMain}
+                            checked={isSelected}
+                            onChange={() => handleExtraCategoryToggle(cat as Category)}
+                          />
+                          {language === 'ar' ? CATEGORY_LABELS[cat].ar : CATEGORY_LABELS[cat].en}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Subcategories Checkboxes */}
+              {subList.length > 0 && (
+                <div className="mt-5 pt-5 border-t border-slate-200">
+                  <label className="block text-xs font-bold text-slate-600 mb-3 flex items-center gap-2">
+                    <CheckSquare size={14} className="text-secondary-DEFAULT" />
+                    الأقسام الفرعية (لـ {language === 'ar' ? CATEGORY_LABELS[selectedCategory]?.ar : CATEGORY_LABELS[selectedCategory]?.en})
+                  </label>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {subList.map((s) => {
+                      const isChecked = (((formData as any).subCategory as string[]) || []).includes(s.value);
+                      return (
+                        <label 
+                          key={s.value} 
+                          className={`flex items-center gap-2 cursor-pointer p-2.5 rounded-xl border transition-all duration-200 ${
+                            isChecked ? 'border-secondary-DEFAULT bg-secondary-light/10 shadow-sm' : 'border-slate-200 hover:border-slate-300 hover:bg-white bg-white/50'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => handleSubCategoryToggle(s.value)}
+                            className="w-4 h-4 text-secondary-DEFAULT rounded border-slate-300 focus:ring-secondary-DEFAULT"
+                          />
+                          <span className={`text-xs font-bold line-clamp-1 ${isChecked ? 'text-secondary-dark' : 'text-slate-600'}`}>
+                            {language === 'ar' ? s.labelAr : s.labelEn}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Inventory & Price (Base) */}
+            <div className="bg-sky-50/30 p-6 rounded-3xl border border-sky-100">
+              <h3 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <Tag size={18} className="text-sky-500" /> السعر الأساسي والمخزون
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-2">{t('price')} (مطلوب)</label>
+                  <div className="relative">
+                    <DollarSign size={16} className="absolute left-3 top-3.5 text-slate-400" />
+                    <input
+                      type="number"
+                      name="price"
+                      value={Number((formData as any).price ?? 0)}
+                      onChange={handleChange}
+                      className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-sky-500 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-2">{t('originalPriceOptional')}</label>
+                  <div className="relative">
+                    <DollarSign size={16} className="absolute left-3 top-3.5 text-slate-400" />
+                    <input
+                      type="number"
+                      name="originalPrice"
+                      value={((formData as any).originalPrice ?? '') as any}
+                      onChange={handleChange}
+                      placeholder={t('optional')}
+                      className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-sky-500 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-2">{t('currentStock')}</label>
+                  <div className="relative">
+                    <Package size={16} className="absolute left-3 top-3.5 text-slate-400" />
+                    <input
+                      type="number"
+                      name="stock"
+                      value={Number((formData as any).stock ?? 0)}
+                      onChange={handleChange}
+                      className={`w-full pl-10 pr-4 py-3 rounded-xl border focus:ring-2 outline-none font-bold ${
+                        Number((formData as any).stock ?? 0) < 10
+                          ? 'border-red-300 text-red-600 bg-red-50 focus:ring-red-200'
+                          : 'border-slate-200 focus:ring-sky-500'
+                      }`}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Checkboxes للفئات الفرعية */}
-            <div className="bg-slate-50/50 p-5 rounded-2xl border border-slate-100">
-              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
-                <CheckSquare size={16} className="text-secondary-DEFAULT" />
-                الأصناف الفرعية <span className="text-xs font-normal text-slate-400">(يمكنك اختيار أكثر من صنف)</span>
-              </label>
-              
-              {subList.length === 0 ? (
-                <div className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-400 text-sm text-center italic">
-                  لا يوجد تصنيفات فرعية متاحة للصنف الرئيسي المختار
+            {/* 🚀 محرك الخيارات الديناميكية (Variants Engine) */}
+            <div className="bg-amber-50/40 p-6 rounded-3xl border border-amber-200/60 shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                    <Palette size={18} className="text-amber-500" /> الخيارات المتعددة (أحجام، ألوان...)
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">هل للمنتج أحجام أو ألوان مختلفة؟ أضفها هنا لتظهر للزبون.</p>
+                </div>
+                <Button 
+                  type="button" 
+                  onClick={addVariant} 
+                  className="bg-amber-100 text-amber-700 hover:bg-amber-200 hover:text-amber-900 border border-amber-200 shadow-none text-xs px-4 py-2"
+                >
+                  <PlusCircle size={14} className="mr-1 rtl:mr-0 rtl:ml-1" /> إضافة خيار
+                </Button>
+              </div>
+
+              {currentVariants.length > 0 ? (
+                <div className="space-y-3">
+                  <div className="hidden md:grid grid-cols-12 gap-3 px-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                    <div className="col-span-3">اسم الخيار (مثال: أحمر، 100 ورقة)</div>
+                    <div className="col-span-2">النوع</div>
+                    <div className="col-span-2">السعر (JOD)</div>
+                    <div className="col-span-2">السعر القديم</div>
+                    <div className="col-span-2">المخزون (الكمية)</div>
+                    <div className="col-span-1 text-center">حذف</div>
+                  </div>
+
+                  {currentVariants.map((variant, idx) => (
+                    <div key={variant.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 bg-white p-4 md:p-3 rounded-2xl border border-slate-200 items-center relative animate-in slide-in-from-top-2">
+                      <div className="col-span-3">
+                        <input 
+                          type="text" 
+                          value={variant.label} 
+                          onChange={(e) => updateVariant(idx, 'label', e.target.value)} 
+                          placeholder="مثال: أحمر، كبير، 500 جرام..."
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:border-amber-400 outline-none text-sm bg-slate-50 focus:bg-white"
+                        />
+                      </div>
+                      
+                      <div className="col-span-2">
+                        <select 
+                          value={variant.type} 
+                          onChange={(e) => updateVariant(idx, 'type', e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 outline-none text-xs bg-slate-50"
+                        >
+                          {VARIANT_TYPES.map(t => (
+                            <option key={t.value} value={t.value}>{isAR ? t.ar : t.en}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="col-span-2 relative">
+                        <DollarSign size={12} className="absolute left-2 top-3 text-slate-400" />
+                        <input 
+                          type="number" 
+                          value={variant.price} 
+                          onChange={(e) => updateVariant(idx, 'price', Number(e.target.value))} 
+                          className="w-full pl-6 pr-2 py-2 rounded-xl border border-slate-200 outline-none text-sm font-bold bg-slate-50"
+                        />
+                      </div>
+
+                      <div className="col-span-2 relative">
+                        <DollarSign size={12} className="absolute left-2 top-3 text-slate-300" />
+                        <input 
+                          type="number" 
+                          value={variant.originalPrice || ''} 
+                          onChange={(e) => updateVariant(idx, 'originalPrice', e.target.value === '' ? undefined : Number(e.target.value))} 
+                          placeholder="اختياري"
+                          className="w-full pl-6 pr-2 py-2 rounded-xl border border-slate-200 outline-none text-sm bg-slate-50 text-slate-400 line-through"
+                        />
+                      </div>
+
+                      <div className="col-span-2 relative flex items-center gap-2">
+                        <input 
+                          type="number" 
+                          value={variant.stock} 
+                          onChange={(e) => updateVariant(idx, 'stock', Number(e.target.value))} 
+                          className={`w-full px-3 py-2 rounded-xl border outline-none text-sm font-bold ${variant.stock <= 0 ? 'bg-red-50 border-red-200 text-red-600' : 'bg-slate-50 border-slate-200'}`}
+                        />
+                        {variant.type === 'color' && (
+                          <input 
+                            type="color" 
+                            value={variant.colorCode || '#000000'} 
+                            onChange={(e) => updateVariant(idx, 'colorCode', e.target.value)} 
+                            className="w-8 h-8 rounded-full border border-slate-200 cursor-pointer overflow-hidden p-0 shrink-0"
+                            title="اختر درجة اللون"
+                          />
+                        )}
+                      </div>
+
+                      <div className="col-span-1 flex justify-center mt-2 md:mt-0">
+                        <button type="button" onClick={() => removeVariant(idx)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors">
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                  {subList.map((s) => {
-                    const isChecked = (((formData as any).subCategory as string[]) || []).includes(s.value);
-                    return (
-                      <label 
-                        key={s.value} 
-                        className={`flex items-center gap-3 cursor-pointer p-3 rounded-xl border transition-all duration-200 ${
-                          isChecked ? 'border-secondary-DEFAULT bg-secondary-light/10' : 'border-slate-100 hover:border-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => handleSubCategoryToggle(s.value)}
-                          className="w-4 h-4 text-secondary-DEFAULT rounded border-slate-300 focus:ring-secondary-DEFAULT focus:ring-offset-0"
-                        />
-                        <span className={`text-sm font-bold ${isChecked ? 'text-secondary-dark' : 'text-slate-600'}`}>
-                          {language === 'ar' ? s.labelAr : s.labelEn}
-                        </span>
-                      </label>
-                    );
-                  })}
+                <div className="text-center py-6 bg-white/50 rounded-2xl border border-dashed border-amber-200">
+                  <p className="text-xs text-amber-700/60 font-bold">هذا المنتج يعتمد على السعر الأساسي فقط. (ليس له أحجام أو ألوان).</p>
                 </div>
               )}
             </div>
 
             {/* Images Section */}
-            <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200">
-              <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+            <div className="bg-slate-50 p-6 rounded-3xl border border-slate-200">
+              <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
                 <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                  <ImageIcon size={16} /> صور المنتج
+                  <ImageIcon size={18} className="text-indigo-500" /> صور المنتج
                 </h3>
 
                 <div className="flex gap-2">
-                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-secondary-DEFAULT text-white text-xs hover:bg-secondary-dark cursor-pointer">
-                    <Upload size={16} />
-                    {uploading ? 'جاري الرفع...' : 'رفع صور'}
+                  <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 cursor-pointer shadow-sm transition-all">
+                    <Upload size={14} />
+                    {uploading ? 'جاري الرفع...' : 'رفع صور من الجهاز'}
                     <input
                       type="file"
                       accept="image/*"
@@ -662,96 +939,54 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
                   <button
                     type="button"
                     onClick={handlePasteFromClipboard}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 text-white text-xs hover:bg-slate-800"
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 shadow-sm transition-all"
                   >
-                    <ClipboardPaste size={16} />
-                    لصق روابط
+                    <ClipboardPaste size={14} />
+                    لصق روابط الصور
                   </button>
                 </div>
               </div>
 
-              <p className="text-xs text-slate-500 mb-3">
-                ضع الروابط مفصولة بـ <b>|</b> أو سطر جديد. أول رابط سيكون الصورة الرئيسية. (حد أقصى 10)
-              </p>
-
               <textarea
                 value={imagesInput}
                 onChange={(e) => syncImagesFromInput(e.target.value)}
-                rows={3}
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-secondary-DEFAULT outline-none text-xs"
-                placeholder="https://... | https://... | https://..."
+                rows={2}
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-indigo-400 outline-none text-xs mb-4"
+                placeholder="https://... | https://... (أول رابط هو الصورة الرئيسية)"
               />
 
-              {imgError && <div className="mt-3 text-sm text-red-600">{imgError}</div>}
+              {imgError && <div className="mb-3 text-sm text-red-600">{imgError}</div>}
 
               {/* Thumbnails */}
               {parsedUrls.length > 0 && (
-                <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3">
                   {parsedUrls.map((url, idx) => (
                     <div
                       key={`${url}-${idx}`}
-                      className="relative rounded-2xl overflow-hidden border border-slate-200 bg-white"
+                      className="relative rounded-2xl overflow-hidden border border-slate-200 bg-white shadow-sm aspect-square group"
                     >
-                      <img src={url} alt={`img-${idx}`} className="w-full h-24 object-cover" loading="lazy" />
+                      <img src={url} alt={`img-${idx}`} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy" />
                       <button
                         type="button"
                         onClick={() => removeImageAt(idx)}
-                        className="absolute top-2 right-2 p-2 rounded-full bg-white/90 hover:bg-white text-red-600"
-                        title="حذف"
+                        className="absolute top-2 right-2 p-1.5 rounded-xl bg-white/90 hover:bg-red-50 text-red-500 shadow-sm opacity-0 group-hover:opacity-100 transition-all"
+                        title="حذف الصورة"
                       >
                         <Trash2 size={14} />
                       </button>
                       {idx === 0 && (
-                        <div className="absolute bottom-2 left-2 text-[10px] bg-black/70 text-white px-2 py-1 rounded-md">
-                          رئيسية
+                        <div className="absolute bottom-0 left-0 w-full bg-indigo-600/90 backdrop-blur-sm text-white text-[10px] font-bold text-center py-1">
+                          الرئيسية
                         </div>
                       )}
                     </div>
                   ))}
                 </div>
               )}
-
-              {/* Preview main image */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-2">الصورة الرئيسية (image)</label>
-                  <input
-                    type="text"
-                    name="image"
-                    value={String((formData as any).image || '')}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setFormData((prev) => ({ ...prev, image: v }));
-
-                      if (isValidUrl(v)) {
-                        const merged = Array.from(new Set([v, ...parsedUrls])).slice(0, 10);
-                        syncImagesFromInput(merged.join(' | '));
-                      }
-                    }}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-secondary-DEFAULT outline-none text-xs"
-                    placeholder="https://..."
-                  />
-                </div>
-
-                <div className="flex items-center justify-center">
-                  {(formData as any).image ? (
-                    <img
-                      src={String((formData as any).image)}
-                      alt="preview"
-                      className="w-24 h-24 rounded-2xl object-cover border border-slate-200"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="w-24 h-24 rounded-2xl border border-dashed border-slate-200 flex items-center justify-center text-slate-400 text-xs">
-                      No Image
-                    </div>
-                  )}
-                </div>
-              </div>
             </div>
 
             {/* Video Section */}
-            <div className="bg-slate-900 p-6 rounded-[2rem] text-white shadow-xl relative overflow-hidden group/video mt-6">
+            <div className="bg-slate-900 p-6 rounded-[2rem] text-white shadow-xl relative overflow-hidden group/video">
               <div className="absolute top-0 right-0 p-8 opacity-10 rotate-12 group-hover/video:rotate-45 transition-transform duration-700">
                 <VideoIcon size={120} />
               </div>
@@ -761,7 +996,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
                   <h3 className="text-base font-black flex items-center gap-2">
                     <VideoIcon size={20} className="text-sky-400" /> فيديو العرض الترويجي
                   </h3>
-                  <p className="text-slate-400 text-xs mt-1 font-medium">ارفع فيديو قصير للمنتج، أو الصق رابط MP4 مباشر.</p>
+                  <p className="text-slate-400 text-xs mt-1 font-medium">ارفع فيديو قصير للمنتج، أو الصق رابط مباشر.</p>
                 </div>
                 
                 <div className="flex flex-col sm:flex-row gap-3">
@@ -787,9 +1022,9 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
                 </div>
               </div>
 
-              {(formData as any).videoUrl ? (
-                <div className="relative rounded-2xl overflow-hidden border border-white/10 bg-black/40 aspect-video z-10">
-                  <video src={formData.videoUrl} className="w-full h-full object-contain" controls muted />
+              {(formData as any).videoUrl && (
+                <div className="relative rounded-2xl overflow-hidden border border-white/10 bg-black/40 aspect-video z-10 max-w-md mx-auto">
+                  <video src={(formData as any).videoUrl} className="w-full h-full object-contain" controls muted />
                   <button 
                     type="button" 
                     onClick={() => setFormData(p => ({ ...p, videoUrl: '' }))} 
@@ -798,100 +1033,40 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
                     <Trash2 size={16} />
                   </button>
                 </div>
-              ) : (
-                <div className="py-10 border-2 border-dashed border-white/10 rounded-2xl flex flex-col items-center justify-center text-white/30 italic relative z-10">
-                  <VideoIcon size={32} strokeWidth={1} className="mb-2" />
-                  <span className="text-xs font-bold uppercase tracking-widest">لم يتم إضافة فيديو</span>
-                </div>
               )}
             </div>
 
-            {/* Inventory & Price */}
-            <div className="bg-blue-50/50 p-6 rounded-2xl border border-blue-100">
-              <h3 className="text-sm font-bold text-blue-800 mb-4 flex items-center gap-2">
-                <Tag size={16} /> {t('inventoryPriceDetails')}
-              </h3>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-2">{t('price')} (مطلوب)</label>
-                  <div className="relative">
-                    <DollarSign size={16} className="absolute left-3 top-3.5 text-slate-400" />
-                    <input
-                      type="number"
-                      name="price"
-                      value={Number((formData as any).price ?? 0)}
-                      onChange={handleChange}
-                      className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-secondary-DEFAULT outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-2">{t('originalPriceOptional')}</label>
-                  <div className="relative">
-                    <DollarSign size={16} className="absolute left-3 top-3.5 text-slate-400" />
-                    <input
-                      type="number"
-                      name="originalPrice"
-                      value={((formData as any).originalPrice ?? '') as any}
-                      onChange={handleChange}
-                      placeholder={t('optional')}
-                      className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-secondary-DEFAULT outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-2">{t('currentStock')}</label>
-                  <div className="relative">
-                    <Package size={16} className="absolute left-3 top-3.5 text-slate-400" />
-                    <input
-                      type="number"
-                      name="stock"
-                      value={Number((formData as any).stock ?? 0)}
-                      onChange={handleChange}
-                      className={`w-full pl-10 pr-4 py-3 rounded-xl border focus:ring-2 outline-none font-bold ${
-                        Number((formData as any).stock ?? 0) < 10
-                          ? 'border-red-300 text-red-600 bg-red-50 focus:ring-red-200'
-                          : 'border-slate-200 focus:ring-secondary-DEFAULT'
-                      }`}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
             {/* Description (Arabic & English) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* 🚀 الوصف العربي */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50/50 p-6 rounded-3xl border border-slate-100">
+              <div className="md:col-span-2">
+                <h3 className="text-base font-bold text-slate-800 flex items-center gap-2 mb-1">
+                  <FileText size={18} className="text-emerald-500" /> وصف المنتج
+                </h3>
+                <p className="text-xs text-slate-500 mb-4">اكتب النقاط مفصولة بعلامة الناقص (-) أو النجمة (*) لتظهر كقائمة فخمة للزبون.</p>
+              </div>
+
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
-                  <FileText size={16} className="text-secondary-DEFAULT" /> الوصف (عربي)
-                </label>
+                <label className="block text-sm font-bold text-slate-700 mb-2">الوصف (عربي)</label>
                 <textarea
                   name="description"
                   value={String((formData as any).description || '')}
                   onChange={handleChange}
                   rows={6}
-                  placeholder="اكتب وصف المنتج باللغة العربية هنا..."
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-secondary-DEFAULT outline-none resize-none text-right"
+                  placeholder="مثال:&#10;- منتج عالي الجودة&#10;- ألوان ثابتة لا تتغير"
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none resize-none text-right"
                 />
               </div>
 
-              {/* 🚀 الوصف الإنجليزي الجديد */}
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
-                  <FileText size={16} className="text-sky-500" /> الوصف (إنجليزي)
-                </label>
+                <label className="block text-sm font-bold text-slate-700 mb-2">الوصف (إنجليزي)</label>
                 <textarea
                   name="descriptionEn"
                   value={String((formData as any).descriptionEn || '')}
                   onChange={handleChange}
                   rows={6}
-                  placeholder="Write the English description here..."
+                  placeholder="Example:&#10;- High quality product&#10;- Vivid colors"
                   dir="ltr"
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-sky-500 outline-none resize-none text-left"
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none resize-none text-left"
                 />
               </div>
             </div>
@@ -900,18 +1075,21 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
         </div>
 
         {/* Footer */}
-        <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 shrink-0">
-          <Button variant="outline" onClick={() => !saving && onClose()} type="button" disabled={saving}>
+        <div className="p-6 border-t border-slate-100 bg-white flex justify-end gap-3 shrink-0">
+          <Button variant="outline" onClick={() => !saving && onClose()} type="button" disabled={saving} className="px-6 rounded-xl border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900">
             {t('cancel')}
           </Button>
 
           <Button
             type="submit"
-            className="shadow-lg shadow-secondary-light/20"
+            className="px-8 bg-secondary-DEFAULT hover:bg-secondary-dark text-white rounded-xl shadow-lg shadow-secondary-light/30 transition-all active:scale-95"
             disabled={saving || uploading || uploadingVideo}
           >
-            <Save size={18} className="ml-2 rtl:ml-2 rtl:mr-0 ltr:ml-0 ltr:mr-2" />
-            {saving ? 'جاري الحفظ...' : isCreate ? 'إضافة المنتج' : t('saveChanges')}
+            {saving ? (
+              <span className="flex items-center gap-2"><Loader2 size={16} className="animate-spin" /> جاري الحفظ...</span>
+            ) : (
+              <span className="flex items-center gap-2"><Save size={18} /> {isCreate ? 'إضافة المنتج للمتجر' : 'حفظ التعديلات'}</span>
+            )}
           </Button>
         </div>
       </form>

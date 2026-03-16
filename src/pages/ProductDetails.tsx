@@ -9,7 +9,8 @@ import {
 import Button from '../components/Button';
 import ProductCard from '../components/ProductCard';
 import { useCart } from '../App';
-import { Product, ReviewDoc, AppUser } from '../types';
+// 🚀 التعديل 1: إضافة ProductVariant إلى قائمة الاستيرادات
+import { Product, ReviewDoc, AppUser, ProductVariant } from '../types';
 import SEO from '../components/SEO';
 import { ProductDetailSkeleton } from '../components/Skeleton';
 import { reviewsApi } from '../services/reviews';
@@ -80,23 +81,18 @@ const clampInt = (v: any, min: number, max: number) => {
   return Math.max(min, Math.min(max, Math.floor(n)));
 };
 
-// 🚀 دالة الوصف الذكية (Smart Parser) - تفصل النقاط تلقائياً وتضعها في بطاقات أنيقة
+// 🚀 دالة الوصف الذكية (Smart Parser)
 const renderRichText = (raw: string) => {
   const text = safeStr(raw);
   if (!text) return null;
 
-  // 💡 الخدعة السحرية: الكود بيبحث عن الإيموجيات أو الرموز وبضيف قبلها سطر جديد تلقائياً
   const autoFormattedText = text.replace(/(✅|✔️|🛠️|🧩|🚀|🌈|🔒|🎲|✨|💡|📌|🎯|- |\* |• )/g, '\n$1');
-
-  // تقسيم النص إلى أسطر نظيفة
   const lines = autoFormattedText.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
 
   return (
     <div className="grid grid-cols-1 gap-3 py-2">
       {lines.map((line, idx) => {
-        // فحص: هل السطر يعتبر نقطة مميزات؟ (يحتوي على إيموجي أو رمز)
         const isBullet = /^(-|\*|•|✅|✔️|✨|🚀|🌈|🔒|🛠️|🧩|🎲|💡|📌|🎯)/.test(line);
-
         if (isBullet) {
           return (
             <div 
@@ -112,8 +108,6 @@ const renderRichText = (raw: string) => {
             </div>
           );
         }
-
-        // إذا كان السطر عبارة عن فقرة عادية أو عنوان
         return (
           <p key={idx} className="text-slate-600 leading-[2] text-[15px] font-semibold px-2 py-1">
             {line}
@@ -272,6 +266,19 @@ const ProductDetails: React.FC = () => {
   const tabsRef = useRef<HTMLDivElement | null>(null);
   const reviewFormRef = useRef<HTMLDivElement | null>(null);
 
+  // 🚀 التعديل 2: إدارة الخيار المحدد (اللون / الحجم)
+  const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
+
+  // 🚀 التعديل 3: اختيار أول خيار تلقائياً عند تحميل المنتج
+  useEffect(() => {
+    if (product?.variants && product.variants.length > 0) {
+      setSelectedVariant(product.variants[0]);
+    } else {
+      setSelectedVariant(null);
+    }
+    setQty(1); // إعادة ضبط الكمية عند تغيير المنتج
+  }, [product]);
+
   const scrollToTabs = useCallback(() => {
     tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, []);
@@ -294,8 +301,17 @@ const ProductDetails: React.FC = () => {
     }
   }, [location.search, scrollToTabs]);
 
-  const stock = useMemo(() => Math.max(0, Number(product?.stock ?? 0)), [product?.stock]);
+  // 🚀 التعديل 4: المخزون الديناميكي بناءً على الخيار المحدد
+  const stock = useMemo(() => {
+    if (selectedVariant) return Math.max(0, Number(selectedVariant.stock ?? 0));
+    return Math.max(0, Number(product?.stock ?? 0));
+  }, [product?.stock, selectedVariant]);
+  
   const isInStock = stock > 0;
+
+  // 🚀 التعديل 5: السعر الديناميكي بناءً على الخيار المحدد
+  const displayPrice = selectedVariant ? selectedVariant.price : (product?.price ?? 0);
+  const displayOriginalPrice = selectedVariant ? selectedVariant.originalPrice : product?.originalPrice;
 
   const allImages = useMemo(() => normalizeImages(product), [product]);
   const heroPoster = allImages[0] || '';
@@ -376,18 +392,20 @@ const ProductDetails: React.FC = () => {
       : [];
   }, [products, product]);
 
+  // 🚀 التعديل 6: تحديث دالة الإضافة للسلة لتمرر الخيار المحدد
   const addToCartWithQty = useCallback(
     (p: Product, q: number) => {
-      const st = Math.max(0, Number((p as any)?.stock ?? 0));
+      const st = Math.max(0, Number(selectedVariant ? selectedVariant.stock : p?.stock ?? 0));
       if (st <= 0) return;
       const safeQ = clampInt(q, 1, st);
       const fnAny = addToCart as any;
       if (typeof fnAny === 'function') {
-        fnAny(p, safeQ);
+        // ندمج الخيار المختار مع كائن المنتج لكي يصل للسلة بنجاح
+        fnAny({ ...p, selectedVariant }, safeQ);
         showToast(tt('addedToCart', 'تمت الإضافة للسلة', 'Added to cart'), 'success');
       }
     },
-    [addToCart, showToast, language]
+    [addToCart, showToast, language, selectedVariant]
   );
 
   const incQty = useCallback(() => { if (isInStock) setQty((q) => clampInt(q + 1, 1, stock)); }, [isInStock, stock]);
@@ -600,10 +618,58 @@ const ProductDetails: React.FC = () => {
                   ({aggregate.count} {tt('reviews', 'تقييمات', 'Reviews')})
                 </span>
               </div>
+              
               <div className="mt-8">
+
+                {/* 🚀 التعديل 7: واجهة أزرار الخيارات (الألوان / الأحجام) */}
+                {product.variants && product.variants.length > 0 && (
+                  <div className="mb-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                    <h3 className="text-sm font-bold text-slate-700 mb-3 uppercase tracking-wider">
+                      {isAR ? 'الخيارات المتاحة:' : 'Available Options:'}
+                    </h3>
+                    <div className="flex flex-wrap gap-3">
+                      {product.variants.map((variant) => {
+                        const isSelected = selectedVariant?.id === variant.id;
+                        const isColor = variant.type === 'color';
+                        const outOfStock = variant.stock <= 0;
+
+                        return (
+                          <button
+                            key={variant.id}
+                            disabled={outOfStock}
+                            onClick={() => { setSelectedVariant(variant); setQty(1); }}
+                            className={`
+                              relative flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all overflow-hidden border-2
+                              ${isSelected ? 'border-slate-900 bg-slate-900 text-white shadow-md scale-[1.02]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'}
+                              ${outOfStock ? 'opacity-50 cursor-not-allowed border-slate-100 bg-slate-50' : 'cursor-pointer'}
+                            `}
+                          >
+                            {/* دائرة اللون إذا كان نوع الخيار لوناً */}
+                            {isColor && variant.colorCode && (
+                              <span 
+                                className="w-5 h-5 rounded-full border border-black/10 shadow-inner" 
+                                style={{ backgroundColor: variant.colorCode }}
+                              />
+                            )}
+                            {variant.label}
+                            
+                            {/* خط أحمر وتأثير في حال نفاد المخزون لهذا الخيار */}
+                            {outOfStock && (
+                              <span className="absolute inset-0 flex items-center justify-center bg-white/40">
+                                <span className="w-full h-px bg-red-400 absolute rotate-12" />
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex items-baseline gap-4 mb-6">
-                  <span className="text-4xl font-black text-slate-900">{formatMoneyJOD(product.price)}</span>
-                  {product.originalPrice && <span className="text-lg font-bold text-slate-400 line-through">{formatMoneyJOD(product.originalPrice)}</span>}
+                  {/* عرض السعر الديناميكي */}
+                  <span className="text-4xl font-black text-slate-900">{formatMoneyJOD(displayPrice)}</span>
+                  {displayOriginalPrice && <span className="text-lg font-bold text-slate-400 line-through">{formatMoneyJOD(displayOriginalPrice)}</span>}
                 </div>
                 <div className="flex flex-col sm:flex-row gap-4">
                   <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-2xl p-1.5 w-full sm:w-36 shadow-inner">

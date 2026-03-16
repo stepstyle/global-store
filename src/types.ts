@@ -16,9 +16,22 @@ export type Category =
 /**
  * ✅ SubCategory مرن (string)
  * - يفضّل يكون "slug" ثابت مثل:
- *   pencils, pens, 1-2y, girls, bundle...
+ * pencils, pens, 1-2y, girls, bundle...
  */
 export type SubCategory = string;
+
+/** =========================================================
+ * 🚀 Product Variants (نظام الخيارات الجديد للأحجام والألوان)
+ * ========================================================= */
+export interface ProductVariant {
+  id: string;
+  label: string; // "100 ورقة" أو "أحمر" أو "500 جرام"
+  type: 'color' | 'size' | 'weight' | 'pages' | 'other';
+  price: number;
+  originalPrice?: number;
+  stock: number;
+  colorCode?: string; // يستخدم فقط إذا كان النوع 'color'
+}
 
 /** =========================================================
  * ✅ Product & Cart
@@ -37,6 +50,10 @@ export interface Product {
 
   /** Category */
   category: Category;
+
+  /** 🚀 التعديلات الجديدة (اختيارية لضمان عمل المنتجات القديمة) */
+  categories?: Category[]; // لدعم ظهور المنتج في أكثر من قسم
+  variants?: ProductVariant[]; // لدعم خيارات الأحجام والألوان
 
   /**
    * ✅ SubCategory (Recommended key)
@@ -87,6 +104,7 @@ export interface Product {
 
 export interface CartItem extends Product {
   quantity: number;
+  selectedVariant?: ProductVariant; // 🚀 الخيار الذي اختاره الزبون في السلة
 }
 
 /** =========================================================
@@ -154,7 +172,6 @@ export type AppUser = {
 };
 
 /** =========================================================
- /** =========================================================
  * ✅ Orders
  * ========================================================= */
 
@@ -179,6 +196,8 @@ export interface OrderItem {
 
   /** ⚠️ Deprecated old field */
   subcategory?: SubCategory;
+
+  selectedVariant?: ProductVariant; // 🚀 الخيار الذي سيظهر في فاتورة الأدمن
 }
 
 export type OrderStatus = 'processing' | 'shipped' | 'delivered' | 'cancelled';
