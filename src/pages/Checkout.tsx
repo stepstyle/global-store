@@ -271,14 +271,20 @@ const Checkout: React.FC = () => {
     [shippingMethodId, dynamicShippingMethods]
   );
 
+  // 🚀 التعديل الجوهري: ربط السلة بالمنتجات الأصلية والأسعار الخاصة بالخيارات
   const validatedCart = useMemo(() => {
     const safeCart = Array.isArray(cart) ? cart : [];
     return safeCart.map((cartItem: any) => {
       const realProduct = products.find((p: Product) => p.id === cartItem.id);
+      const variant = cartItem.selectedVariant;
+      
+      // إذا كان الزبون قد اختار Variant (حجم/لون)، نأخذ سعره، وإلا نأخذ سعر المنتج الأساسي
+      const finalPrice = variant ? variant.price : (realProduct ? realProduct.price : cartItem.price);
+      
       return {
         ...cartItem,
-        price: realProduct ? realProduct.price : cartItem.price,
-        stock: realProduct ? realProduct.stock : cartItem.stock,
+        price: finalPrice,
+        stock: variant ? variant.stock : (realProduct ? realProduct.stock : cartItem.stock),
       };
     });
   }, [cart, products]);
@@ -420,6 +426,7 @@ const Checkout: React.FC = () => {
       const nowDate = nowIso.split('T')[0];
       const orderId = makeOrderId();
 
+      // 🚀 التعديل الجوهري: إضافة selectedVariant إلى كائن الطلب (Order)
       const newOrder: Order & any = {
         id: orderId,
         userId: user ? user.id : 'guest',
@@ -435,6 +442,7 @@ const Checkout: React.FC = () => {
           price: Number(item.price || 0),
           quantity: clampQty(item.quantity),
           image: item.image,
+          selectedVariant: item.selectedVariant || null, // 🚀 هنا سحر وصول الألوان للأدمن
         })),
         subtotal,
         discountAmount,
@@ -751,7 +759,7 @@ const Checkout: React.FC = () => {
               </div>
             )}
 
-            {/* STEP 2: Shipping Confirmation (الـ Upsell الذكي) */}
+            {/* STEP 2: Shipping Confirmation */}
             {step === 2 && (
               <div className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-sm border border-slate-100 animate-in fade-in slide-in-from-right-4 duration-500">
                 <h2 className="text-2xl font-black text-slate-900 mb-8 pb-4 border-b border-slate-100 flex items-center gap-3">
@@ -949,29 +957,46 @@ const Checkout: React.FC = () => {
               </h3>
 
               <div className="space-y-4 max-h-[40vh] overflow-y-auto pr-2 rtl:pr-0 rtl:pl-2 custom-scrollbar mb-6">
-                {validatedCart.map((item: any) => (
-                  <div key={item.id} className="flex gap-4 group">
-                    <div className="relative">
-                      <LazyImage
-                        src={item.image}
-                        alt={item.name}
-                        className="w-16 h-16 rounded-2xl object-cover border border-slate-100 group-hover:border-sky-200 transition-colors"
-                        containerClassName="w-16 h-16 shrink-0"
-                      />
-                      <span className="absolute -top-2 -right-2 rtl:-left-2 rtl:right-auto bg-slate-900 text-white w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black shadow-sm">
-                        {clampQty(item.quantity)}
-                      </span>
+                {validatedCart.map((item: any, idx: number) => {
+                  const variant = item.selectedVariant;
+                  return (
+                    <div key={`${item.id}-${idx}`} className="flex gap-4 group">
+                      <div className="relative">
+                        <LazyImage
+                          src={item.image}
+                          alt={item.name}
+                          className="w-16 h-16 rounded-2xl object-cover border border-slate-100 group-hover:border-sky-200 transition-colors"
+                          containerClassName="w-16 h-16 shrink-0"
+                        />
+                        <span className="absolute -top-2 -right-2 rtl:-left-2 rtl:right-auto bg-slate-900 text-white w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black shadow-sm">
+                          {clampQty(item.quantity)}
+                        </span>
+                      </div>
+                      <div className="flex-1 min-w-0 pt-1">
+                        <p className="text-sm font-black text-slate-800 line-clamp-1 leading-snug group-hover:text-sky-600 transition-colors">
+                          {getProductTitle(item)}
+                        </p>
+                        {/* 🚀 إظهار الخيار للزبون في فاتورة الدفع */}
+                        {variant && (
+                          <div className="mt-1 flex items-center gap-1.5 w-fit">
+                            {variant.type === 'color' && variant.colorCode && (
+                              <span 
+                                className="w-2.5 h-2.5 rounded-full border border-black/10 shadow-inner block shrink-0" 
+                                style={{ backgroundColor: variant.colorCode }}
+                              />
+                            )}
+                            {variant.label && variant.label.trim() !== '.' && (
+                              <span className="text-[10px] font-bold text-slate-500 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-100">{variant.label}</span>
+                            )}
+                          </div>
+                        )}
+                        <p className="font-black text-slate-500 tabular-nums mt-1 text-xs">
+                          {formatMoney(Number(item.price || 0) * clampQty(item.quantity))}
+                        </p>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0 pt-1">
-                      <p className="text-sm font-black text-slate-800 line-clamp-2 leading-snug group-hover:text-sky-600 transition-colors">
-                        {getProductTitle(item)}
-                      </p>
-                      <p className="font-black text-slate-500 tabular-nums mt-1 text-xs">
-                        {formatMoney(Number(item.price || 0) * clampQty(item.quantity))}
-                      </p>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="bg-slate-50 rounded-3xl p-5 space-y-3">

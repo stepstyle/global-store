@@ -14,7 +14,7 @@ import AdminGuard from './components/AdminGuard';
 import { Product, CartItem, ToastMessage, ToastType, Language, User } from './types';
 import { trackPageView, trackEvent } from './services/analytics';
 import { TRANSLATIONS } from './constants';
-import { db as storageDb } from './services/storage'; // Renamed to avoid conflict
+import { db as storageDb } from './services/storage'; 
 import { auth, isFirebaseInitialized } from './services/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, getFirestore } from 'firebase/firestore';
@@ -59,8 +59,9 @@ interface CartContextType {
   cart: CartItem[];
   wishlist: Set<string>;
   addToCart: (product: Product, quantity?: number) => Promise<void>;
-  updateCartItemQuantity: (productId: string, nextQty: number) => Promise<void>;
-  removeFromCart: (productId: string) => void;
+  // 🚀 تم تحديث الدالة لتستقبل cartItemId بدلاً من productId فقط
+  updateCartItemQuantity: (cartItemId: string, nextQty: number) => Promise<void>;
+  removeFromCart: (cartItemId: string) => void;
   clearCart: () => void;
   toggleWishlist: (product: Product) => void;
   cartCount: number;
@@ -87,6 +88,16 @@ export const useCart = () => {
   const context = useContext(CartContext);
   if (!context) throw new Error('useCart must be used within a CartProvider');
   return context;
+};
+
+// =========================================================
+// 🚀 Helper: Generate a unique ID for Cart Items based on variants
+// =========================================================
+const generateCartItemId = (product: Product, selectedVariant?: any) => {
+  if (selectedVariant && selectedVariant.id) {
+    return `${product.id}_${selectedVariant.id}`;
+  }
+  return product.id;
 };
 
 // =========================================================
@@ -136,60 +147,62 @@ const App: React.FC = () => {
     } catch (e) { console.error(e); }
   }, []);
 
-  // 🔥 إضافة دوال الحفظ الحقيقية للآدمن
-  // 🔥 إضافة دوال الحفظ الحقيقية للآدمن
-const addProducts = useCallback(async (newProducts: Product[]) => {
-  try {
-    await storageDb.products.add(newProducts);
-    await refreshProducts();
-  } catch (e) {
-    console.error('Error adding product:', e);
-    throw e;
-  }
-}, [refreshProducts]);
-
- 
+  const addProducts = useCallback(async (newProducts: Product[]) => {
+    try {
+      await storageDb.products.add(newProducts);
+      await refreshProducts();
+    } catch (e) {
+      console.error('Error adding product:', e);
+      throw e;
+    }
+  }, [refreshProducts]);
 
   const deleteProduct = useCallback(async (id: string) => {
-  try {
-    await storageDb.products.delete(id);
-    await refreshProducts();
-  } catch (e) {
-    console.error('Error deleting product:', e);
-    throw e;
-  }
-}, [refreshProducts]);
+    try {
+      await storageDb.products.delete(id);
+      await refreshProducts();
+    } catch (e) {
+      console.error('Error deleting product:', e);
+      throw e;
+    }
+  }, [refreshProducts]);
 
-const updateProduct = useCallback(async (p: Product) => {
-  try {
-    await storageDb.products.update(p);
-    await refreshProducts();
-  } catch (e) {
-    console.error('Error updating product:', e);
-    throw e;
-  }
-}, [refreshProducts]);
+  const updateProduct = useCallback(async (p: Product) => {
+    try {
+      await storageDb.products.update(p);
+      await refreshProducts();
+    } catch (e) {
+      console.error('Error updating product:', e);
+      throw e;
+    }
+  }, [refreshProducts]);
 
+  // 🚀 التعديل الجوهري لحل مشكلة دمج الألوان/الأحجام في السلة
   const addToCart = useCallback(async (product: Product, quantity: number = 1) => {
     const requestedQty = Math.max(1, Math.round(quantity));
+    const variant = (product as any).selectedVariant;
+    const cartItemId = generateCartItemId(product, variant);
 
     setCart((prev) => {
-      const existingItem = prev.find(i => i.id === product.id);
+      // نبحث في السلة باستخدام الـ cartItemId بدلاً من product.id العادي
+      const existingItem = prev.find(i => generateCartItemId(i, i.selectedVariant) === cartItemId);
       const currentCartQty = existingItem ? existingItem.quantity : 0;
       const targetQty = currentCartQty + requestedQty;
 
       // 🛡️ Enterprise Feature: Stock Limit Validation
-      if (product.stock !== undefined && targetQty > product.stock) {
+      const availableStock = variant && variant.stock !== undefined ? variant.stock : product.stock;
+      
+      if (availableStock !== undefined && targetQty > availableStock) {
         showToast(
-          isRtl ? 'عذراً، لقد بلغت الحد الأقصى للمخزون المتوفر.' : 'Maximum available stock reached.',
+          isRtl ? 'عذراً، لقد بلغت الحد الأقصى للمخزون المتوفر من هذا الخيار.' : 'Maximum available stock reached for this option.',
           'error'
         );
         // Add only the remaining available stock if any
-        if (currentCartQty < product.stock) {
+        if (currentCartQty < availableStock) {
           if (!existingItem) {
-            return [...prev, { ...product, quantity: product.stock }];
+            return [...prev, { ...product, quantity: availableStock }];
           }
-          return prev.map(i => i.id === product.id ? { ...i, quantity: product.stock } : i);
+          return prev.map(i => generateCartItemId(i, i.selectedVariant) === cartItemId ? { ...i, quantity: availableStock } : i);
         }
         return prev;
       }
@@ -201,24 +214,27 @@ const updateProduct = useCallback(async (p: Product) => {
       setIsCartOpen(true);
 
       if (existingItem) {
-        return prev.map(i => i.id === product.id ? { ...i, quantity: targetQty } : i);
+        return prev.map(i => generateCartItemId(i, i.selectedVariant) === cartItemId ? { ...i, quantity: targetQty } : i);
       }
       return [...prev, { ...product, quantity: requestedQty }];
     });
   }, [isRtl, showToast]);
 
-  const updateCartItemQuantity = useCallback(async (pid: string, n: number) => {
+  const updateCartItemQuantity = useCallback(async (cartItemId: string, n: number) => {
     const nextQty = Math.max(1, Math.round(n));
 
     setCart(prev => prev.map(item => {
-      if (item.id === pid) {
+      // نستخدم الـ cartItemId الذكي للتحديث
+      if (generateCartItemId(item, item.selectedVariant) === cartItemId || item.id === cartItemId) {
+        const availableStock = item.selectedVariant && item.selectedVariant.stock !== undefined ? item.selectedVariant.stock : item.stock;
+        
         // 🛡️ Enterprise Feature: Prevent updates exceeding stock
-        if (item.stock !== undefined && nextQty > item.stock) {
+        if (availableStock !== undefined && nextQty > availableStock) {
           showToast(
-            isRtl ? 'الكمية المطلوبة تتجاوز المخزون المتاح حالياً.' : 'Requested quantity exceeds available stock.',
+            isRtl ? 'الكمية المطلوبة تتجاوز المخزون المتاح حالياً من هذا الخيار.' : 'Requested quantity exceeds available stock.',
             'error'
           );
-          return { ...item, quantity: item.stock };
+          return { ...item, quantity: availableStock };
         }
         return { ...item, quantity: nextQty };
       }
@@ -226,8 +242,8 @@ const updateProduct = useCallback(async (p: Product) => {
     }));
   }, [isRtl, showToast]);
 
-  const removeFromCart = useCallback((pid: string) => {
-    setCart(prev => prev.filter(i => i.id !== pid));
+  const removeFromCart = useCallback((cartItemId: string) => {
+    setCart(prev => prev.filter(i => generateCartItemId(i, i.selectedVariant) !== cartItemId && i.id !== cartItemId));
     showToast(
       isRtl ? 'تم إزالة المنتج من السلة.' : 'Item removed from your cart.',
       'info'
@@ -249,49 +265,49 @@ const updateProduct = useCallback(async (p: Product) => {
   }, [isRtl, showToast]);
 
   // --- Effects & Initialization ---
-useEffect(() => {
-  const savedLang = localStorage.getItem('language') as Language;
-  if (savedLang) setLanguageState(savedLang);
+  useEffect(() => {
+    const savedLang = localStorage.getItem('language') as Language;
+    if (savedLang) setLanguageState(savedLang);
 
-  refreshProducts();
+    refreshProducts();
 
-  const sc = localStorage.getItem('anta_cart');
-  if (sc) {
-    try { setCart(JSON.parse(sc)); } catch {}
-  }
-
-  const sw = localStorage.getItem('anta_wishlist');
-  if (sw) {
-    try { setWishlist(new Set(JSON.parse(sw))); } catch {}
-  }
-
-  const sn = localStorage.getItem(ORDER_NOTE_KEY);
-  if (sn) setOrderNoteState(sn);
-
-  if (!auth) {
-    setUser(storageDb.users.getCurrent());
-    return;
-  }
-
-  const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
-    if (fbUser) {
-      const docSnap = await getDoc(doc(getFirestore(), 'users', fbUser.uid));
-      const d = docSnap.data();
-
-      setUser({
-        id: fbUser.uid,
-        name: d?.name || fbUser.displayName || 'User',
-        email: fbUser.email || '',
-        role: d?.role || 'customer',
-        orders: d?.orders || []
-      });
-    } else {
-      setUser(storageDb.users.getCurrent());
+    const sc = localStorage.getItem('anta_cart');
+    if (sc) {
+      try { setCart(JSON.parse(sc)); } catch {}
     }
-  });
 
-  return () => unsubscribe();
-}, [refreshProducts]);
+    const sw = localStorage.getItem('anta_wishlist');
+    if (sw) {
+      try { setWishlist(new Set(JSON.parse(sw))); } catch {}
+    }
+
+    const sn = localStorage.getItem(ORDER_NOTE_KEY);
+    if (sn) setOrderNoteState(sn);
+
+    if (!auth) {
+      setUser(storageDb.users.getCurrent());
+      return;
+    }
+
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      if (fbUser) {
+        const docSnap = await getDoc(doc(getFirestore(), 'users', fbUser.uid));
+        const d = docSnap.data();
+
+        setUser({
+          id: fbUser.uid,
+          name: d?.name || fbUser.displayName || 'User',
+          email: fbUser.email || '',
+          role: d?.role || 'customer',
+          orders: d?.orders || []
+        });
+      } else {
+        setUser(storageDb.users.getCurrent());
+      }
+    });
+
+    return () => unsubscribe();
+  }, [refreshProducts]);
 
   useEffect(() => {
     localStorage.setItem('anta_cart', JSON.stringify(cart));
@@ -318,9 +334,9 @@ useEffect(() => {
       orderNote, setOrderNote: (n) => { setOrderNoteState(n); localStorage.setItem(ORDER_NOTE_KEY, n); },
       clearOrderNote: () => { setOrderNoteState(''); localStorage.removeItem(ORDER_NOTE_KEY); },
       isLoading, 
-      addProducts, // 👈 تم تفعيل دالة الإضافة
-      deleteProduct, // 👈 تم تفعيل دالة الحذف
-      updateProduct // 👈 تم تفعيل دالة التعديل
+      addProducts, 
+      deleteProduct, 
+      updateProduct 
     }}>
       <HashRouter>
         <ScrollToTop />
@@ -334,21 +350,19 @@ useEffect(() => {
             <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-10 h-10 border-4 border-t-blue-600 rounded-full animate-spin" /></div>}>
               <Routes>
                 <Route path="/" element={<Home />} />
-    <Route path="/product/:id" element={<ProductDetails />} />
-    {/* يجب إدخال لوحة التحكم هنا لتتمكن من استخدام useCart */}
-    <Route path="/admin" element={<AdminDashboard />} />
+                <Route path="/product/:id" element={<ProductDetails />} />
+                <Route path="/admin" element={<AdminDashboard />} />
                 <Route path="/account" element={<Account />} />
-                <Route path="/" element={<Home />} />
                 <Route path="/shop" element={<Shop />} />
                 <Route path="/cart" element={<Cart />} />
-                <Route path="/product/:id" element={<ProductDetails />} />
                 <Route path="/wishlist" element={<Wishlist />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/tracking" element={<OrderTracking />} />
                 <Route path="/checkout" element={<Checkout />} />
                 <Route path="/order-success/:id" element={<OrderSuccess />} />
                 <Route path="/my-orders" element={<MyOrders />} />
-                <Route path="/admin" element={<AdminGuard><AdminDashboard /></AdminGuard>} />
+                {/* 🛡️ AdminGuard used here properly */}
+                <Route path="/admin-secure" element={<AdminGuard><AdminDashboard /></AdminGuard>} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Suspense>
