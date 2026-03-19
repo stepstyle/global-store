@@ -13,11 +13,20 @@ const ORDER_NOTE_KEY = 'anta_order_note_v1';
 
 const safeTrim = (v: any) => String(v ?? '').trim();
 
+// 🚀 Helper: Generate a unique ID for Cart Items based on variants
+const getCartItemId = (item: any) => {
+  const variant = item.selectedVariant;
+  if (variant && variant.id) {
+    return `${item.id}_${variant.id}`;
+  }
+  return item.id;
+};
+
 const Cart: React.FC = () => {
   const navigate = useNavigate();
   const {
     cart,
-    products, // 🛡️ تم جلبه للتحقق من السعر الحقيقي والمخزون
+    products, 
     t,
     language,
     getProductTitle,
@@ -73,13 +82,18 @@ const Cart: React.FC = () => {
   const validatedCart = useMemo(() => {
     return safeCart.map((cartItem: any) => {
       const realProduct = products.find((p: Product) => p.id === cartItem.id);
+      const variant = cartItem.selectedVariant;
+
+      // 🚀 إذا كان الزبون قد اختار Variant (حجم/لون)، نأخذ سعره ومخزونه، وإلا نأخذ الأساسي
+      const finalPrice = variant ? variant.price : (realProduct ? realProduct.price : cartItem.price);
+      const finalStock = variant ? variant.stock : (realProduct ? realProduct.stock : cartItem.stock);
+
       return {
         ...cartItem,
-        // إذا كان المنتج موجوداً في قاعدة البيانات نأخذ سعره ومخزونه الحقيقي
-        price: realProduct ? realProduct.price : cartItem.price,
-        stock: realProduct ? realProduct.stock : cartItem.stock,
-        isAvailable: realProduct !== undefined && (realProduct.stock === undefined || realProduct.stock > 0),
-        hasStockIssue: realProduct && realProduct.stock !== undefined && cartItem.quantity > realProduct.stock,
+        price: finalPrice,
+        stock: finalStock,
+        isAvailable: finalStock !== undefined && finalStock > 0,
+        hasStockIssue: finalStock !== undefined && cartItem.quantity > finalStock,
       };
     });
   }, [safeCart, products]);
@@ -102,9 +116,9 @@ const Cart: React.FC = () => {
   // 4. هل هناك مشكلة تمنع إتمام الطلب؟ (منتج غير متوفر أو كمية تتجاوز المخزون)
   const hasCartIssues = useMemo(() => validatedCart.some((it: any) => !it.isAvailable || it.hasStockIssue), [validatedCart]);
 
-  const onSetQty = useCallback((id: string, nextQty: number) => {
+  const onSetQty = useCallback((cartItemId: string, nextQty: number) => {
     if (typeof updateCartItemQuantity !== 'function') return;
-    updateCartItemQuantity(id, nextQty);
+    updateCartItemQuantity(cartItemId, nextQty);
   }, [updateCartItemQuantity]);
 
   // ==========================================
@@ -179,32 +193,35 @@ const Cart: React.FC = () => {
 
             {/* المنتجات الموثقة */}
             <div className="space-y-4">
-              {validatedCart.map((item: any) => (
-                <div key={item.id} className="relative">
-                  <CartItemCard
-                    item={item}
-                    title={getProductTitle(item)}
-                    t={t}
-                    formatMoney={formatMoney}
-                    onRemove={(id) => removeFromCart(id)}
-                    onSetQty={onSetQty}
-                  />
-                  {/* شريط التحذير للمنتج المخصص */}
-                  {item.hasStockIssue && (
-                    <div className="absolute bottom-0 left-0 right-0 bg-red-50 text-red-600 text-[11px] font-bold px-4 py-1.5 rounded-b-2xl border-x border-b border-red-100 flex items-center justify-between">
-                      <span>{L('تجاوز المخزون المتاح', 'Exceeds available stock')}</span>
-                      <span>{L(`المتاح: ${item.stock}`, `Available: ${item.stock}`)}</span>
-                    </div>
-                  )}
-                  {!item.isAvailable && (
-                    <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] rounded-2xl z-10 flex items-center justify-center">
-                       <span className="bg-red-600 text-white text-xs font-black px-3 py-1.5 rounded-lg uppercase tracking-wider shadow-lg">
-                         {L('نفدت الكمية', 'Out of stock')}
-                       </span>
-                    </div>
-                  )}
-                </div>
-              ))}
+              {validatedCart.map((item: any, idx: number) => {
+                const cartItemId = getCartItemId(item);
+                return (
+                  <div key={`${cartItemId}-${idx}`} className="relative">
+                    <CartItemCard
+                      item={item}
+                      title={getProductTitle(item)}
+                      t={t}
+                      formatMoney={formatMoney}
+                      onRemove={() => removeFromCart(cartItemId)} // 🚀 استخدام المعرف الذكي
+                      onSetQty={(_, nextQty) => onSetQty(cartItemId, nextQty)} // 🚀 استخدام المعرف الذكي
+                    />
+                    {/* شريط التحذير للمنتج المخصص */}
+                    {item.hasStockIssue && (
+                      <div className="absolute bottom-0 left-0 right-0 bg-red-50 text-red-600 text-[11px] font-bold px-4 py-1.5 rounded-b-2xl border-x border-b border-red-100 flex items-center justify-between">
+                        <span>{L('تجاوز المخزون المتاح', 'Exceeds available stock')}</span>
+                        <span>{L(`المتاح: ${item.stock}`, `Available: ${item.stock}`)}</span>
+                      </div>
+                    )}
+                    {!item.isAvailable && (
+                      <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] rounded-2xl z-10 flex items-center justify-center">
+                         <span className="bg-red-600 text-white text-xs font-black px-3 py-1.5 rounded-lg uppercase tracking-wider shadow-lg">
+                           {L('نفدت الكمية', 'Out of stock')}
+                         </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             {/* 📝 ملاحظات الطلب */}

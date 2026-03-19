@@ -14,15 +14,13 @@ import {
   PlusCircle,
   Video as VideoIcon,
   Play,
-  
   Loader2,
   CheckSquare,
   Layers,
   Palette,
-  
+  Settings2
 } from 'lucide-react';
 import Button from './Button';
-// 🚀 التعديل 1: إضافة ProductVariant إلى قائمة الاستيرادات
 import { Product, Category, ProductVariant } from '../types';
 import { useCart } from '../App';
 import { uploadToCloudinary } from '../services/cloudinary';
@@ -243,9 +241,10 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
         image: cloned.image || imgs[0] || '',
         images: imgs.length > 0 ? imgs : undefined,
         subCategory: parsedSubs, 
-        categories: cloned.categories || [cloned.category || 'Games'], // 🚀 الدعم الجديد لعدة أقسام
-        variants: cloned.variants || [], // 🚀 تهيئة مصفوفة الخيارات
+        categories: cloned.categories || [cloned.category || 'Games'],
+        variants: cloned.variants || [], 
         descriptionEn: cloned.descriptionEn || '',
+        imagePosition: cloned.imagePosition || { x: 50, y: 50, zoom: 1 } // 🚀 الإحداثيات
       };
     }
 
@@ -256,9 +255,9 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
       price: 0,
       originalPrice: undefined,
       category: 'Games' as Category, 
-      categories: ['Games'], // 🚀
+      categories: ['Games'], 
       subCategory: [], 
-      variants: [], // 🚀
+      variants: [], 
       stock: 0,
       description: '',
       descriptionEn: '', 
@@ -270,6 +269,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
       images: undefined,
       rating: 0,
       reviews: 0,
+      imagePosition: { x: 50, y: 50, zoom: 1 } // 🚀 الإحداثيات
     };
   }, [product]);
 
@@ -333,12 +333,10 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
     }
   };
 
-  // 🚀 التعديل 2: إدارة التصنيفات المتعددة (Multi-Category)
   const handleExtraCategoryToggle = (catValue: Category) => {
     const currentCats = (formData.categories as Category[]) || [formData.category as Category];
     let nextCats = [...currentCats];
 
-    // لا تسمح بإزالة التصنيف الرئيسي من المصفوفة
     if (catValue === formData.category) return;
 
     if (nextCats.includes(catValue)) {
@@ -349,16 +347,17 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
     setFormData((prev) => ({ ...prev, categories: nextCats }));
   };
 
-  // 🚀 التعديل 3: دوال إدارة الخيارات (Variants Engine)
   const addVariant = () => {
     const currentVariants = formData.variants || [];
     const newVariant: ProductVariant = {
       id: `var_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       label: '',
-      type: currentVariants.length > 0 ? currentVariants[0].type : 'size', // نسخ نفس نوع آخر خيار
+      type: currentVariants.length > 0 ? currentVariants[0].type : 'color', // افتراضي لون لدعم طلبك
       price: formData.price || 0,
       stock: 10,
-      colorCode: '#000000', // لون افتراضي
+      colorCode: '#000000', 
+      colorCode2: '', // اللون الثاني (اختياري للدمج)
+      image: '', // صورة خاصة بالخيار
     };
     setFormData(prev => ({ ...prev, variants: [...currentVariants, newVariant] }));
   };
@@ -510,12 +509,12 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
       return triggerError('اختار الصنف الرئيسي للمنتج');
     }
 
-    // 🚀 التحقق من صحة الخيارات (Variants)
     const currentVariants = formData.variants || [];
     for (let i = 0; i < currentVariants.length; i++) {
       const v = currentVariants[i];
-      if (!v.label.trim()) return triggerError(`يرجى كتابة اسم للخيار رقم ${i + 1} (مثلاً: أحمر، 100 ورقة)`);
-      if (Number(v.price) < 0) return triggerError(`سعر الخيار "${v.label}" غير صالح`);
+      // 🚀 إعفاء اللون من شرط الاسم
+      if (!v.label.trim() && v.type !== 'color') return triggerError(`يرجى كتابة اسم للخيار رقم ${i + 1} (مثلاً: 100 ورقة)`);
+      if (Number(v.price) < 0) return triggerError(`سعر الخيار غير صالح`);
     }
 
     return true;
@@ -540,7 +539,6 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
       const subsArray = ((formData as any).subCategory as string[]) || [];
       const finalSubCategory = subsArray.length > 0 ? subsArray.join(',') : undefined;
       
-      // ضمان وجود التصنيف الرئيسي في مصفوفة التصنيفات
       const finalCategories = Array.from(new Set([...(formData.categories || []), formData.category as Category]));
 
       const mergedProduct: Product = cleanUndefinedDeep({
@@ -549,8 +547,8 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
         id,
 
         category: (((formData as any).category || product?.category || 'Games') as Category),
-        categories: finalCategories, // 🚀 حفظ التصنيفات المتعددة
-        variants: formData.variants || [], // 🚀 حفظ الخيارات المتعددة
+        categories: finalCategories, 
+        variants: formData.variants || [], 
 
         subCategory: finalSubCategory,
 
@@ -570,6 +568,8 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
 
         image: String(parsedUrls[0] || (formData as any).image || product?.image || ''),
         images: parsedUrls.length > 0 ? parsedUrls : undefined,
+        
+        imagePosition: formData.imagePosition || { x: 50, y: 50, zoom: 1 }, // 🚀 حفظ الإحداثيات
 
         price: clampNumber((formData as any).price ?? product?.price, 0, 999999),
         stock: Math.round(clampNumber((formData as any).stock ?? product?.stock, 0, 999999)),
@@ -673,7 +673,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
                       setFormData((prev) => ({ 
                         ...prev, 
                         category: nextCat, 
-                        categories: Array.from(new Set([...(prev.categories || []), nextCat])), // نضمن وجوده في الأقسام
+                        categories: Array.from(new Set([...(prev.categories || []), nextCat])),
                         subCategory: [] 
                       })); 
                     }}
@@ -808,14 +808,14 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
               </div>
             </div>
 
-            {/* 🚀 محرك الخيارات الديناميكية (Variants Engine) */}
+            {/* 🚀 محرك الخيارات الديناميكية المتقدم (Variants Engine Pro) */}
             <div className="bg-amber-50/40 p-6 rounded-3xl border border-amber-200/60 shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                    <Palette size={18} className="text-amber-500" /> الخيارات المتعددة (أحجام، ألوان...)
+                    <Palette size={18} className="text-amber-500" /> الخيارات (ألوان مدمجة، أحجام، صور مخصصة)
                   </h3>
-                  <p className="text-xs text-slate-500 mt-1">هل للمنتج أحجام أو ألوان مختلفة؟ أضفها هنا لتظهر للزبون.</p>
+                  <p className="text-xs text-slate-500 mt-1">يمكنك ترك حقل "اسم الخيار" فارغاً للألوان لتظهر الدائرة الملونة فقط.</p>
                 </div>
                 <Button 
                   type="button" 
@@ -827,84 +827,62 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
               </div>
 
               {currentVariants.length > 0 ? (
-                <div className="space-y-3">
-                  <div className="hidden md:grid grid-cols-12 gap-3 px-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">
-                    <div className="col-span-3">اسم الخيار (مثال: أحمر، 100 ورقة)</div>
-                    <div className="col-span-2">النوع</div>
-                    <div className="col-span-2">السعر (JOD)</div>
-                    <div className="col-span-2">السعر القديم</div>
-                    <div className="col-span-2">المخزون (الكمية)</div>
-                    <div className="col-span-1 text-center">حذف</div>
-                  </div>
-
+                <div className="space-y-4">
                   {currentVariants.map((variant, idx) => (
-                    <div key={variant.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 bg-white p-4 md:p-3 rounded-2xl border border-slate-200 items-center relative animate-in slide-in-from-top-2">
-                      <div className="col-span-3">
-                        <input 
-                          type="text" 
-                          value={variant.label} 
-                          onChange={(e) => updateVariant(idx, 'label', e.target.value)} 
-                          placeholder="مثال: أحمر، كبير، 500 جرام..."
-                          className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:border-amber-400 outline-none text-sm bg-slate-50 focus:bg-white"
-                        />
-                      </div>
-                      
-                      <div className="col-span-2">
-                        <select 
-                          value={variant.type} 
-                          onChange={(e) => updateVariant(idx, 'type', e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl border border-slate-200 outline-none text-xs bg-slate-50"
-                        >
-                          {VARIANT_TYPES.map(t => (
-                            <option key={t.value} value={t.value}>{isAR ? t.ar : t.en}</option>
-                          ))}
-                        </select>
+                    <div key={variant.id} className="bg-white p-4 rounded-2xl border border-slate-200 animate-in slide-in-from-top-2 relative shadow-sm hover:shadow-md transition-all">
+                      <button type="button" onClick={() => removeVariant(idx)} className="absolute top-4 right-4 p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors z-10">
+                        <Trash2 size={16} />
+                      </button>
+
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pr-10">
+                        {/* النوع والاسم */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-500">النوع</label>
+                          <select value={variant.type} onChange={(e) => updateVariant(idx, 'type', e.target.value)} className="w-full px-3 py-2 rounded-xl border border-slate-200 outline-none text-sm bg-slate-50">
+                            {VARIANT_TYPES.map(t => ( <option key={t.value} value={t.value}>{isAR ? t.ar : t.en}</option> ))}
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-500">اسم الخيار {variant.type === 'color' && '(اختياري)'}</label>
+                          <input type="text" value={variant.label} onChange={(e) => updateVariant(idx, 'label', e.target.value)} placeholder="مثال: كبير، 10 سم..." className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:border-amber-400 outline-none text-sm bg-slate-50 focus:bg-white" />
+                        </div>
+
+                        {/* السعر والمخزون */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-500">السعر الدقيق (JOD)</label>
+                          <input type="number" value={variant.price} onChange={(e) => updateVariant(idx, 'price', Number(e.target.value))} className="w-full px-3 py-2 rounded-xl border border-slate-200 outline-none text-sm font-bold bg-slate-50" />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-500">المخزون المتوفر</label>
+                          <input type="number" value={variant.stock} onChange={(e) => updateVariant(idx, 'stock', Number(e.target.value))} className="w-full px-3 py-2 rounded-xl border border-slate-200 outline-none text-sm font-bold bg-slate-50" />
+                        </div>
                       </div>
 
-                      <div className="col-span-2 relative">
-                        <DollarSign size={12} className="absolute left-2 top-3 text-slate-400" />
-                        <input 
-                          type="number" 
-                          value={variant.price} 
-                          onChange={(e) => updateVariant(idx, 'price', Number(e.target.value))} 
-                          className="w-full pl-6 pr-2 py-2 rounded-xl border border-slate-200 outline-none text-sm font-bold bg-slate-50"
-                        />
-                      </div>
+                      {/* 🚀 إعدادات الألوان (مدمجة) والصور */}
+                      {variant.type === 'color' && (
+                        <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="flex items-center gap-4 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                            <div>
+                              <p className="text-xs font-bold text-slate-600 mb-1.5">لون 1 (أساسي)</p>
+                              <input type="color" value={variant.colorCode || '#000000'} onChange={(e) => updateVariant(idx, 'colorCode', e.target.value)} className="w-10 h-10 rounded-lg cursor-pointer p-0 border-0" />
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold text-slate-600 mb-1.5">لون 2 (دمج / اختياري)</p>
+                              <div className="flex gap-2 items-center">
+                                <input type="color" value={variant.colorCode2 || '#ffffff'} onChange={(e) => updateVariant(idx, 'colorCode2', e.target.value)} className="w-10 h-10 rounded-lg cursor-pointer p-0 border-0" />
+                                {variant.colorCode2 && (
+                                  <button type="button" onClick={() => updateVariant(idx, 'colorCode2', undefined)} className="text-xs text-red-500 font-bold px-2 py-1 bg-red-50 rounded-md">إزالة</button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
 
-                      <div className="col-span-2 relative">
-                        <DollarSign size={12} className="absolute left-2 top-3 text-slate-300" />
-                        <input 
-                          type="number" 
-                          value={variant.originalPrice || ''} 
-                          onChange={(e) => updateVariant(idx, 'originalPrice', e.target.value === '' ? undefined : Number(e.target.value))} 
-                          placeholder="اختياري"
-                          className="w-full pl-6 pr-2 py-2 rounded-xl border border-slate-200 outline-none text-sm bg-slate-50 text-slate-400 line-through"
-                        />
-                      </div>
-
-                      <div className="col-span-2 relative flex items-center gap-2">
-                        <input 
-                          type="number" 
-                          value={variant.stock} 
-                          onChange={(e) => updateVariant(idx, 'stock', Number(e.target.value))} 
-                          className={`w-full px-3 py-2 rounded-xl border outline-none text-sm font-bold ${variant.stock <= 0 ? 'bg-red-50 border-red-200 text-red-600' : 'bg-slate-50 border-slate-200'}`}
-                        />
-                        {variant.type === 'color' && (
-                          <input 
-                            type="color" 
-                            value={variant.colorCode || '#000000'} 
-                            onChange={(e) => updateVariant(idx, 'colorCode', e.target.value)} 
-                            className="w-8 h-8 rounded-full border border-slate-200 cursor-pointer overflow-hidden p-0 shrink-0"
-                            title="اختر درجة اللون"
-                          />
-                        )}
-                      </div>
-
-                      <div className="col-span-1 flex justify-center mt-2 md:mt-0">
-                        <button type="button" onClick={() => removeVariant(idx)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors">
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
+                          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                            <p className="text-xs font-bold text-slate-600 mb-1.5">صورة مخصصة لهذا الخيار (اختياري)</p>
+                            <input type="text" value={variant.image || ''} onChange={(e) => updateVariant(idx, 'image', e.target.value)} placeholder="رابط الصورة التي ستظهر عند اختيار هذا اللون..." className="w-full px-3 py-2.5 rounded-lg border border-slate-200 outline-none text-xs bg-white" />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -956,6 +934,58 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
               />
 
               {imgError && <div className="mb-3 text-sm text-red-600">{imgError}</div>}
+
+              {/* 🚀 التحكم الاحترافي بموقع وحجم الصورة بالبطاقة (Zoom, X, Y) */}
+              {(formData.image || parsedUrls.length > 0) && (
+                <div className="mb-6 bg-white p-5 rounded-2xl border border-indigo-100 flex flex-col md:flex-row gap-6 items-center shadow-inner">
+                  <div className="flex-1 w-full space-y-5">
+                    <h4 className="text-sm font-black text-indigo-900 flex items-center gap-2">
+                      <Settings2 size={16} className="text-indigo-500"/> كيف تود أن تظهر الصورة في البطاقة؟
+                    </h4>
+                    
+                    <div className="space-y-4">
+                      <div>
+                        <div className="flex justify-between text-xs font-bold text-slate-600 mb-1">
+                          <span>التقريب (Zoom)</span>
+                          <span>{formData.imagePosition?.zoom || 1}x</span>
+                        </div>
+                        <input type="range" min="0.5" max="3" step="0.1" value={formData.imagePosition?.zoom || 1} onChange={(e) => setFormData(p => ({...p, imagePosition: {...(p.imagePosition || {x:50,y:50,zoom:1}), zoom: parseFloat(e.target.value)}}))} className="w-full accent-indigo-500 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer" />
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-xs font-bold text-slate-600 mb-1">
+                          <span>المحور الأفقي (يمين / يسار)</span>
+                          <span>{formData.imagePosition?.x || 50}%</span>
+                        </div>
+                        <input type="range" min="0" max="100" step="1" value={formData.imagePosition?.x || 50} onChange={(e) => setFormData(p => ({...p, imagePosition: {...(p.imagePosition || {x:50,y:50,zoom:1}), x: parseInt(e.target.value)}}))} className="w-full accent-indigo-500 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer" />
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-xs font-bold text-slate-600 mb-1">
+                          <span>المحور العمودي (أعلى / أسفل)</span>
+                          <span>{formData.imagePosition?.y || 50}%</span>
+                        </div>
+                        <input type="range" min="0" max="100" step="1" value={formData.imagePosition?.y || 50} onChange={(e) => setFormData(p => ({...p, imagePosition: {...(p.imagePosition || {x:50,y:50,zoom:1}), y: parseInt(e.target.value)}}))} className="w-full accent-indigo-500 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="w-40 h-40 shrink-0 rounded-2xl border-4 border-slate-100 overflow-hidden relative shadow-md bg-white">
+                    <div className="absolute inset-0 bg-grid-slate-100 [mask-image:linear-gradient(0deg,white,rgba(255,255,255,0.6))] -z-10" />
+                    <img 
+                      src={formData.image || parsedUrls[0]} 
+                      alt="Preview" 
+                      className="absolute inset-0 w-full h-full"
+                      style={{
+                        objectFit: 'cover',
+                        objectPosition: `${formData.imagePosition?.x || 50}% ${formData.imagePosition?.y || 50}%`,
+                        transform: `scale(${formData.imagePosition?.zoom || 1})`,
+                        transformOrigin: 'center'
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Thumbnails */}
               {parsedUrls.length > 0 && (

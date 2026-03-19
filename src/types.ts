@@ -31,6 +31,8 @@ export interface ProductVariant {
   originalPrice?: number;
   stock: number;
   colorCode?: string; // يستخدم فقط إذا كان النوع 'color'
+  colorCode2?: string; // 🚀 اللون المدمج (الثانوي)
+  image?: string; // 🚀 الصورة الخاصة بهذا الخيار (تتغير عند الضغط)
 }
 
 /** =========================================================
@@ -88,6 +90,12 @@ export interface Product {
   /** Images */
   image: string; // primary image
   images?: string[]; // optional gallery (up to 10)
+  
+  /** 🚀 للتحكم بشكل الصورة في بطاقة المنتج (احتواء أم تعبئة) */
+  imageFit?: 'contain' | 'cover'; 
+
+  /** 🚀 تحكم احترافي بشكل الصورة في الكارد (Zoom, X, Y) */
+  imagePosition?: { x: number; y: number; zoom: number }; 
 
   /** Content */
   description: string;

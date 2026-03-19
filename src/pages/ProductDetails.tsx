@@ -9,7 +9,6 @@ import {
 import Button from '../components/Button';
 import ProductCard from '../components/ProductCard';
 import { useCart } from '../App';
-// 🚀 التعديل 1: إضافة ProductVariant إلى قائمة الاستيرادات
 import { Product, ReviewDoc, AppUser, ProductVariant } from '../types';
 import SEO from '../components/SEO';
 import { ProductDetailSkeleton } from '../components/Skeleton';
@@ -118,7 +117,7 @@ const renderRichText = (raw: string) => {
   );
 };
 
-const StableProductImage = ({ src, alt, className = '' }: { src: string; alt: string; className?: string; }) => {
+const StableProductImage = ({ src, alt, className = '', style }: { src: string; alt: string; className?: string; style?: React.CSSProperties }) => {
   const [failed, setFailed] = useState(false);
   useEffect(() => { setFailed(false); }, [src]);
   if (!src || failed) {
@@ -136,7 +135,8 @@ const StableProductImage = ({ src, alt, className = '' }: { src: string; alt: st
       loading="eager"
       decoding="async"
       onError={() => setFailed(true)}
-      className={`w-full h-full object-contain p-4 bg-white ${className}`}
+      className={`w-full h-full object-contain bg-white ${className}`}
+      style={style}
     />
   );
 };
@@ -266,17 +266,15 @@ const ProductDetails: React.FC = () => {
   const tabsRef = useRef<HTMLDivElement | null>(null);
   const reviewFormRef = useRef<HTMLDivElement | null>(null);
 
-  // 🚀 التعديل 2: إدارة الخيار المحدد (اللون / الحجم)
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
 
-  // 🚀 التعديل 3: اختيار أول خيار تلقائياً عند تحميل المنتج
   useEffect(() => {
     if (product?.variants && product.variants.length > 0) {
       setSelectedVariant(product.variants[0]);
     } else {
       setSelectedVariant(null);
     }
-    setQty(1); // إعادة ضبط الكمية عند تغيير المنتج
+    setQty(1);
   }, [product]);
 
   const scrollToTabs = useCallback(() => {
@@ -301,7 +299,6 @@ const ProductDetails: React.FC = () => {
     }
   }, [location.search, scrollToTabs]);
 
-  // 🚀 التعديل 4: المخزون الديناميكي بناءً على الخيار المحدد
   const stock = useMemo(() => {
     if (selectedVariant) return Math.max(0, Number(selectedVariant.stock ?? 0));
     return Math.max(0, Number(product?.stock ?? 0));
@@ -309,10 +306,10 @@ const ProductDetails: React.FC = () => {
   
   const isInStock = stock > 0;
 
-  // 🚀 التعديل 5: السعر الديناميكي بناءً على الخيار المحدد
   const displayPrice = selectedVariant ? selectedVariant.price : (product?.price ?? 0);
   const displayOriginalPrice = selectedVariant ? selectedVariant.originalPrice : product?.originalPrice;
 
+  // 🚀 السحر يبدأ هنا: تغيير الصورة بذكاء حسب الخيار!
   const allImages = useMemo(() => normalizeImages(product), [product]);
   const heroPoster = allImages[0] || '';
 
@@ -325,11 +322,24 @@ const ProductDetails: React.FC = () => {
     return media;
   }, [allImages, (product as any)?.videoUrl]);
 
+  // تحديث الميديا الفعالة لتكون صورة الخيار (إذا وجدت) أو الصورة الأولى
   useEffect(() => {
+    if (selectedVariant && selectedVariant.image) {
+      setActiveMedia({ type: 'image', url: selectedVariant.image });
+      return;
+    }
     if (!allMedia.length) { setActiveMedia(null); return; }
     const firstImage = allMedia.find((m) => m.type === 'image');
     setActiveMedia(firstImage || allMedia[0]);
-  }, [product?.id, allMedia]);
+  }, [product?.id, allMedia, selectedVariant]);
+
+  // 🚀 إعدادات عرض الصورة
+  const imgFit = product?.imageFit === 'cover' ? 'object-cover' : 'object-contain';
+  const imgStyle = product?.imagePosition ? {
+    objectPosition: `${product.imagePosition.x}% ${product.imagePosition.y}%`,
+    transform: `scale(${product.imagePosition.zoom || 1})`,
+    transformOrigin: 'center'
+  } : {};
 
   const refreshReviews = useCallback(async () => {
     if (!id) return;
@@ -392,7 +402,6 @@ const ProductDetails: React.FC = () => {
       : [];
   }, [products, product]);
 
-  // 🚀 التعديل 6: تحديث دالة الإضافة للسلة لتمرر الخيار المحدد
   const addToCartWithQty = useCallback(
     (p: Product, q: number) => {
       const st = Math.max(0, Number(selectedVariant ? selectedVariant.stock : p?.stock ?? 0));
@@ -400,7 +409,6 @@ const ProductDetails: React.FC = () => {
       const safeQ = clampInt(q, 1, st);
       const fnAny = addToCart as any;
       if (typeof fnAny === 'function') {
-        // ندمج الخيار المختار مع كائن المنتج لكي يصل للسلة بنجاح
         fnAny({ ...p, selectedVariant }, safeQ);
         showToast(tt('addedToCart', 'تمت الإضافة للسلة', 'Added to cart'), 'success');
       }
@@ -584,12 +592,16 @@ const ProductDetails: React.FC = () => {
                   </div>
                 </div>
               )}
+              
               <div className="relative w-full order-1 ltr:lg:order-2 rtl:lg:order-1">
-                <div className="relative group rounded-3xl overflow-hidden bg-slate-100 aspect-square flex items-center justify-center border border-slate-100 shadow-inner">
+                <div className={`relative group rounded-3xl overflow-hidden bg-slate-100 aspect-square flex items-center justify-center border border-slate-100 shadow-inner ${product?.imageFit === 'contain' ? 'p-6' : ''}`}>
                   {activeMedia?.type === 'video' ? (
                     <NativeVideoPlayer src={activeMedia.url} poster={heroPoster} />
                   ) : activeMedia?.url ? (
-                    <StableProductImage src={activeMedia.url} alt={productTitle} />
+                    // 🚀 تطبيق الإعدادات الخاصة بالعرض
+                    <div className="w-full h-full relative overflow-hidden" style={imgStyle}>
+                      <StableProductImage src={activeMedia.url} alt={productTitle} className={`${imgFit} bg-transparent p-0 w-full h-full`} />
+                    </div>
                   ) : (
                     <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400 font-semibold">No media available</div>
                   )}
@@ -621,7 +633,7 @@ const ProductDetails: React.FC = () => {
               
               <div className="mt-8">
 
-                {/* 🚀 التعديل 7: واجهة أزرار الخيارات (الألوان / الأحجام) */}
+                {/* 🚀 السحر في الأزرار والخلايا والألوان المدمجة */}
                 {product.variants && product.variants.length > 0 && (
                   <div className="mb-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
                     <h3 className="text-sm font-bold text-slate-700 mb-3 uppercase tracking-wider">
@@ -632,6 +644,7 @@ const ProductDetails: React.FC = () => {
                         const isSelected = selectedVariant?.id === variant.id;
                         const isColor = variant.type === 'color';
                         const outOfStock = variant.stock <= 0;
+                        const hasName = variant.label && variant.label.trim() !== '';
 
                         return (
                           <button
@@ -639,21 +652,29 @@ const ProductDetails: React.FC = () => {
                             disabled={outOfStock}
                             onClick={() => { setSelectedVariant(variant); setQty(1); }}
                             className={`
-                              relative flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all overflow-hidden border-2
+                              relative flex items-center justify-center gap-2 rounded-xl font-bold text-sm transition-all overflow-hidden border-2
+                              ${!hasName && isColor ? 'p-1.5 rounded-full' : 'px-4 py-2.5'}
                               ${isSelected ? 'border-slate-900 bg-slate-900 text-white shadow-md scale-[1.02]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'}
                               ${outOfStock ? 'opacity-50 cursor-not-allowed border-slate-100 bg-slate-50' : 'cursor-pointer'}
                             `}
+                            title={outOfStock ? tr('غير متوفر', 'Out of stock') : variant.label}
                           >
-                            {/* دائرة اللون إذا كان نوع الخيار لوناً */}
+                            {/* 🚀 دائرة اللون، وإذا كانت مدمجة تظهر مقسومة نصفين! */}
                             {isColor && variant.colorCode && (
                               <span 
-                                className="w-5 h-5 rounded-full border border-black/10 shadow-inner" 
-                                style={{ backgroundColor: variant.colorCode }}
+                                className={`rounded-full border border-black/10 shadow-inner ${!hasName ? 'w-8 h-8' : 'w-5 h-5'}`} 
+                                style={{ 
+                                  background: variant.colorCode2 
+                                    ? `linear-gradient(135deg, ${variant.colorCode} 50%, ${variant.colorCode2} 50%)`
+                                    : variant.colorCode 
+                                }}
                               />
                             )}
-                            {variant.label}
                             
-                            {/* خط أحمر وتأثير في حال نفاد المخزون لهذا الخيار */}
+                            {/* إظهار الاسم فقط إذا كان موجوداً */}
+                            {hasName && <span>{variant.label}</span>}
+                            
+                            {/* خط أحمر في حال نفاد المخزون */}
                             {outOfStock && (
                               <span className="absolute inset-0 flex items-center justify-center bg-white/40">
                                 <span className="w-full h-px bg-red-400 absolute rotate-12" />
@@ -667,7 +688,7 @@ const ProductDetails: React.FC = () => {
                 )}
 
                 <div className="flex items-baseline gap-4 mb-6">
-                  {/* عرض السعر الديناميكي */}
+                  {/* السعر */}
                   <span className="text-4xl font-black text-slate-900">{formatMoneyJOD(displayPrice)}</span>
                   {displayOriginalPrice && <span className="text-lg font-bold text-slate-400 line-through">{formatMoneyJOD(displayOriginalPrice)}</span>}
                 </div>

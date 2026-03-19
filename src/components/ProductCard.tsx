@@ -1,7 +1,7 @@
 // src/components/ProductCard.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as ReactRouterDOM from 'react-router-dom';
-import { Star, ShoppingCart, Heart, Eye, Minus, Plus, PlaySquare } from 'lucide-react';
+import { Star, ShoppingCart, Heart, Eye, Minus, Plus, PlaySquare, Palette } from 'lucide-react';
 import { Product } from '../types';
 import { useCart } from '../App';
 import LazyImage from './LazyImage';
@@ -155,9 +155,20 @@ const ProductCard: React.FC<ProductCardProps> = ({
     navigate(`${productLink}?tab=reviews`);
   }, [navigate, productLink]);
 
+  // 🚀 منع الإضافة المباشرة إذا كان المنتج له خيارات متعددة لتوجيه الزبون لصفحة المنتج
+  const hasVariants = product.variants && product.variants.length > 0;
+
   const onClickCart = useCallback((e: React.MouseEvent) => {
     e.preventDefault(); e.stopPropagation();
+    
     if (!isInStock) return;
+
+    if (hasVariants) {
+      // توجيه لصفحة المنتج لاختيار اللون/الحجم
+      navigate(productLink);
+      return;
+    }
+
     const safeQty = clampInt(qty, 1, stock);
     const fnAny = onAddToCart as any;
     if (typeof fnAny === 'function') {
@@ -169,9 +180,17 @@ const ProductCard: React.FC<ProductCardProps> = ({
       } catch {}
     }
     for (let i = 0; i < safeQty; i++) (onAddToCart as (p: Product) => void)(product);
-  }, [isInStock, onAddToCart, product, qty, stock]);
+  }, [isInStock, onAddToCart, product, qty, stock, hasVariants, navigate, productLink]);
 
   const mainCloudinarySize = priority ? 600 : 460;
+
+  // 🚀 قراءة إعدادات الصورة
+  const imgFit = product.imageFit === 'cover' ? 'object-cover' : 'object-contain';
+  const imgStyle = product.imagePosition ? {
+    objectPosition: `${product.imagePosition.x}% ${product.imagePosition.y}%`,
+    transform: `scale(${product.imagePosition.zoom || 1})`,
+    transformOrigin: 'center'
+  } : {};
 
   return (
     <div
@@ -200,7 +219,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
           </div>
         )}
         
-        {/* 🎥 شارة الفيديو (Enterprise Feature) */}
+        {/* 🎥 شارة الفيديو */}
         {product.videoUrl && (
           <div className="flex items-center justify-center gap-1.5 bg-sky-50 border border-sky-100 text-sky-600 text-[9px] font-black uppercase px-2 py-1.5 rounded-full shadow-md backdrop-blur-sm animate-in fade-in zoom-in">
             <PlaySquare size={12} className="fill-current" />
@@ -234,19 +253,21 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
       {/* 📸 صورة المنتج */}
       <Link to={productLink} className="block relative bg-slate-50/50" aria-label={productTitle}>
-        <div className="relative w-full aspect-square overflow-hidden p-6">
+        <div className={`relative w-full aspect-square overflow-hidden ${product.imageFit === 'cover' ? '' : 'p-6'}`}>
           {image1 ? (
-            <LazyImage
-              src={image1}
-              alt={productTitle}
-              containerClassName="w-full h-full"
-              className="w-full h-full object-contain mix-blend-multiply transition-transform duration-700 ease-out group-hover:scale-110 pointer-events-none"
-              loading={priority ? 'eager' : 'lazy'}
-              fetchPriority={priority ? 'high' : 'auto'}
-              cloudinarySize={mainCloudinarySize}
-              expectedDisplayWidth={280}
-              aspectRatioHint="1 / 1"
-            />
+            <div className="w-full h-full relative" style={imgStyle}>
+              <LazyImage
+                src={image1}
+                alt={productTitle}
+                containerClassName="w-full h-full"
+                className={`w-full h-full mix-blend-multiply transition-transform duration-700 ease-out group-hover:scale-[1.05] pointer-events-none ${imgFit}`}
+                loading={priority ? 'eager' : 'lazy'}
+                fetchPriority={priority ? 'high' : 'auto'}
+                cloudinarySize={mainCloudinarySize}
+                expectedDisplayWidth={280}
+                aspectRatioHint="1 / 1"
+              />
+            </div>
           ) : (
             <div className="w-full h-full flex items-center justify-center text-slate-300 text-sm font-bold">
               {L('لا توجد صورة', 'No Image')}
@@ -255,18 +276,20 @@ const ProductCard: React.FC<ProductCardProps> = ({
           
           {/* صورة التمرير (Hover Image) */}
           {image2 && (
-            <div className="absolute inset-0 p-6 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-white">
-              <LazyImage
-                src={image2}
-                alt={productTitle}
-                containerClassName="w-full h-full"
-                className="w-full h-full object-contain mix-blend-multiply transition-transform duration-700 ease-out group-hover:scale-110 pointer-events-none"
-                loading="lazy"
-                fetchPriority="low"
-                cloudinarySize={460}
-                expectedDisplayWidth={280}
-                aspectRatioHint="1 / 1"
-              />
+            <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-white ${product.imageFit === 'cover' ? '' : 'p-6'}`}>
+              <div className="w-full h-full relative" style={imgStyle}>
+                <LazyImage
+                  src={image2}
+                  alt={productTitle}
+                  containerClassName="w-full h-full"
+                  className={`w-full h-full mix-blend-multiply transition-transform duration-700 ease-out group-hover:scale-[1.05] pointer-events-none ${imgFit}`}
+                  loading="lazy"
+                  fetchPriority="low"
+                  cloudinarySize={460}
+                  expectedDisplayWidth={280}
+                  aspectRatioHint="1 / 1"
+                />
+              </div>
             </div>
           )}
         </div>
@@ -298,6 +321,16 @@ const ProductCard: React.FC<ProductCardProps> = ({
           <h3 className="font-black text-slate-900 line-clamp-2 text-sm sm:text-base leading-snug">{productTitle}</h3>
         </Link>
 
+        {/* 🚀 مؤشر وجود خيارات (ألوان/أحجام) */}
+        {hasVariants && (
+          <div className="mb-2.5 flex items-center gap-1.5">
+            <Palette size={14} className="text-amber-500" />
+            <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100">
+              {L('متوفر بخيارات متعددة', 'Available in options')}
+            </span>
+          </div>
+        )}
+
         {/* 🔢 أزرار اختيار الكمية والمخزون */}
         <div className="mb-4 mt-auto flex flex-col gap-1.5">
           <div className="text-[10px] font-bold text-slate-400">
@@ -308,39 +341,42 @@ const ProductCard: React.FC<ProductCardProps> = ({
             )}
           </div>
           
-          <div className="flex items-center gap-2">
-            <div className="flex items-center bg-slate-50 border border-slate-100 rounded-xl p-1">
-              <button
-                type="button"
-                onClick={decQty}
-                disabled={!isInStock || qty <= 1}
-                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-all disabled:opacity-30 disabled:hover:bg-transparent shadow-sm"
-                aria-label={L('تقليل الكمية', 'Decrease quantity')}
-              >
-                <Minus size={14} strokeWidth={3} />
-              </button>
+          {/* إخفاء اختيار الكمية إذا كان فيه خيارات (نوجهه لصفحة المنتج ليختار) */}
+          {!hasVariants && (
+            <div className="flex items-center gap-2">
+              <div className="flex items-center bg-slate-50 border border-slate-100 rounded-xl p-1">
+                <button
+                  type="button"
+                  onClick={decQty}
+                  disabled={!isInStock || qty <= 1}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-all disabled:opacity-30 disabled:hover:bg-transparent shadow-sm"
+                  aria-label={L('تقليل الكمية', 'Decrease quantity')}
+                >
+                  <Minus size={14} strokeWidth={3} />
+                </button>
 
-              <input
-                value={String(qty)}
-                onChange={onChangeQty}
-                inputMode="numeric"
-                pattern="[0-9]*"
-                disabled={!isInStock}
-                className="w-8 sm:w-10 text-center bg-transparent text-sm font-black tabular-nums focus:outline-none disabled:opacity-50 text-slate-800"
-                aria-label={L('الكمية', 'Quantity')}
-              />
+                <input
+                  value={String(qty)}
+                  onChange={onChangeQty}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  disabled={!isInStock}
+                  className="w-8 sm:w-10 text-center bg-transparent text-sm font-black tabular-nums focus:outline-none disabled:opacity-50 text-slate-800"
+                  aria-label={L('الكمية', 'Quantity')}
+                />
 
-              <button
-                type="button"
-                onClick={incQty}
-                disabled={!isInStock || qty >= stock}
-                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-all disabled:opacity-30 disabled:hover:bg-transparent shadow-sm"
-                aria-label={L('زيادة الكمية', 'Increase quantity')}
-              >
-                <Plus size={14} strokeWidth={3} />
-              </button>
+                <button
+                  type="button"
+                  onClick={incQty}
+                  disabled={!isInStock || qty >= stock}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-all disabled:opacity-30 disabled:hover:bg-transparent shadow-sm"
+                  aria-label={L('زيادة الكمية', 'Increase quantity')}
+                >
+                  <Plus size={14} strokeWidth={3} />
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* 💰 قسم السعر وزر الإضافة للسلة */}
@@ -360,14 +396,18 @@ const ProductCard: React.FC<ProductCardProps> = ({
           <button
             onClick={onClickCart}
             disabled={!isInStock}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-sky-400 hover:bg-sky-500 text-white text-sm font-extrabold shadow-lg shadow-sky-400/30 transition-all duration-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none group/btn"
-            aria-label={isInStock ? L('أضف للسلة', 'Add to cart') : L('غير متوفر', 'Out of stock')}
+            className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-extrabold transition-all duration-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none group/btn ${hasVariants ? 'bg-amber-400 hover:bg-amber-500 text-slate-900 shadow-lg shadow-amber-400/30' : 'bg-sky-400 hover:bg-sky-500 text-white shadow-lg shadow-sky-400/30'}`}
+            aria-label={isInStock ? (hasVariants ? L('اختر', 'Select') : L('أضف للسلة', 'Add to cart')) : L('غير متوفر', 'Out of stock')}
             type="button"
           >
-            <ShoppingCart size={18} strokeWidth={2.5} className="group-hover/btn:scale-110 transition-transform" />
-            <span className="hidden sm:inline-block">
-              {L('أضف', 'Add')}
-            </span>
+            {hasVariants ? (
+              <span className="inline-block px-2">{L('تحديد خيار', 'Select Option')}</span>
+            ) : (
+              <>
+                <ShoppingCart size={18} strokeWidth={2.5} className="group-hover/btn:scale-110 transition-transform" />
+                <span className="hidden sm:inline-block">{L('أضف', 'Add')}</span>
+              </>
+            )}
           </button>
         </div>
       </div>
