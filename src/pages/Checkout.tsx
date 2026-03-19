@@ -434,14 +434,23 @@ const Checkout: React.FC = () => {
         createdAt: nowIso,
         createdAtMs: now.getTime(),
         updatedAt: nowIso,
-        items: validatedCart.map((item: any) => ({
-          productId: item.id,
-          name: item.name,
-          price: Number(item.price || 0),
-          quantity: clampQty(item.quantity),
-          image: item.image,
-          selectedVariant: item.selectedVariant || null, // 🚀 هنا سحر وصول الألوان للأدمن
-        })),
+        
+        // 🚀 سحر البوت: ندمج اسم اللون مع اسم المنتج مباشرة!
+        items: validatedCart.map((item: any) => {
+          const variantSuffix = item.selectedVariant?.label && item.selectedVariant.label !== '.' 
+            ? ` - ${item.selectedVariant.label}` 
+            : '';
+            
+          return {
+            productId: item.id,
+            name: `${item.name}${variantSuffix}`, // سيصبح مثلاً: بسكليت - أزرق
+            price: Number(item.price || 0),
+            quantity: clampQty(item.quantity),
+            image: item.image,
+            selectedVariant: item.selectedVariant || null,
+          };
+        }),
+        
         subtotal,
         discountAmount,
         shippingCost,
@@ -961,7 +970,7 @@ const Checkout: React.FC = () => {
                     <div key={`${item.id}-${idx}`} className="flex gap-4 group">
                       <div className="relative">
                         <LazyImage
-                          src={variant?.image || item.image} // 🚀 صورة الخيار المختار
+                          src={variant?.image || item.image}
                           alt={item.name}
                           className="w-16 h-16 rounded-2xl object-cover border border-slate-100 group-hover:border-sky-200 transition-colors"
                           containerClassName="w-16 h-16 shrink-0"
@@ -974,12 +983,11 @@ const Checkout: React.FC = () => {
                         <p className="text-sm font-black text-slate-800 line-clamp-1 leading-snug group-hover:text-sky-600 transition-colors">
                           {getProductTitle(item)}
                         </p>
-                        {/* 🚀 إظهار الخيار للزبون في فاتورة الدفع مع اللون المدمج */}
                         {variant && (
                           <div className="mt-1 flex items-center gap-1.5 w-fit">
                             {variant.type === 'color' && variant.colorCode && (
                               <span 
-                                className="w-3 h-3 rounded-full border border-black/10 shadow-inner block shrink-0" 
+                                className="w-2.5 h-2.5 rounded-full border border-black/10 shadow-inner block shrink-0" 
                                 style={{ 
                                   background: variant.colorCode2 
                                     ? `linear-gradient(135deg, ${variant.colorCode} 50%, ${variant.colorCode2} 50%)`
