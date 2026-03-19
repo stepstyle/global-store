@@ -77,7 +77,7 @@ const JO_GOVS = REGIONS.flatMap(r => r.govs);
 
 // 🚀 قائمة مناطق عمان الذكية (مضاف إليها خيار المنطقة الأخرى للحماية)
 const AMMAN_AREAS = [
-  { id: 'a1', nameAr: 'النزهة / طبربور / طارق/ ضاحية الامير حسنن', nameEn: 'Nuzha / Tabarbour / Tariq', price: 1.0, isOutskirt: false },
+  { id: 'a1', nameAr: 'النزهة / طبربور / طارق / ضاحية الأمير حسن', nameEn: 'Nuzha / Tabarbour / Tariq / Dahiyet Al Amir Hassan', price: 1.0, isOutskirt: false },
   { id: 'a2', nameAr: 'جبل الحسين / اللويبدة / العبدلي', nameEn: 'Jabal Hussein / Lweibdeh / Abdali', price: 1.0, isOutskirt: false },
   { id: 'a3', nameAr: 'الهاشمي الشمالي والجنوبي / ماركا', nameEn: 'Hashimi / Marka', price: 1.0, isOutskirt: false },
   { id: 'a4', nameAr: 'ضاحية الأقصى / الاستقلال', nameEn: 'Dahiyet Al Aqsa / Istiqlal', price: 1.0, isOutskirt: false },
@@ -350,8 +350,6 @@ const Checkout: React.FC = () => {
     } else if (formData.citySlug === 'amman' && !safeTrim(formData.ammanAreaId)) {
       nextErr.ammanAreaId = tt('areaRequired', 'يرجى تحديد منطقتك السكنية', 'Please select your residential area.');
     }
-
-    // 🚀 تمت إزالة الفحص الإجباري لحقل (العنوان التفصيلي) بناءً على طلبك
 
     if (!isValidJordanPhone(formData.phoneLocal)) {
       nextErr.phoneLocal = tt('phoneInvalid', 'يرجى إدخال رقم أردني صحيح (يبدأ بـ 079, 078, 077)', 'Please enter a valid Jordanian number (079, 078, 077).');
@@ -963,7 +961,7 @@ const Checkout: React.FC = () => {
                     <div key={`${item.id}-${idx}`} className="flex gap-4 group">
                       <div className="relative">
                         <LazyImage
-                          src={item.image}
+                          src={variant?.image || item.image} // 🚀 صورة الخيار المختار
                           alt={item.name}
                           className="w-16 h-16 rounded-2xl object-cover border border-slate-100 group-hover:border-sky-200 transition-colors"
                           containerClassName="w-16 h-16 shrink-0"
@@ -976,13 +974,17 @@ const Checkout: React.FC = () => {
                         <p className="text-sm font-black text-slate-800 line-clamp-1 leading-snug group-hover:text-sky-600 transition-colors">
                           {getProductTitle(item)}
                         </p>
-                        {/* 🚀 إظهار الخيار للزبون في فاتورة الدفع */}
+                        {/* 🚀 إظهار الخيار للزبون في فاتورة الدفع مع اللون المدمج */}
                         {variant && (
                           <div className="mt-1 flex items-center gap-1.5 w-fit">
                             {variant.type === 'color' && variant.colorCode && (
                               <span 
-                                className="w-2.5 h-2.5 rounded-full border border-black/10 shadow-inner block shrink-0" 
-                                style={{ backgroundColor: variant.colorCode }}
+                                className="w-3 h-3 rounded-full border border-black/10 shadow-inner block shrink-0" 
+                                style={{ 
+                                  background: variant.colorCode2 
+                                    ? `linear-gradient(135deg, ${variant.colorCode} 50%, ${variant.colorCode2} 50%)`
+                                    : variant.colorCode 
+                                }}
                               />
                             )}
                             {variant.label && variant.label.trim() !== '.' && (

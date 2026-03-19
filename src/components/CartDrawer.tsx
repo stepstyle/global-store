@@ -46,6 +46,9 @@ const CartRow = memo(function CartRow({ item, title, tt, formatMoney, onRemove, 
   const variant = (item as any).selectedVariant;
   const cartItemId = getCartItemId(item);
 
+  // 🚀 الصورة الديناميكية (تأخذ صورة الخيار إذا وجدت)
+  const displayImage = variant?.image || (item as any).image;
+
   return (
     <div className="relative group bg-white border border-slate-100 rounded-2xl p-3 flex gap-4 transition-all hover:shadow-md">
       {/* Confirm Overlay */}
@@ -57,7 +60,7 @@ const CartRow = memo(function CartRow({ item, title, tt, formatMoney, onRemove, 
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                onRemove(cartItemId); // 🚀 استخدام المعرف الذكي
+                onRemove(cartItemId);
                 setConfirm(false);
               }}
               className="bg-red-500 hover:bg-red-600 px-4 py-1.5 rounded-xl text-xs font-bold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
@@ -79,11 +82,11 @@ const CartRow = memo(function CartRow({ item, title, tt, formatMoney, onRemove, 
       )}
 
       {/* Image */}
-      <div className="w-20 h-20 bg-slate-50 rounded-2xl overflow-hidden shrink-0">
+      <div className="w-20 h-20 bg-slate-50 rounded-2xl overflow-hidden shrink-0 border border-slate-100">
         <LazyImage
-          src={(item as any).image}
+          src={displayImage}
           alt={title}
-          className="w-full h-full object-cover"
+          className="w-full h-full object-cover mix-blend-multiply"
           containerClassName="w-full h-full"
           loading="lazy"
           eager={false}
@@ -95,13 +98,17 @@ const CartRow = memo(function CartRow({ item, title, tt, formatMoney, onRemove, 
         <div>
           <h3 className="font-bold text-slate-800 text-sm line-clamp-1">{title}</h3>
           
-          {/* 🚀 عرض الخيار المختار بشكل أنيق للزبون */}
+          {/* 🚀 عرض الخيار المختار بشكل أنيق ومدمج للزبون */}
           {variant && (
             <div className="mt-1 flex items-center gap-1.5 bg-slate-50 border border-slate-100 rounded-lg px-2 py-0.5 w-fit">
               {variant.type === 'color' && variant.colorCode && (
                 <span 
-                  className="w-2.5 h-2.5 rounded-full border border-black/10 shadow-inner block shrink-0" 
-                  style={{ backgroundColor: variant.colorCode }}
+                  className="w-3 h-3 rounded-full border border-black/10 shadow-inner block shrink-0" 
+                  style={{ 
+                    background: variant.colorCode2 
+                      ? `linear-gradient(135deg, ${variant.colorCode} 50%, ${variant.colorCode2} 50%)`
+                      : variant.colorCode 
+                  }}
                 />
               )}
               {variant.label && variant.label.trim() !== '.' && (
@@ -126,7 +133,7 @@ const CartRow = memo(function CartRow({ item, title, tt, formatMoney, onRemove, 
             <div className="inline-flex items-center gap-1 bg-slate-50 rounded-xl border border-slate-200 p-0.5 shadow-inner">
               <button
                 type="button"
-                onClick={() => onSetQty(cartItemId, qty - 1)} // 🚀 استخدام المعرف الذكي
+                onClick={() => onSetQty(cartItemId, qty - 1)}
                 disabled={qty <= 1}
                 className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-white hover:shadow-sm transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:shadow-none text-slate-600"
                 aria-label={tt('decreaseQty', 'تقليل الكمية', 'Decrease quantity')}
@@ -140,8 +147,8 @@ const CartRow = memo(function CartRow({ item, title, tt, formatMoney, onRemove, 
 
               <button
                 type="button"
-                onClick={() => onSetQty(cartItemId, qty + 1)} // 🚀 استخدام المعرف الذكي
-                disabled={(variant && qty >= variant.stock) || (!variant && qty >= item.stock)} // 🚀 منع الزيادة إذا انتهى المخزون
+                onClick={() => onSetQty(cartItemId, qty + 1)}
+                disabled={(variant && qty >= variant.stock) || (!variant && qty >= item.stock)}
                 className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-white hover:shadow-sm transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:shadow-none text-slate-600"
                 aria-label={tt('increaseQty', 'زيادة الكمية', 'Increase quantity')}
               >
@@ -363,7 +370,7 @@ const CartDrawer: React.FC = () => {
             <>
               {safeCart.map((item, index) => (
                 <CartRow
-                  key={`${item.id}-${index}`}
+                  key={`${getCartItemId(item)}-${index}`}
                   item={item}
                   title={getProductTitle(item)}
                   t={t}

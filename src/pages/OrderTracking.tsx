@@ -17,6 +17,7 @@ import { Order } from '../types';
 import { useCart } from '../App';
 import { db } from '../services/storage';
 import SEO from '../components/SEO';
+import LazyImage from '../components/LazyImage'; // 🚀 استيراد مكون الصور
 
 const { useLocation, useNavigate } = ReactRouterDOM as any;
 
@@ -323,16 +324,49 @@ const OrderTracking: React.FC = () => {
               <div className="space-y-4">
                 {(order as any).items.map((item: any, i: number) => {
                   const title = typeof getProductTitle === 'function' ? getProductTitle(item) || item.name : item.name;
+                  const variant = item.selectedVariant;
 
                   return (
-                    <div key={i} className="flex justify-between items-center text-sm text-slate-700 gap-4 group">
+                    <div key={i} className="flex justify-between items-center text-sm text-slate-700 gap-4 group bg-slate-50 border border-slate-100 p-3 rounded-2xl">
                       <div className="flex items-center gap-3 min-w-0">
-                        <span className="font-extrabold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg text-xs" dir="ltr">
-                          x{item.quantity}
-                        </span>
-                        <span className="font-bold line-clamp-1 group-hover:text-sky-600 transition-colors">{title}</span>
+                        {/* 🚀 إضافة الصورة هنا للمنتج */}
+                        <LazyImage
+                          src={safeText(variant?.image || item?.image)}
+                          alt={title}
+                          className="w-14 h-14 rounded-xl object-cover bg-white border border-slate-200"
+                          containerClassName="w-14 h-14 rounded-xl shrink-0"
+                        />
+
+                        <div className="flex flex-col">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-extrabold text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-md text-[10px]" dir="ltr">
+                              x{item.quantity}
+                            </span>
+                            <span className="font-bold line-clamp-1 group-hover:text-sky-600 transition-colors">{title}</span>
+                          </div>
+                          
+                          {/* 🚀 إظهار الخيار المختار للزبون مع اللون */}
+                          {variant && (
+                            <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-md px-2 py-0.5 w-fit shadow-sm">
+                              {variant.type === 'color' && variant.colorCode && (
+                                <span
+                                  className="w-3 h-3 rounded-full border border-black/10 shadow-inner block shrink-0"
+                                  style={{
+                                    background: variant.colorCode2
+                                      ? `linear-gradient(135deg, ${variant.colorCode} 50%, ${variant.colorCode2} 50%)`
+                                      : variant.colorCode
+                                  }}
+                                />
+                              )}
+                              <span className="text-[10px] font-bold text-slate-600">
+                                {variant.label || (variant.type === 'color' ? 'لون مخصص' : '')}
+                              </span>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <span className="font-black text-slate-900 whitespace-nowrap bg-slate-50 px-2 py-1 rounded-lg" dir="ltr">
+                      
+                      <span className="font-black text-slate-900 whitespace-nowrap bg-white border border-slate-100 px-2 py-1 rounded-lg" dir="ltr">
                         {formatMoney(item.price * item.quantity)}
                       </span>
                     </div>
