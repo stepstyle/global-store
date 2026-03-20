@@ -496,6 +496,26 @@ const AdminDashboard: React.FC = () => {
     });
 
     showToast(`${t('updated') ?? 'Updated'}: ${id} → ${newStatus}`, 'success');
+
+    // 🚀 [بداية التعديل الاحترافي]: إرسال إيميل تنبيه للعميل بالخفاء
+    try {
+      const orderToNotify: any = orders.find((o: any) => o.id === id);
+      if (orderToNotify && orderToNotify.customerEmail) {
+        await fetch('/api/notify-customer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: orderToNotify.customerEmail,
+            name: orderToNotify.address?.fullName || 'عميلنا العزيز',
+            orderId: id,
+            status: newStatus
+          })
+        });
+      }
+    } catch (err) {
+      console.error('Email notification failed:', err);
+    }
+    // 🚀 [نهاية التعديل]
   };
 
   const generateSitemap = () => {

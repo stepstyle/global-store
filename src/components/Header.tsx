@@ -354,7 +354,7 @@ const Header: React.FC = () => {
     () => [
       { id: 'ship', icon: '🚚', ar: 'توصيل سريع خلال 24-48 ساعة', en: 'Fast delivery within 24–48 hours', to: '/tracking' },
       { id: 'deals', icon: '🎁', ar: 'عروض أسبوعية حصرية — اضغط للمشاهدة', en: 'Exclusive weekly deals — tap to view', to: '/shop?category=Offers' },
-      { id: 'support', icon: '📞', ar: 'الدعم: 06-0000000', en: 'Support: +962 6 000 0000', to: '/contact' },
+      { id: 'support', icon: '📞', ar:  'الدعم: - 0796047637 ', en: 'Support: +962 6 000 0000', to: '/contact' },
     ],
     []
   );
