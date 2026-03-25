@@ -1,5 +1,5 @@
 // src/pages/AdminDashboard.tsx
-import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
 import { getFirestoreDb, firebaseReady as fbReady } from '../services/firebase';
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import Papa from 'papaparse';
@@ -26,6 +26,7 @@ import {
   ImageIcon,
   CreditCard,
   Play,
+  Loader2, // إضافة أيقونة التحميل
 } from 'lucide-react';
 
 import { useCart } from '../App';
@@ -201,6 +202,7 @@ const AdminDashboard: React.FC = () => {
   
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingOrderId, setProcessingOrderId] = useState<string | null>(null); // للتحكم بمنع الأخطاء أثناء الضغط
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [stats, setStats] = useState({ sales: 0, orders: 0, users: 0, avg: 0 });
@@ -419,43 +421,13 @@ const AdminDashboard: React.FC = () => {
   };
 
   const handleEditClick = (product: Product) => {
-    const normalized = normalizeProductForSave(product);
-    setEditingProduct(normalized);
-    setIsEditModalOpen(true);
-  };
+  const normalized = normalizeProductForSave(product);
+  navigate('/admin/product/edit', { state: { product: normalized } });
+};
 
   const handleAddNewProduct = () => {
-    const now = Date.now();
-
-    const newProduct: Product = {
-      id: `p-${now}-${Math.floor(Math.random() * 1000)}`,
-      name: '',
-      nameEn: '',
-      price: 0,
-      originalPrice: undefined,
-      category: 'Stationery' as Category,
-      subCategory: undefined,
-      subcategory: undefined,
-      stock: 0,
-      description: '',
-      details: undefined,
-      brand: undefined,
-      videoUrl: '',
-      isNew: true,
-      image: '',
-      images: [],
-      rating: 0,
-      reviews: 0,
-      ratingAvg: 0,
-      ratingCount: 0,
-      imagePosition: { x: 50, y: 50, zoom: 1 },
-      imageFit: 'contain',
-    };
-
-    setEditingProduct(newProduct);
-    setIsEditModalOpen(true);
-  };
-
+  navigate('/admin/product/new');
+};
   const handleSaveProduct = async (updatedProduct: Product) => {
     try {
       const safeProduct = normalizeProductForSave(updatedProduct);
@@ -477,31 +449,37 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
+  // 🚀 [تعديل 1]: تحسين تحديث حالة الطلب ليكون احترافي ومحمي من التعليق
   const handleUpdateOrderStatus = async (id: string, newStatus: any) => {
-    const updated = await db.orders.updateStatus(id, newStatus);
-    setOrders(updated);
+    const actionNames: any = { processing: 'قبول الطلب', shipped: 'شحن الطلب', delivered: 'تسليم الطلب', cancelled: 'إلغاء الطلب' };
+    
+    // تأكيد قبل العملية لتجنب الخطأ
+    if (!window.confirm(`هل أنت متأكد من ${actionNames[newStatus] || newStatus}؟`)) return;
 
-    setOrderDetailsModal((prev) => {
-      if (!prev.order || (prev.order as any).id !== id) return prev;
-
-      return {
-        ...prev,
-        order: {
-          ...(prev.order as any),
-          status: newStatus,
-          updatedAt: new Date().toISOString(),
-          seenByAdmin: true,
-        },
-      };
-    });
-
-    showToast(`${t('updated') ?? 'Updated'}: ${id} → ${newStatus}`, 'success');
-
-    // 🚀 [بداية التعديل الاحترافي]: إرسال إيميل تنبيه للعميل بالخفاء
+    setProcessingOrderId(id); // تشغيل التحميل
     try {
+      await db.orders.updateStatus(id, newStatus);
+      
+      // تحديث النافذة المنبثقة إذا كانت مفتوحة
+      setOrderDetailsModal((prev) => {
+        if (!prev.order || (prev.order as any).id !== id) return prev;
+        return {
+          ...prev,
+          order: {
+            ...(prev.order as any),
+            status: newStatus,
+            updatedAt: new Date().toISOString(),
+            seenByAdmin: true,
+          },
+        };
+      });
+
+      showToast(`تم ${actionNames[newStatus] || newStatus} بنجاح!`, 'success');
+
+      // إرسال إيميل التنبيه بالخفاء بدون انتظار (عشان ما يعلّق الموقع أبدًا)
       const orderToNotify: any = orders.find((o: any) => o.id === id);
       if (orderToNotify && orderToNotify.customerEmail) {
-        await fetch('/api/notify-customer', {
+        fetch('/api/notify-customer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -510,12 +488,41 @@ const AdminDashboard: React.FC = () => {
             orderId: id,
             status: newStatus
           })
-        });
+        }).catch(err => console.error('Silent email error:', err));
       }
-    } catch (err) {
-      console.error('Email notification failed:', err);
+    } catch (e: any) {
+      console.error(e);
+      showToast('حدث خطأ أثناء تحديث حالة الطلب.', 'error');
+    } finally {
+      setProcessingOrderId(null); // إيقاف التحميل
     }
-    // 🚀 [نهاية التعديل]
+  };
+
+  // 🚀 [تعديل 2]: إضافة دالة حذف الطلب الاحترافية والآمنة
+  const handleDeleteOrder = async (id: string) => {
+    if (!window.confirm('⚠️ تحذير خطير: هل أنت متأكد من حذف هذا الطلب نهائياً؟\n\nلا يمكن التراجع عن هذه الخطوة!')) return;
+
+    setProcessingOrderId(id); // تشغيل التحميل
+    try {
+      if (db.orders && typeof (db.orders as any).delete === 'function') {
+        await (db.orders as any).delete(id);
+      } else {
+        const firestoreDb = getFirestoreDb();
+        await deleteDoc(doc(firestoreDb, 'orders', id));
+      }
+
+      setOrders(prev => prev.filter(o => o.id !== id));
+      showToast('تم حذف الطلب نهائياً', 'success');
+      
+      if (orderDetailsModal.order?.id === id) {
+        closeOrderDetails();
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToast('حدث خطأ أثناء حذف الطلب. تأكد من اتصال الإنترنت.', 'error');
+    } finally {
+      setProcessingOrderId(null); // إيقاف التحميل
+    }
   };
 
   const generateSitemap = () => {
@@ -1084,7 +1091,7 @@ const AdminDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* ORDERS */}
+        {/* ORDERS (🚀 التعديل الاحترافي هنا) */}
         {activeTab === 'orders' && (
           <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 animate-in fade-in">
             <h3 className="font-bold text-lg mb-6 flex items-center gap-3">
@@ -1106,7 +1113,7 @@ const AdminDashboard: React.FC = () => {
                     <th className="px-4 py-3">{t('payment')}</th>
                     <th className="px-4 py-3">ملاحظة</th>
                     <th className="px-4 py-3">{t('total')}</th>
-                    <th className="px-4 py-3">{t('actions')}</th>
+                    <th className="px-4 py-3 text-center">{t('actions')}</th>
                   </tr>
                 </thead>
 
@@ -1117,9 +1124,10 @@ const AdminDashboard: React.FC = () => {
                     const cliqRef = safeText(order.paymentDetails?.cliqReference);
                     const receipt = safeText(order.paymentDetails?.receiptImage);
                     const st = safeText(order.status).toLowerCase();
+                    const isProcessingThis = processingOrderId === order.id; // حماية الزر
 
                     return (
-                      <tr key={order.id} className="hover:bg-slate-50 transition-colors align-top">
+                      <tr key={order.id} className={`transition-colors align-top ${isProcessingThis ? 'bg-slate-50 opacity-50 pointer-events-none' : 'hover:bg-slate-50'}`}>
                         <td className="px-4 py-3">
                           <div className="flex items-start gap-2">
                             <div className="font-medium text-secondary-dark break-all">{order.id}</div>
@@ -1142,7 +1150,8 @@ const AdminDashboard: React.FC = () => {
                         </td>
 
                         <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${statusBadge(order.status)}`}>
+                          <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase flex w-max items-center gap-1 ${statusBadge(order.status)}`}>
+                            {isProcessingThis && <Loader2 size={12} className="animate-spin" />}
                             {t(order.status ?? '') ?? safeText(order.status) ?? '—'}
                           </span>
                         </td>
@@ -1211,45 +1220,54 @@ const AdminDashboard: React.FC = () => {
                         <td className="px-4 py-3 font-bold whitespace-nowrap">{money(Number(order.total || 0))}</td>
 
                         <td className="px-4 py-3">
-                          <div className="flex flex-wrap gap-2">
+                          <div className="flex flex-wrap items-center justify-center gap-2">
                             <button
+                              disabled={isProcessingThis}
                               onClick={() => openOrderDetails(order)}
                               className="px-3 py-1.5 bg-slate-50 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-100 border border-slate-200"
                             >
                               تفاصيل
                             </button>
+                            
                             {st === 'new' && (
                               <button
+                                disabled={isProcessingThis}
                                 onClick={() => handleUpdateOrderStatus(order.id, 'processing')}
                                 className="px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold hover:bg-emerald-100 border border-emerald-100"
                               >
-                                قبول الطلب
+                                قبول
                               </button>
                             )}
+                            
                             {st === 'processing' && (
                               <button
+                                disabled={isProcessingThis}
                                 onClick={() => handleUpdateOrderStatus(order.id, 'shipped')}
                                 className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-xl text-xs font-bold hover:bg-blue-100 border border-blue-100"
                               >
-                                قيد الشحن
+                                شحن
                               </button>
                             )}
+                            
                             {st === 'shipped' && (
                               <button
+                                disabled={isProcessingThis}
                                 onClick={() => handleUpdateOrderStatus(order.id, 'delivered')}
                                 className="px-3 py-1.5 bg-green-50 text-green-700 rounded-xl text-xs font-bold hover:bg-green-100 border border-green-100"
                               >
-                                تم التسليم
+                                تسليم
                               </button>
                             )}
-                            {st !== 'delivered' && st !== 'cancelled' && (
-                              <button
-                                onClick={() => handleUpdateOrderStatus(order.id, 'cancelled')}
-                                className="px-3 py-1.5 bg-red-50 text-red-700 rounded-xl text-xs font-bold hover:bg-red-100 border border-red-100"
-                              >
-                                إلغاء
-                              </button>
-                            )}
+
+                            {/* زر الحذف الجديد */}
+                            <button
+                              disabled={isProcessingThis}
+                              onClick={() => handleDeleteOrder(order.id)}
+                              className="p-1.5 text-red-500 hover:bg-red-50 hover:text-red-700 rounded-lg transition-colors border border-transparent hover:border-red-100"
+                              title="حذف الطلب"
+                            >
+                              <Trash2 size={16} />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -1347,7 +1365,6 @@ const AdminDashboard: React.FC = () => {
                     <div className="space-y-3">
                       {(selectedOrder?.items || []).map((item: any, idx: number) => (
                         <div key={`${item?.productId || item?.id || idx}`} className="flex gap-3 p-3 rounded-2xl border border-slate-100 bg-slate-50 shadow-sm">
-                          {/* 🚀 إظهار صورة الخيار أو الصورة الرئيسية */}
                           <LazyImage
                             src={safeText(item?.selectedVariant?.image || item?.image)}
                             alt={safeText(item?.name) || `item-${idx + 1}`}
@@ -1359,7 +1376,6 @@ const AdminDashboard: React.FC = () => {
                             <p className="font-bold text-slate-900 break-words leading-snug">{safeText(item?.name) || '—'}</p>
                             <p className="text-[10px] text-slate-400 mt-1">Product ID: {safeText(item?.productId) || '—'}</p>
 
-                            {/* 🚀 إظهار الخيار المختار للأدمن بشكل واضح */}
                             {item?.selectedVariant && (
                               <div className="mt-2 flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2.5 py-1 w-fit shadow-sm">
                                 {item.selectedVariant.type === 'color' && item.selectedVariant.colorCode && (
@@ -1506,20 +1522,31 @@ const AdminDashboard: React.FC = () => {
             </div>
 
             <div className="p-5 border-t border-slate-100 bg-white rounded-b-3xl">
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {selectedOrderStatus === 'new' && (
-                  <Button onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'processing')}>قبول الطلب</Button>
+                  <Button disabled={processingOrderId === selectedOrder.id} onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'processing')}>قبول الطلب</Button>
                 )}
                 {selectedOrderStatus === 'processing' && (
-                  <Button onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'shipped')}>قيد الشحن</Button>
+                  <Button disabled={processingOrderId === selectedOrder.id} onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'shipped')}>قيد الشحن</Button>
                 )}
                 {selectedOrderStatus === 'shipped' && (
-                  <Button onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'delivered')}>تم التسليم</Button>
+                  <Button disabled={processingOrderId === selectedOrder.id} onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'delivered')}>تم التسليم</Button>
                 )}
                 {selectedOrderStatus !== 'delivered' && selectedOrderStatus !== 'cancelled' && (
-                  <Button variant="outline" onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'cancelled')} className="border-red-200 text-red-600 hover:bg-red-50">إلغاء الطلب</Button>
+                  <Button disabled={processingOrderId === selectedOrder.id} variant="outline" onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'cancelled')} className="border-red-200 text-red-600 hover:bg-red-50">إلغاء الطلب</Button>
                 )}
-                <Button variant="outline" onClick={closeOrderDetails}>إغلاق</Button>
+                
+                {/* زر حذف الطلب من داخل التفاصيل */}
+                <Button 
+                  disabled={processingOrderId === selectedOrder.id} 
+                  variant="outline" 
+                  onClick={() => handleDeleteOrder(selectedOrder.id)} 
+                  className="border-red-500 text-red-600 hover:bg-red-50 hover:text-red-700"
+                >
+                  <Trash2 size={16} className="ml-2 rtl:ml-2 rtl:mr-0 ltr:ml-0 ltr:mr-2" /> حذف نهائي
+                </Button>
+
+                <Button variant="outline" onClick={closeOrderDetails} className="mr-auto rtl:mr-auto rtl:ml-0 ltr:ml-auto ltr:mr-0">إغلاق</Button>
               </div>
             </div>
           </div>

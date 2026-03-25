@@ -32,6 +32,7 @@ const AdminDashboard = React.lazy(() => import('./pages/AdminDashboard'));
 const Checkout = React.lazy(() => import('./pages/Checkout'));
 const OrderSuccess = React.lazy(() => import('./pages/OrderSuccess'));
 const MyOrders = React.lazy(() => import('./pages/MyOrders'));
+const AdminAddProduct = React.lazy(() => import('./pages/AdminAddProduct'));
 
 const ORDER_NOTE_KEY = 'anta_order_note_v1';
 const ORDER_NOTE_MAX_CHARS = 600;
@@ -352,6 +353,9 @@ const App: React.FC = () => {
                 <Route path="/" element={<Home />} />
                 <Route path="/product/:id" element={<ProductDetails />} />
                 <Route path="/admin" element={<AdminDashboard />} />
+                <Route path="/admin" element={<AdminDashboard />} />
+<Route path="/admin/product/new" element={<AdminAddProduct />} />
+<Route path="/admin/product/edit" element={<AdminAddProduct />} />
                 <Route path="/account" element={<Account />} />
                 <Route path="/shop" element={<Shop />} />
                 <Route path="/cart" element={<Cart />} />

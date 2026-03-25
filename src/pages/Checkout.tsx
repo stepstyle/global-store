@@ -242,9 +242,9 @@ const Checkout: React.FC = () => {
     return 3.0;
   }, [formData.citySlug, formData.ammanAreaId]);
 
-  // 🚀 خيارات التوصيل الذكية (عادي وسريع)
+  // 🚀 التعديل: إخفاء خيار 12 ساعة إذا لم يكن الزبون في عمان
   const dynamicShippingMethods = useMemo(() => {
-    return [
+    const methods = [
       {
         id: 'standard',
         nameAr: 'توصيل عادي (خلال 48 ساعة)',
@@ -253,18 +253,31 @@ const Checkout: React.FC = () => {
         durationEn: 'Base price for your area',
         price: baseShippingCost,
         icon: Truck,
-      },
-      {
+      }
+    ];
+
+    // نضيف خيار التوصيل السريع فقط إذا كانت المحافظة عمان
+    if (formData.citySlug === 'amman') {
+      methods.push({
         id: 'fast',
         nameAr: 'توصيل سريع (خلال 12 ساعة)',
         nameEn: 'Fast Delivery (12 Hours)',
         durationAr: 'أولوية التجهيز (+ 1 دينار)',
         durationEn: 'Priority fulfillment (+ 1 JD)',
-        price: baseShippingCost + 1.0, // زيادة دينار واحد
+        price: baseShippingCost + 1.0,
         icon: Zap,
-      }
-    ];
-  }, [baseShippingCost]);
+      });
+    }
+
+    return methods;
+  }, [baseShippingCost, formData.citySlug]);
+
+  // 🚀 التأكد من أن الزبون لا يحتفظ بخيار "سريع" إذا غير محافظته لخارج عمان
+  useEffect(() => {
+    if (formData.citySlug !== 'amman' && shippingMethodId === 'fast') {
+      setShippingMethodId('standard');
+    }
+  }, [formData.citySlug, shippingMethodId]);
 
   const selectedShipping = useMemo(
     () => dynamicShippingMethods.find((m) => m.id === shippingMethodId) || dynamicShippingMethods[0],
