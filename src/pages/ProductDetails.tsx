@@ -306,8 +306,18 @@ const ProductDetails: React.FC = () => {
   
   const isInStock = stock > 0;
 
-  const displayPrice = selectedVariant ? selectedVariant.price : (product?.price ?? 0);
-  const displayOriginalPrice = selectedVariant ? selectedVariant.originalPrice : product?.originalPrice;
+  // 🚀 التعديل الأهم: لوجيك السعر والسعر الأصلي (معدل)
+  const displayPrice = selectedVariant?.price ?? product?.price ?? 0;
+  
+  const variantOrig = Number(selectedVariant?.originalPrice);
+  const productOrig = Number(product?.originalPrice);
+  
+  let displayOriginalPrice: number | undefined = undefined;
+  if (!isNaN(variantOrig) && variantOrig > displayPrice) {
+    displayOriginalPrice = variantOrig;
+  } else if (!isNaN(productOrig) && productOrig > displayPrice) {
+    displayOriginalPrice = productOrig;
+  }
 
   // 🚀 السحر يبدأ هنا: تغيير الصورة بذكاء حسب الخيار!
   const allImages = useMemo(() => normalizeImages(product), [product]);
@@ -690,6 +700,7 @@ const ProductDetails: React.FC = () => {
                 <div className="flex items-baseline gap-4 mb-6">
                   {/* السعر */}
                   <span className="text-4xl font-black text-slate-900">{formatMoneyJOD(displayPrice)}</span>
+                  {/* 🚀 السعر القديم يظهر الآن دائماً وبثقة تامة! */}
                   {displayOriginalPrice && <span className="text-lg font-bold text-slate-400 line-through">{formatMoneyJOD(displayOriginalPrice)}</span>}
                 </div>
                 <div className="flex flex-col sm:flex-row gap-4">

@@ -349,11 +349,12 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
 
   const addVariant = () => {
     const currentVariants = formData.variants || [];
-    const newVariant: ProductVariant = {
+    const newVariant: any = {
       id: `var_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       label: '',
       type: currentVariants.length > 0 ? currentVariants[0].type : 'color', // افتراضي لون لدعم طلبك
       price: formData.price || 0,
+      originalPrice: (formData as any).originalPrice || '', // 🚀 إضافة السعر الأصلي للخيار الجديد
       stock: 10,
       colorCode: '#000000', 
       colorCode2: '', // اللون الثاني (اختياري للدمج)
@@ -362,7 +363,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
     setFormData(prev => ({ ...prev, variants: [...currentVariants, newVariant] }));
   };
 
-  const updateVariant = (index: number, field: keyof ProductVariant, value: any) => {
+  const updateVariant = (index: number, field: string, value: any) => {
     const currentVariants = [...(formData.variants || [])];
     currentVariants[index] = { ...currentVariants[index], [field]: value };
     setFormData(prev => ({ ...prev, variants: currentVariants }));
@@ -511,10 +512,14 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
 
     const currentVariants = formData.variants || [];
     for (let i = 0; i < currentVariants.length; i++) {
-      const v = currentVariants[i];
+      const v = currentVariants[i] as any;
       // 🚀 إعفاء اللون من شرط الاسم
       if (!v.label.trim() && v.type !== 'color') return triggerError(`يرجى كتابة اسم للخيار رقم ${i + 1} (مثلاً: 100 ورقة)`);
       if (Number(v.price) < 0) return triggerError(`سعر الخيار غير صالح`);
+      // 🚀 التحقق من السعر الأصلي للخيار
+      if (v.originalPrice && Number(v.originalPrice) < Number(v.price)) {
+        return triggerError(`في الخيار رقم ${i + 1}، السعر قبل الخصم يجب أن يكون أكبر من السعر الحالي`);
+      }
     }
 
     return true;
@@ -828,13 +833,14 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
 
               {currentVariants.length > 0 ? (
                 <div className="space-y-4">
-                  {currentVariants.map((variant, idx) => (
+                  {currentVariants.map((variant: any, idx) => (
                     <div key={variant.id} className="bg-white p-4 rounded-2xl border border-slate-200 animate-in slide-in-from-top-2 relative shadow-sm hover:shadow-md transition-all">
                       <button type="button" onClick={() => removeVariant(idx)} className="absolute top-4 right-4 p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors z-10">
                         <Trash2 size={16} />
                       </button>
 
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pr-10">
+                      {/* 🚀 تم تعديل الشبكة لتتسع للسعر قبل الخصم (md:grid-cols-5 بدل 4) */}
+                      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 pr-10">
                         {/* النوع والاسم */}
                         <div className="space-y-2">
                           <label className="text-xs font-bold text-slate-500">النوع</label>
@@ -852,13 +858,26 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
                           <label className="text-xs font-bold text-slate-500">السعر الدقيق (JOD)</label>
                           <input type="number" value={variant.price} onChange={(e) => updateVariant(idx, 'price', Number(e.target.value))} className="w-full px-3 py-2 rounded-xl border border-slate-200 outline-none text-sm font-bold bg-slate-50" />
                         </div>
+                        
+                        {/* 🚀 السعر الأصلي للخيار (تم إضافته هنا) */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-500">السعر قبل الخصم (JOD)</label>
+                          <input 
+                            type="number" 
+                            value={variant.originalPrice ?? ''} 
+                            onChange={(e) => updateVariant(idx, 'originalPrice', e.target.value === '' ? undefined : Number(e.target.value))} 
+                            placeholder="اختياري"
+                            className="w-full px-3 py-2 rounded-xl border border-slate-200 outline-none text-sm font-bold bg-slate-50" 
+                          />
+                        </div>
+
                         <div className="space-y-2">
                           <label className="text-xs font-bold text-slate-500">المخزون المتوفر</label>
                           <input type="number" value={variant.stock} onChange={(e) => updateVariant(idx, 'stock', Number(e.target.value))} className="w-full px-3 py-2 rounded-xl border border-slate-200 outline-none text-sm font-bold bg-slate-50" />
                         </div>
                       </div>
 
-                      {/* 🚀 إعدادات الألوان (مدمجة) والصور */}
+                      {/* إعدادات الألوان (مدمجة) والصور */}
                       {variant.type === 'color' && (
                         <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div className="flex items-center gap-4 bg-slate-50 p-3 rounded-xl border border-slate-200">
