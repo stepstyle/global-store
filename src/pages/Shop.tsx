@@ -11,6 +11,7 @@ import {
   ShoppingBag,
   Sparkles,
   Star,
+  Crown, // تم إضافة أيقونة التاج للفخامة
 } from 'lucide-react';
 
 import ProductCard from '../components/ProductCard';
@@ -170,6 +171,9 @@ const Shop: React.FC = () => {
   const [sortBy, setSortBy] = useState<SortOption>('newest');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+
+  // المتغير الأساسي اللي بحدد حالة الفخامة
+  const isLuxury = selectedCategory === 'Gifts';
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 1024);
@@ -433,42 +437,41 @@ const Shop: React.FC = () => {
   const visibleTo = Math.min(currentPage * ITEMS_PER_PAGE, filteredProducts.length);
 
   return (
-    <div className="min-h-screen bg-slate-50 pt-8 pb-24">
-      <SEO title={tx('shop', 'المتجر', 'Shop')} />
+    <div className={`min-h-screen pt-8 pb-24 transition-colors duration-700 ${isLuxury ? 'bg-[#0B0B0B]' : 'bg-slate-50'}`}>
+      <SEO title={isLuxury ? 'AntarLuxi Collection' : tx('shop', 'المتجر', 'Shop')} />
 
       <div className="container mx-auto px-4 lg:px-8">
-        <div className="mb-8 lg:mb-10 overflow-hidden rounded-[2rem] border border-slate-100 bg-white shadow-sm">
+        <div className={`mb-8 lg:mb-10 overflow-hidden rounded-[2rem] border shadow-sm transition-colors duration-700 ${isLuxury ? 'border-[#D4AF37]/20 bg-[#121212]' : 'border-slate-100 bg-white'}`}>
           <div className="relative p-6 sm:p-8 lg:p-10">
-            <div className="absolute inset-0 bg-gradient-to-br from-[#EAB308]/10 via-white to-[#3B82F6]/10" />
+            <div className={`absolute inset-0 transition-opacity duration-700 ${isLuxury ? 'bg-gradient-to-br from-[#D4AF37]/10 via-[#121212] to-[#000000] opacity-100' : 'bg-gradient-to-br from-[#EAB308]/10 via-white to-[#3B82F6]/10'}`} />
+            
             <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
               <div className="max-w-2xl">
-                <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-4 py-2 text-xs font-black text-slate-600 shadow-sm">
-                  <Sparkles size={14} className="text-[#EAB308]" />
-                  {tx('shopIntro', 'تجربة تسوق مرتبة وواضحة', 'A refined, easy shopping experience')}
+                <div className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-black shadow-sm transition-colors ${isLuxury ? 'border-[#D4AF37]/30 bg-[#1A1A1A] text-[#D4AF37]' : 'border-slate-200 bg-white/80 text-slate-600'}`}>
+                  <Sparkles size={14} className={isLuxury ? 'text-[#D4AF37]' : 'text-[#EAB308]'} />
+                  {isLuxury ? 'AntarLuxi Exclusive Collection' : tx('shopIntro', 'تجربة تسوق مرتبة وواضحة', 'A refined, easy shopping experience')}
                 </div>
 
-                <h1 className="mt-4 flex items-center gap-3 text-3xl sm:text-4xl lg:text-5xl font-heading font-black tracking-tight text-slate-900">
-                  <ShoppingBag className="text-sky-500" size={34} />
-                  {tx('shop', 'المتجر', 'Shop')}
+                <h1 className={`mt-4 flex items-center gap-3 text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight transition-colors ${isLuxury ? 'font-serif text-[#D4AF37]' : 'font-heading text-slate-900'}`}>
+                  {isLuxury ? <Crown className="text-[#D4AF37]" size={34} /> : <ShoppingBag className="text-sky-500" size={34} />}
+                  {isLuxury ? 'AntarLuxi' : tx('shop', 'المتجر', 'Shop')}
                 </h1>
 
-                <p className="mt-3 max-w-xl text-sm sm:text-base leading-7 text-slate-500">
-                  {tx(
-                    'shopDescription',
-                    'تصفّح المنتجات بسهولة، واستخدم الفلاتر الذكية للوصول إلى الخيارات المناسبة بسرعة.',
-                    'Browse products with clarity and use smart filters to find the best matches faster.'
-                  )}
+                <p className={`mt-3 max-w-xl text-sm sm:text-base leading-7 transition-colors ${isLuxury ? 'text-gray-400' : 'text-slate-500'}`}>
+                  {isLuxury 
+                    ? 'اكتشف مجموعتنا الحصرية من الساعات الفاخرة، حيث تجتمع الأناقة الكلاسيكية مع الدقة المتناهية.' 
+                    : tx('shopDescription', 'تصفّح المنتجات بسهولة، واستخدم الفلاتر الذكية للوصول إلى الخيارات المناسبة بسرعة.', 'Browse products with clarity and use smart filters to find the best matches faster.')}
                 </p>
 
-                <div className="mt-5 flex flex-wrap items-center gap-3 text-sm font-semibold text-slate-500">
-                  <span className="rounded-full bg-white px-4 py-2 shadow-sm border border-slate-200">
+                <div className={`mt-5 flex flex-wrap items-center gap-3 text-sm font-semibold transition-colors ${isLuxury ? 'text-[#D4AF37]' : 'text-slate-500'}`}>
+                  <span className={`rounded-full px-4 py-2 shadow-sm border ${isLuxury ? 'border-[#D4AF37]/20 bg-[#1A1A1A]' : 'border-slate-200 bg-white'}`}>
                     {filteredProducts.length} {tx('productsAvailable', 'منتج متاح', 'products available')}
                   </span>
-                  <span className="rounded-full bg-white px-4 py-2 shadow-sm border border-slate-200">
+                  <span className={`rounded-full px-4 py-2 shadow-sm border ${isLuxury ? 'border-[#D4AF37]/20 bg-[#1A1A1A]' : 'border-slate-200 bg-white'}`}>
                     {tx('showingRange', 'عرض', 'Showing')} {visibleFrom}-{visibleTo}
                   </span>
                   {activeChips.length > 0 && (
-                    <span className="rounded-full bg-white px-4 py-2 shadow-sm border border-slate-200">
+                    <span className={`rounded-full px-4 py-2 shadow-sm border ${isLuxury ? 'border-[#D4AF37]/20 bg-[#1A1A1A]' : 'border-slate-200 bg-white'}`}>
                       {activeChips.length} {tx('activeFilters', 'فلتر نشط', 'active filters')}
                     </span>
                   )}
@@ -480,7 +483,11 @@ const Shop: React.FC = () => {
                   <select
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value as SortOption)}
-                    className="w-full appearance-none rounded-2xl border border-slate-200 bg-white px-12 py-4 text-sm font-bold text-slate-800 shadow-sm outline-none transition-all focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20"
+                    className={`w-full appearance-none rounded-2xl border px-12 py-4 text-sm font-bold shadow-sm outline-none transition-all ${
+                      isLuxury 
+                        ? 'border-[#D4AF37]/40 bg-[#1A1A1A] text-[#D4AF37] focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20' 
+                        : 'border-slate-200 bg-white text-slate-800 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
+                    }`}
                   >
                     <option value="newest">{tx('newest', 'الأحدث', 'Newest')}</option>
                     <option value="price-asc">{tx('priceLowHigh', 'السعر: من الأقل للأعلى', 'Price: Low to High')}</option>
@@ -488,14 +495,18 @@ const Shop: React.FC = () => {
                     <option value="rating">{tx('ratingHigh', 'الأعلى تقييماً', 'Highest Rated')}</option>
                   </select>
                   <SlidersHorizontal
-                    className={`pointer-events-none absolute top-1/2 -translate-y-1/2 text-sky-500 ${isRTL ? 'right-4' : 'left-4'}`}
+                    className={`pointer-events-none absolute top-1/2 -translate-y-1/2 ${isLuxury ? 'text-[#D4AF37]' : 'text-sky-500'} ${isRTL ? 'right-4' : 'left-4'}`}
                     size={18}
                   />
                 </div>
 
                 <button
                   onClick={() => setIsFilterOpen(true)}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-black px-5 py-4 text-sm font-extrabold text-white shadow-lg shadow-black/20 transition-all hover:bg-slate-800 lg:hidden"
+                  className={`inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-4 text-sm font-extrabold shadow-lg transition-all lg:hidden ${
+                    isLuxury 
+                      ? 'bg-[#D4AF37] text-black hover:bg-[#C5A028] shadow-[#D4AF37]/20' 
+                      : 'bg-black text-white hover:bg-slate-800 shadow-black/20'
+                  }`}
                   aria-label="Open Filters"
                 >
                   <Filter size={18} />
@@ -515,40 +526,40 @@ const Shop: React.FC = () => {
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              className={`absolute top-0 bottom-0 w-[88%] max-w-sm overflow-y-auto bg-white shadow-2xl transition-transform duration-500 ease-out lg:relative lg:top-auto lg:bottom-auto lg:w-[300px] xl:w-[320px] lg:max-w-none lg:translate-x-0 lg:overflow-visible lg:rounded-[2rem] lg:border lg:border-slate-100 lg:bg-white lg:shadow-xl lg:shadow-slate-200/40 ${
-                isRTL ? 'right-0' : 'left-0'
-              } ${isFilterOpen ? 'translate-x-0' : isRTL ? 'translate-x-full' : '-translate-x-full'}`}
+              className={`absolute top-0 bottom-0 w-[88%] max-w-sm overflow-y-auto shadow-2xl transition-all duration-500 ease-out lg:relative lg:top-auto lg:bottom-auto lg:w-[300px] xl:w-[320px] lg:max-w-none lg:translate-x-0 lg:overflow-visible lg:rounded-[2rem] lg:border lg:shadow-xl ${
+                isLuxury ? 'bg-[#121212] border-[#D4AF37]/20 shadow-[#D4AF37]/5' : 'bg-white border-slate-100 shadow-slate-200/40'
+              } ${isRTL ? 'right-0' : 'left-0'} ${isFilterOpen ? 'translate-x-0' : isRTL ? 'translate-x-full' : '-translate-x-full'}`}
             >
               <div className="min-h-full p-6 lg:sticky lg:top-28 lg:p-7">
-                <div className="mb-8 flex items-center justify-between border-b border-slate-100 pb-5 lg:mb-7 lg:border-b-0 lg:pb-0">
+                <div className={`mb-8 flex items-center justify-between border-b pb-5 lg:mb-7 lg:border-b-0 lg:pb-0 ${isLuxury ? 'border-gray-800' : 'border-slate-100'}`}>
                   <div>
-                    <p className="text-[11px] font-black uppercase tracking-[0.25em] text-slate-400">
+                    <p className={`text-[11px] font-black uppercase tracking-[0.25em] ${isLuxury ? 'text-[#D4AF37]/70' : 'text-slate-400'}`}>
                       {tx('filterPanel', 'لوحة الفلاتر', 'Filter panel')}
                     </p>
-                    <h2 className="mt-2 text-2xl font-black text-slate-900">
+                    <h2 className={`mt-2 text-2xl font-black ${isLuxury ? 'text-[#D4AF37]' : 'text-slate-900'}`}>
                       {tx('filter', 'الفلاتر', 'Filters')}
                     </h2>
                   </div>
 
                   <button
                     onClick={() => setIsFilterOpen(false)}
-                    className="rounded-full bg-slate-50 p-2.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 lg:hidden"
+                    className={`rounded-full p-2.5 transition-colors lg:hidden ${isLuxury ? 'bg-[#1A1A1A] text-gray-400 hover:bg-red-900/30 hover:text-red-500' : 'bg-slate-50 text-slate-400 hover:bg-red-50 hover:text-red-500'}`}
                   >
                     <X size={20} strokeWidth={3} />
                   </button>
                 </div>
 
-                <div className="mb-8 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                  <div className="flex items-center justify-between text-sm font-bold text-slate-600">
+                <div className={`mb-8 rounded-2xl border p-4 ${isLuxury ? 'bg-[#1A1A1A] border-[#D4AF37]/20' : 'bg-slate-50 border-slate-100'}`}>
+                  <div className={`flex items-center justify-between text-sm font-bold ${isLuxury ? 'text-gray-300' : 'text-slate-600'}`}>
                     <span>{tx('results', 'النتائج', 'Results')}</span>
-                    <span className="rounded-full bg-white px-3 py-1.5 text-slate-900 shadow-sm">
+                    <span className={`rounded-full px-3 py-1.5 shadow-sm ${isLuxury ? 'bg-[#D4AF37] text-black' : 'bg-white text-slate-900'}`}>
                       {filteredProducts.length}
                     </span>
                   </div>
                 </div>
 
                 <div className="mb-8">
-                  <h3 className="mb-4 text-[10px] font-black uppercase tracking-[0.25em] text-slate-400">
+                  <h3 className={`mb-4 text-[10px] font-black uppercase tracking-[0.25em] ${isLuxury ? 'text-[#D4AF37]/70' : 'text-slate-400'}`}>
                     {tx('categories', 'التصنيفات', 'Categories')}
                   </h3>
 
@@ -557,22 +568,21 @@ const Shop: React.FC = () => {
                       onClick={() => handleCategoryChange('All')}
                       className={`w-full rounded-2xl px-5 py-3.5 text-start text-sm font-bold transition-all ${
                         selectedCategory === 'All'
-                          ? 'bg-black text-white shadow-lg shadow-black/20'
-                          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                          ? (isLuxury ? 'bg-[#D4AF37] text-black shadow-lg shadow-[#D4AF37]/20' : 'bg-black text-white shadow-lg shadow-black/20')
+                          : (isLuxury ? 'text-gray-400 hover:bg-[#1A1A1A] hover:text-[#D4AF37]' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900')
                       }`}
                     >
                       {tx('allProducts', 'كل المنتجات', 'All products')}
                     </button>
 
-                    {/* 🚨 عرض الأقسام الرئيسية الجديدة هنا */}
                     {DISPLAY_CATEGORIES.map((cat) => (
                       <button
                         key={cat.id}
                         onClick={() => handleCategoryChange(cat.id)}
                         className={`w-full rounded-2xl px-5 py-3.5 text-start text-sm font-bold transition-all ${
                           selectedCategory === cat.id
-                            ? 'bg-sky-400 text-white shadow-lg shadow-sky-400/30'
-                            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                            ? (isLuxury ? 'bg-[#D4AF37] text-black shadow-lg shadow-[#D4AF37]/20' : 'bg-sky-400 text-white shadow-lg shadow-sky-400/30')
+                            : (isLuxury ? 'text-gray-400 hover:bg-[#1A1A1A] hover:text-[#D4AF37]' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900')
                         }`}
                       >
                         {isRTL ? cat.labelAr : cat.labelEn}
@@ -582,15 +592,19 @@ const Shop: React.FC = () => {
                 </div>
 
                 {selectedCategory !== 'All' && subCategoryOptions.length > 0 && (
-                  <div className="mb-8 border-t border-slate-100 pt-8">
-                    <h3 className="mb-4 text-[10px] font-black uppercase tracking-[0.25em] text-slate-400">
+                  <div className={`mb-8 border-t pt-8 ${isLuxury ? 'border-gray-800' : 'border-slate-100'}`}>
+                    <h3 className={`mb-4 text-[10px] font-black uppercase tracking-[0.25em] ${isLuxury ? 'text-[#D4AF37]/70' : 'text-slate-400'}`}>
                       {tx('subCategory', 'التصنيف الفرعي', 'Subcategory')}
                     </h3>
 
                     <select
                       value={selectedSubCategory}
                       onChange={(e) => handleSubCategoryChange(e.target.value)}
-                      className="w-full appearance-none rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm font-bold text-slate-700 outline-none transition-all focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20"
+                      className={`w-full appearance-none rounded-2xl border px-5 py-4 text-sm font-bold outline-none transition-all ${
+                        isLuxury 
+                          ? 'bg-[#1A1A1A] border-[#D4AF37]/20 text-[#D4AF37] focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20' 
+                          : 'bg-slate-50 border-slate-200 text-slate-700 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
+                      }`}
                     >
                       <option value="">{isRTL ? '— الكل —' : '— All —'}</option>
                       {subCategoryOptions.map((s) => (
@@ -602,8 +616,8 @@ const Shop: React.FC = () => {
                   </div>
                 )}
 
-                <div className="mb-8 border-t border-slate-100 pt-8">
-                  <h3 className="mb-5 text-[10px] font-black uppercase tracking-[0.25em] text-slate-400">
+                <div className={`mb-8 border-t pt-8 ${isLuxury ? 'border-gray-800' : 'border-slate-100'}`}>
+                  <h3 className={`mb-5 text-[10px] font-black uppercase tracking-[0.25em] ${isLuxury ? 'text-[#D4AF37]/70' : 'text-slate-400'}`}>
                     {tx('price', 'السعر', 'Price')}
                   </h3>
 
@@ -614,21 +628,21 @@ const Shop: React.FC = () => {
                     step={5}
                     value={priceRange[1]}
                     onChange={(e) => setPriceRange([PRICE_MIN, Number(e.target.value)])}
-                    className="w-full appearance-none rounded-full accent-sky-500"
+                    className={`w-full appearance-none rounded-full ${isLuxury ? 'accent-[#D4AF37]' : 'accent-sky-500'}`}
                   />
 
                   <div className="mt-5 flex items-center justify-between gap-3 text-[11px] font-black">
-                    <span className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-slate-400">
+                    <span className={`rounded-xl border px-3 py-2 ${isLuxury ? 'bg-[#1A1A1A] border-gray-800 text-gray-500' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
                       Min: 0
                     </span>
-                    <span className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-2 text-sky-600 shadow-sm">
+                    <span className={`rounded-xl border px-4 py-2 shadow-sm ${isLuxury ? 'bg-[#D4AF37]/10 border-[#D4AF37]/30 text-[#D4AF37]' : 'bg-sky-50 border-sky-100 text-sky-600'}`}>
                       Max: {priceRange[1]} JOD
                     </span>
                   </div>
                 </div>
 
-                <div className="mb-8 border-t border-slate-100 pt-8">
-                  <h3 className="mb-5 text-[10px] font-black uppercase tracking-[0.25em] text-slate-400">
+                <div className={`mb-8 border-t pt-8 ${isLuxury ? 'border-gray-800' : 'border-slate-100'}`}>
+                  <h3 className={`mb-5 text-[10px] font-black uppercase tracking-[0.25em] ${isLuxury ? 'text-[#D4AF37]/70' : 'text-slate-400'}`}>
                     {tx('ratingHigh', 'التقييم', 'Rating')}
                   </h3>
 
@@ -641,8 +655,8 @@ const Shop: React.FC = () => {
                           onClick={() => setMinRating(active ? 0 : rating)}
                           className={`flex items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold transition-all ${
                             active
-                              ? 'border-sky-200 bg-sky-50 text-sky-700 shadow-sm'
-                              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                              ? (isLuxury ? 'border-[#D4AF37]/40 bg-[#D4AF37]/10 text-[#D4AF37] shadow-sm' : 'border-sky-200 bg-sky-50 text-sky-700 shadow-sm')
+                              : (isLuxury ? 'border-gray-800 bg-[#121212] text-gray-400 hover:bg-[#1A1A1A]' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')
                           }`}
                         >
                           <Star size={16} className={active ? 'fill-current' : ''} />
@@ -655,7 +669,11 @@ const Shop: React.FC = () => {
 
                 <button
                   onClick={clearFilters}
-                  className="w-full rounded-2xl border-2 border-red-50 py-4 text-xs font-black uppercase tracking-widest text-red-500 transition-all hover:border-red-100 hover:bg-red-50 active:scale-[0.99]"
+                  className={`w-full rounded-2xl border-2 py-4 text-xs font-black uppercase tracking-widest transition-all active:scale-[0.99] ${
+                    isLuxury 
+                      ? 'border-[#D4AF37]/20 text-[#D4AF37] hover:bg-[#D4AF37]/10' 
+                      : 'border-red-50 text-red-500 hover:border-red-100 hover:bg-red-50'
+                  }`}
                 >
                   {tx('clearAll', 'مسح الكل', 'Clear all')}
                 </button>
@@ -665,17 +683,17 @@ const Shop: React.FC = () => {
 
           <main className="min-w-0 flex-1">
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm font-medium text-slate-500">
+              <div className={`text-sm font-medium ${isLuxury ? 'text-gray-400' : 'text-slate-500'}`}>
                 {tx('showingResults', 'عرض النتائج', 'Showing results')}:
-                <span className="ms-2 font-extrabold text-slate-900">
+                <span className={`ms-2 font-extrabold ${isLuxury ? 'text-[#D4AF37]' : 'text-slate-900'}`}>
                   {visibleFrom}-{visibleTo}
                 </span>
-                <span className="mx-2 text-slate-300">/</span>
-                <span className="font-extrabold text-slate-900">{filteredProducts.length}</span>
+                <span className={`mx-2 ${isLuxury ? 'text-gray-700' : 'text-slate-300'}`}>/</span>
+                <span className={`font-extrabold ${isLuxury ? 'text-[#D4AF37]' : 'text-slate-900'}`}>{filteredProducts.length}</span>
               </div>
 
-              <div className="hidden lg:flex items-center gap-2 text-xs font-bold text-slate-400">
-                <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              <div className={`hidden lg:flex items-center gap-2 text-xs font-bold ${isLuxury ? 'text-gray-500' : 'text-slate-400'}`}>
+                <span className={`inline-flex h-2 w-2 rounded-full ${isLuxury ? 'bg-[#D4AF37]' : 'bg-emerald-500'}`} />
                 {tx('updatedInstantly', 'النتائج تتحدث مباشرة', 'Results update instantly')}
               </div>
             </div>
@@ -697,16 +715,16 @@ const Shop: React.FC = () => {
                 ))}
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center rounded-[2.5rem] border border-dashed border-slate-200 bg-white px-4 py-20 text-center lg:py-28 shadow-sm">
-                <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-slate-50 shadow-inner border border-slate-100">
-                  <Search className="text-slate-300" size={40} strokeWidth={2.5} />
+              <div className={`flex flex-col items-center justify-center rounded-[2.5rem] border border-dashed px-4 py-20 text-center lg:py-28 shadow-sm ${isLuxury ? 'border-[#D4AF37]/30 bg-[#121212]' : 'border-slate-200 bg-white'}`}>
+                <div className={`mb-6 flex h-24 w-24 items-center justify-center rounded-full shadow-inner border ${isLuxury ? 'bg-[#1A1A1A] border-[#D4AF37]/20' : 'bg-slate-50 border-slate-100'}`}>
+                  <Search className={isLuxury ? 'text-[#D4AF37]' : 'text-slate-300'} size={40} strokeWidth={2.5} />
                 </div>
 
-                <h2 className="mb-3 text-2xl lg:text-3xl font-black text-slate-900 tracking-tight">
+                <h2 className={`mb-3 text-2xl lg:text-3xl font-black tracking-tight ${isLuxury ? 'text-[#D4AF37]' : 'text-slate-900'}`}>
                   {tx('noProducts', 'لم نجد ما تبحث عنه!', 'No products found')}
                 </h2>
 
-                <p className="mb-8 max-w-md text-sm sm:text-base leading-7 text-slate-500">
+                <p className={`mb-8 max-w-md text-sm sm:text-base leading-7 ${isLuxury ? 'text-gray-400' : 'text-slate-500'}`}>
                   {tx(
                     'noProductsDesc',
                     'عذراً، لا توجد منتجات تطابق الفلاتر الحالية. حاول تخفيف الفلاتر أو البحث بكلمة مختلفة.',
@@ -716,7 +734,11 @@ const Shop: React.FC = () => {
 
                 <button
                   onClick={clearFilters}
-                  className="rounded-2xl bg-black px-8 py-4 font-extrabold text-white shadow-xl shadow-black/20 transition-all hover:bg-slate-800 hover:scale-105 active:scale-95"
+                  className={`rounded-2xl px-8 py-4 font-extrabold shadow-xl transition-all hover:scale-105 active:scale-95 ${
+                    isLuxury 
+                      ? 'bg-[#D4AF37] text-black shadow-[#D4AF37]/20 hover:bg-[#C5A028]' 
+                      : 'bg-black text-white shadow-black/20 hover:bg-slate-800'
+                  }`}
                 >
                   {tx('resetFilters', 'إعادة ضبط البحث', 'Reset search')}
                 </button>
@@ -728,22 +750,30 @@ const Shop: React.FC = () => {
                 <button
                   onClick={() => handlePageChange(currentPage - 1)}
                   disabled={currentPage === 1}
-                  className="flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 transition-all hover:border-sky-400 hover:text-sky-500 hover:shadow-lg hover:shadow-sky-400/10 disabled:opacity-30 disabled:hover:border-slate-200 disabled:hover:text-slate-600 sm:h-16 sm:w-16"
+                  className={`flex h-14 w-14 items-center justify-center rounded-2xl border transition-all disabled:opacity-30 sm:h-16 sm:w-16 ${
+                    isLuxury 
+                      ? 'bg-[#121212] border-gray-800 text-gray-400 hover:border-[#D4AF37] hover:text-[#D4AF37] hover:shadow-lg hover:shadow-[#D4AF37]/10 disabled:hover:border-gray-800 disabled:hover:text-gray-400' 
+                      : 'bg-white border-slate-200 text-slate-600 hover:border-sky-400 hover:text-sky-500 hover:shadow-lg hover:shadow-sky-400/10 disabled:hover:border-slate-200 disabled:hover:text-slate-600'
+                  }`}
                   aria-label="Previous Page"
                 >
                   <ChevronRight className={isRTL ? '' : 'rotate-180'} size={24} strokeWidth={2.5} />
                 </button>
 
-                <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-4 shadow-sm sm:px-8 sm:py-5">
-                  <span className="tabular-nums text-sm sm:text-base font-black text-slate-900">{currentPage}</span>
-                  <span className="mx-1 text-xs sm:text-sm font-bold text-slate-300">/</span>
-                  <span className="tabular-nums text-sm sm:text-base font-bold text-slate-400">{totalPages}</span>
+                <div className={`flex items-center gap-2 rounded-2xl border px-6 py-4 shadow-sm sm:px-8 sm:py-5 ${isLuxury ? 'bg-[#1A1A1A] border-gray-800' : 'bg-white border-slate-200'}`}>
+                  <span className={`tabular-nums text-sm sm:text-base font-black ${isLuxury ? 'text-[#D4AF37]' : 'text-slate-900'}`}>{currentPage}</span>
+                  <span className={`mx-1 text-xs sm:text-sm font-bold ${isLuxury ? 'text-gray-600' : 'text-slate-300'}`}>/</span>
+                  <span className={`tabular-nums text-sm sm:text-base font-bold ${isLuxury ? 'text-gray-500' : 'text-slate-400'}`}>{totalPages}</span>
                 </div>
 
                 <button
                   onClick={() => handlePageChange(currentPage + 1)}
                   disabled={currentPage === totalPages}
-                  className="flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 transition-all hover:border-sky-400 hover:text-sky-500 hover:shadow-lg hover:shadow-sky-400/10 disabled:opacity-30 disabled:hover:border-slate-200 disabled:hover:text-slate-600 sm:h-16 sm:w-16"
+                  className={`flex h-14 w-14 items-center justify-center rounded-2xl border transition-all disabled:opacity-30 sm:h-16 sm:w-16 ${
+                    isLuxury 
+                      ? 'bg-[#121212] border-gray-800 text-gray-400 hover:border-[#D4AF37] hover:text-[#D4AF37] hover:shadow-lg hover:shadow-[#D4AF37]/10 disabled:hover:border-gray-800 disabled:hover:text-gray-400' 
+                      : 'bg-white border-slate-200 text-slate-600 hover:border-sky-400 hover:text-sky-500 hover:shadow-lg hover:shadow-sky-400/10 disabled:hover:border-slate-200 disabled:hover:text-slate-600'
+                  }`}
                   aria-label="Next Page"
                 >
                   <ChevronLeft className={isRTL ? '' : 'rotate-180'} size={24} strokeWidth={2.5} />
