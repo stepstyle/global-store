@@ -75,7 +75,7 @@ const REGIONS = [
 
 const JO_GOVS = REGIONS.flatMap(r => r.govs);
 
-// 🚀 قائمة مناطق عمان الذكية (مضاف إليها خيار المنطقة الأخرى للحماية)
+// 🚀 قائمة مناطق عمان الذكية
 const AMMAN_AREAS = [
   { id: 'a1', nameAr: 'النزهة / طبربور / طارق / ضاحية الأمير حسن', nameEn: 'Nuzha / Tabarbour / Tariq / Dahiyet Al Amir Hassan', price: 1.0, isOutskirt: false },
   { id: 'a2', nameAr: 'جبل الحسين / اللويبدة / العبدلي', nameEn: 'Jabal Hussein / Lweibdeh / Abdali', price: 1.0, isOutskirt: false },
@@ -91,7 +91,7 @@ const AMMAN_AREAS = [
   { id: 'a12', nameAr: 'سحاب / أبو علندا / اليادودة', nameEn: 'Sahab / Abu Alanda / Yadoudeh', price:2.5, isOutskirt: true },
   { id: 'a13', nameAr: 'الجيزة / خريبة السوق / القسطل', nameEn: 'Jizah / Khreibet Souq', price: 2.5, isOutskirt: true },
   { id: 'a14', nameAr: 'ناعور / طريق المطار', nameEn: 'Naour / Airport Road', price: 2.5, isOutskirt: true },
-  // 🛡️ الخيار البديل (Fallback)
+  // 🛡️ الخيار البديل
   { id: 'other', nameAr: 'منطقة أخرى (غير مذكورة في القائمة)', nameEn: 'Other Area (Not Listed)', price: 2.0, isOutskirt: true },
 ];
 
@@ -102,7 +102,6 @@ const DIAL_OPTIONS: DialOption[] = [
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// 🚀 التحقق الصارم من رقم الهاتف الأردني
 const isValidJordanPhone = (phone: string) => {
   const cleanPhone = digitsOnly(phone);
   return /^(079|078|077)\d{7}$/.test(cleanPhone);
@@ -175,7 +174,6 @@ const Checkout: React.FC = () => {
   const [dialCode, setDialCode] = useState<string>(() => '+962');
   const [cliqRef, setCliqRef] = useState('');
 
-  // 🚀 حالات البحث الذكي
   const [areaSearchQuery, setAreaSearchQuery] = useState('');
   const [isAreaDropdownOpen, setIsAreaDropdownOpen] = useState(false);
 
@@ -184,7 +182,7 @@ const Checkout: React.FC = () => {
     country: JO_COUNTRY.nameEn,
     citySlug: '',
     ammanAreaId: '', 
-    streetAddress: '', // اختياري الآن
+    streetAddress: '', 
     postalCode: '',
     phoneLocal: '',
     saveInfo: true,
@@ -215,7 +213,6 @@ const Checkout: React.FC = () => {
   const formatMoney = (value: number) =>
     fmt ? fmt.format(value) : `JOD ${Number(value || 0).toFixed(2)}`;
 
-  // فلترة المناطق بناءً على البحث
   const filteredAreas = useMemo(() => {
     if (!areaSearchQuery) return AMMAN_AREAS;
     const q = areaSearchQuery.toLowerCase();
@@ -228,7 +225,6 @@ const Checkout: React.FC = () => {
     return AMMAN_AREAS.find(a => a.id === formData.ammanAreaId);
   }, [formData.ammanAreaId]);
 
-  // تسعيرة التوصيل الأساسية بناءً على المنطقة
   const baseShippingCost = useMemo(() => {
     const slug = formData.citySlug;
     if (!slug) return 0;
@@ -238,11 +234,9 @@ const Checkout: React.FC = () => {
       if (!area) return 0;
       return area.price;
     }
-    // باقي المحافظات
     return 3.0;
   }, [formData.citySlug, formData.ammanAreaId]);
 
-  // 🚀 التعديل: إخفاء خيار 12 ساعة إذا لم يكن الزبون في عمان
   const dynamicShippingMethods = useMemo(() => {
     const methods = [
       {
@@ -256,7 +250,6 @@ const Checkout: React.FC = () => {
       }
     ];
 
-    // نضيف خيار التوصيل السريع فقط إذا كانت المحافظة عمان
     if (formData.citySlug === 'amman') {
       methods.push({
         id: 'fast',
@@ -272,7 +265,6 @@ const Checkout: React.FC = () => {
     return methods;
   }, [baseShippingCost, formData.citySlug]);
 
-  // 🚀 التأكد من أن الزبون لا يحتفظ بخيار "سريع" إذا غير محافظته لخارج عمان
   useEffect(() => {
     if (formData.citySlug !== 'amman' && shippingMethodId === 'fast') {
       setShippingMethodId('standard');
@@ -284,14 +276,12 @@ const Checkout: React.FC = () => {
     [shippingMethodId, dynamicShippingMethods]
   );
 
-  // 🚀 التعديل الجوهري: ربط السلة بالمنتجات الأصلية والأسعار الخاصة بالخيارات
   const validatedCart = useMemo(() => {
     const safeCart = Array.isArray(cart) ? cart : [];
     return safeCart.map((cartItem: any) => {
       const realProduct = products.find((p: Product) => p.id === cartItem.id);
       const variant = cartItem.selectedVariant;
       
-      // إذا كان الزبون قد اختار Variant (حجم/لون)، نأخذ سعره، وإلا نأخذ سعر المنتج الأساسي
       const finalPrice = variant ? variant.price : (realProduct ? realProduct.price : cartItem.price);
       
       return {
@@ -437,7 +427,7 @@ const Checkout: React.FC = () => {
       const nowDate = nowIso.split('T')[0];
       const orderId = makeOrderId();
 
-      // 🚀 التعديل الجوهري: إضافة selectedVariant إلى كائن الطلب (Order)
+      // 🚀 تجهيز الطلب مع دمج الخيارات (الألوان والأحجام)
       const newOrder: Order & any = {
         id: orderId,
         userId: user ? user.id : 'guest',
@@ -448,7 +438,6 @@ const Checkout: React.FC = () => {
         createdAtMs: now.getTime(),
         updatedAt: nowIso,
         
-        // 🚀 سحر البوت: ندمج اسم اللون مع اسم المنتج مباشرة!
         items: validatedCart.map((item: any) => {
           const variantSuffix = item.selectedVariant?.label && item.selectedVariant.label !== '.' 
             ? ` - ${item.selectedVariant.label}` 
@@ -456,7 +445,7 @@ const Checkout: React.FC = () => {
             
           return {
             productId: item.id,
-            name: `${item.name}${variantSuffix}`, // سيصبح مثلاً: بسكليت - أزرق
+            name: `${item.name}${variantSuffix}`,
             price: Number(item.price || 0),
             quantity: clampQty(item.quantity),
             image: item.image,
@@ -484,37 +473,20 @@ const Checkout: React.FC = () => {
         addressMeta: { country: JO_COUNTRY.nameEn, countryCode: JO_COUNTRY.code, citySlug: formData.citySlug, ammanAreaId: formData.ammanAreaId, saveInfo: !!formData.saveInfo, phoneDial: dialCode, phoneLocal: safeTrim(formData.phoneLocal) },
       };
 
-      // 🚀 الحل الذكي لمشكلة الـ Worker (إرسال الإشعار لـ Telegram)
+      // 🚨 الرجوع للكود الأصلي للـ Worker (عشان المتصفح ما يعمل بلوك CORS)
       const workerUrl = import.meta.env.VITE_WORKER_URL;
-      const workerAuthToken = import.meta.env.VITE_WORKER_AUTH_TOKEN; // 🚀 أضفنا سحب التوكن
-
       if (workerUrl && workerUrl.trim() !== '') {
-        console.log("Sending order notification to Worker:", workerUrl);
         fetch(`${workerUrl}/create-order`, {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            // 🚀 التعديل الأهم: إرسال مفتاح الأمان حتى لا يتم رفض الطلب
-            ...(workerAuthToken ? { 'Authorization': `Bearer ${workerAuthToken}` } : {}) 
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ order: newOrder }),
-        })
-        .then(response => {
-          if (!response.ok) console.warn('Worker returned error:', response.status);
-        })
-        .catch(e => console.warn('Background sync error', e));
-      } else {
-        console.warn("VITE_WORKER_URL is missing in your environment variables! Telegram notification will not be sent.");
+        }).catch(e => console.warn('Background sync error', e));
       }
 
-      // حفظ الطلب في Firebase
       try {
         if (db?.orders?.create) await db.orders.create(newOrder);
-      } catch (dbError) {
-        console.error("Firebase save error:", dbError);
-      }
+      } catch (dbError) {}
 
-      // تخزين محلي لصفحة النجاح
       try {
         sessionStorage.setItem(`order_success_${newOrder.id}`, JSON.stringify(newOrder));
       } catch (storageError) {}
