@@ -486,7 +486,7 @@ export const TRANSLATIONS = {
     availableStock: 'متوفر',
     piece: 'قطعة',
     fastDelivery: 'توصيل سريع خلال 2-4 أيام',
-    freeReturn: 'إرجاع مجاني خلال 14 يوم',
+    freeReturn: 'إرجاع مجاني خلال 2 يوم',
     descAndDetails: 'الوصف والتفاصيل',
     reviews: 'التقييمات',
     productSpecs: 'المواصفات:',
