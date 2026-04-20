@@ -484,19 +484,37 @@ const Checkout: React.FC = () => {
         addressMeta: { country: JO_COUNTRY.nameEn, countryCode: JO_COUNTRY.code, citySlug: formData.citySlug, ammanAreaId: formData.ammanAreaId, saveInfo: !!formData.saveInfo, phoneDial: dialCode, phoneLocal: safeTrim(formData.phoneLocal) },
       };
 
+      // 🚀 الحل الذكي لمشكلة الـ Worker (إرسال الإشعار لـ Telegram)
       const workerUrl = import.meta.env.VITE_WORKER_URL;
+      const workerAuthToken = import.meta.env.VITE_WORKER_AUTH_TOKEN; // 🚀 أضفنا سحب التوكن
+
       if (workerUrl && workerUrl.trim() !== '') {
+        console.log("Sending order notification to Worker:", workerUrl);
         fetch(`${workerUrl}/create-order`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            // 🚀 التعديل الأهم: إرسال مفتاح الأمان حتى لا يتم رفض الطلب
+            ...(workerAuthToken ? { 'Authorization': `Bearer ${workerAuthToken}` } : {}) 
+          },
           body: JSON.stringify({ order: newOrder }),
-        }).catch(e => console.warn('Background sync error', e));
+        })
+        .then(response => {
+          if (!response.ok) console.warn('Worker returned error:', response.status);
+        })
+        .catch(e => console.warn('Background sync error', e));
+      } else {
+        console.warn("VITE_WORKER_URL is missing in your environment variables! Telegram notification will not be sent.");
       }
 
+      // حفظ الطلب في Firebase
       try {
         if (db?.orders?.create) await db.orders.create(newOrder);
-      } catch (dbError) {}
+      } catch (dbError) {
+        console.error("Firebase save error:", dbError);
+      }
 
+      // تخزين محلي لصفحة النجاح
       try {
         sessionStorage.setItem(`order_success_${newOrder.id}`, JSON.stringify(newOrder));
       } catch (storageError) {}
