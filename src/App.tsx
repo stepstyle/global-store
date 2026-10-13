@@ -12,7 +12,7 @@ import AdminGuard from './components/AdminGuard';
 
 // Types & Services
 import { Product, CartItem, ToastMessage, ToastType, Language, User } from './types';
-import { trackPageView, trackEvent } from './services/analytics';
+import { trackPageView, trackEvent, trackMetaAddToCart } from './services/analytics';
 import { TRANSLATIONS } from './constants';
 import { db as storageDb } from './services/storage'; 
 import { auth, isFirebaseInitialized } from './services/firebase';
@@ -184,6 +184,22 @@ const App: React.FC = () => {
     const variant = (product as any).selectedVariant;
     const cartItemId = generateCartItemId(product, variant);
 
+    // Track the confirmed quantity change from this user action, outside React's state updater.
+    // React can invoke state updater functions more than once in development.
+    const currentItem = cart.find(i => generateCartItemId(i, i.selectedVariant) === cartItemId);
+    const availableStock = variant && variant.stock !== undefined ? variant.stock : product.stock;
+    const previousQty = currentItem?.quantity ?? 0;
+    const addedQty = availableStock === undefined
+      ? requestedQty
+      : Math.max(0, Math.min(requestedQty, Number(availableStock) - previousQty));
+    if (addedQty > 0) {
+      trackMetaAddToCart({
+        id: String(product.id),
+        price: Number(product.price || 0),
+        quantity: addedQty,
+      });
+    }
+
     setCart((prev) => {
       // نبحث في السلة باستخدام الـ cartItemId بدلاً من product.id العادي
       const existingItem = prev.find(i => generateCartItemId(i, i.selectedVariant) === cartItemId);
@@ -219,7 +235,7 @@ const App: React.FC = () => {
       }
       return [...prev, { ...product, quantity: requestedQty }];
     });
-  }, [isRtl, showToast]);
+  }, [cart, isRtl, showToast]);
 
   const updateCartItemQuantity = useCallback(async (cartItemId: string, n: number) => {
     const nextQty = Math.max(1, Math.round(n));

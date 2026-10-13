@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
 import { db } from '../services/storage';
+import { trackMetaPurchase } from '../services/analytics';
 import { Order, Product } from '../types';
 import SEO from '../components/SEO';
 import LazyImage from '../components/LazyImage';
@@ -483,9 +484,11 @@ const Checkout: React.FC = () => {
         }).catch(e => console.warn('Background sync error', e));
       }
 
-      try {
-        if (db?.orders?.create) await db.orders.create(newOrder);
-      } catch (dbError) {}
+      // Only report a Purchase to Meta after the primary database confirms the order.
+      // A failed database write must not be reported as a completed purchase.
+      if (!db?.orders?.create) throw new Error('Order storage unavailable');
+      await db.orders.create(newOrder);
+      trackMetaPurchase(newOrder);
 
       try {
         sessionStorage.setItem(`order_success_${newOrder.id}`, JSON.stringify(newOrder));
