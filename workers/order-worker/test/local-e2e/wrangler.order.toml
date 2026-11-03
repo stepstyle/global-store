@@ -1,0 +1,45 @@
+# LOCAL E2E ONLY — order Worker v2 under `wrangler dev` (local mode) for test/local-e2e/run.mjs.
+# Never deployed: no account_id, no routes, workers_dev = false, build target 'local'.
+# src/config.js refuses ENVIRONMENT=local with a non-demo project or any non-127.0.0.1/localhost URL.
+# Same rate limits and Turnstile mode as wrangler.staging.toml, so the scenarios behave as on staging.
+# Secrets (TELEGRAM_BOT_TOKEN, SENDGRID_API_KEY, WORKER_AUTH_TOKEN) are random per run, passed with --var.
+
+name = "anta-order-notify-local-e2e"
+main = "../../src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = false
+
+[define]
+__DEPLOY_TARGET__ = "'local'"
+
+[triggers]
+crons = ["* * * * *"]
+
+[[ratelimits]]
+name = "CREATE_RATE_LIMITER"
+namespace_id = "41001"
+simple = { limit = 20, period = 60 }
+
+[[ratelimits]]
+name = "STATUS_RATE_LIMITER"
+namespace_id = "41002"
+simple = { limit = 120, period = 60 }
+
+[vars]
+ENVIRONMENT = "local"
+FIREBASE_PROJECT_ID = "demo-dairsharaf-e2e"
+FIRESTORE_AUTH = "emulator"
+FIRESTORE_BASE_URL = "http://127.0.0.1:8087/v1"
+OAUTH_TOKEN_URL = "http://127.0.0.1:8789/oauth/token"
+TELEGRAM_API_BASE = "http://127.0.0.1:8788/telegram"
+SENDGRID_API_BASE = "http://127.0.0.1:8788/sendgrid"
+TURNSTILE_VERIFY_URL = "http://127.0.0.1:8789/turnstile/siteverify"
+TELEGRAM_CHAT_ID = "local-e2e-sink-chat"
+ADMIN_EMAIL = "local-e2e-admin@example.invalid"
+EMAIL_FROM = "local-e2e-orders@example.invalid"
+TURNSTILE_MODE = "enforce"
+TURNSTILE_SECRET = "1x0000000000000000000000000000000AA"
+ALLOWED_ORIGINS = "http://localhost:3000"
+STOCK_MODE = "apply"
+PRICE_CHECK_MODE = "log"
+RECONCILE_ENABLED = "false"

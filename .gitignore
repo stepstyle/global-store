@@ -24,3 +24,10 @@ dist-ssr
 *.sw?
 
 .vercel
+
+# Credentials must never be committed (service account keys, secrets, env files)
+*service-account*.json
+*.key.json
+dairsharaf-*-order-worker.json
+.secrets/
+.env

@@ -4,7 +4,9 @@
 //
 // Refuses unless: staging guard passes, the wrangler file has the expected -staging name, the 'staging'
 // build target, the staging project id, sink URLs on the same subdomain, and no REPLACE_WITH_ placeholder.
-// Always runs `wrangler deploy --dry-run` first; the real deploy only with --execute and an exact --confirm.
+// Every wrangler call is pinned to cfg.cloudflareAccountId. Always runs `wrangler deploy --dry-run` first;
+// the real deploy only with --execute, an exact --confirm, and a live check that the logged-in wrangler
+// credentials belong to exactly that staging account (staging/accounts.mjs).
 
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -13,9 +15,8 @@ import {
   assertStagingConfig, assertWranglerFile, loadStagingConfigFile, StagingGuardError, REPO_ROOT,
   STAGING_WORKER_NAME, SINK_WORKER_NAME,
 } from './guard.mjs';
+import { WRANGLER, wranglerEnv, verifyCloudflareAccount } from './accounts.mjs';
 import { parseArgs, runCli } from './common.mjs';
-
-const WRANGLER = resolve(REPO_ROOT, 'workers/order-worker/node_modules/wrangler/bin/wrangler.js');
 
 export const TARGETS = {
   order: { name: STAGING_WORKER_NAME, toml: resolve(REPO_ROOT, 'workers/order-worker/wrangler.staging.toml'), expectTarget: 'staging', checkProject: true },
@@ -31,6 +32,7 @@ export function planWorkerDeploy(st, which, tomlOverride) {
     expectTarget: t.expectTarget,
     projectId: t.checkProject ? st.projectId : undefined,
     sinkHost: t.checkProject ? st.sinkHost : undefined,
+    accountId: st.cloudflareAccountId,
   });
   return {
     name: t.name,
@@ -41,21 +43,25 @@ export function planWorkerDeploy(st, which, tomlOverride) {
 
 export async function main(argv, deps = {}) {
   const a = parseArgs(argv);
-  const st = assertStagingConfig(deps.config ?? loadStagingConfigFile(a.config), { env: deps.env ?? process.env });
+  const env = deps.env ?? process.env;
+  const st = assertStagingConfig(deps.config ?? loadStagingConfigFile(a.config), { env });
   const plan = planWorkerDeploy(st, a.which, deps.tomlOverride);
+  const execute = a.flags.has('execute');
+  if (execute && a.confirm !== plan.name) throw new StagingGuardError([`--confirm must equal "${plan.name}"`]);
+  const runEnv = wranglerEnv(st, env); // refuses before any spawn
   const spawn = deps.spawn ?? spawnSync;
-  const env = { ...process.env, WRANGLER_SEND_METRICS: 'false' };
 
-  console.log(`PLAN: ${plan.name}\n  dry-run: node ${plan.dryRun.slice(1).join(' ')}\n  deploy : node ${plan.deploy.slice(1).join(' ')}`);
-  const dry = spawn(process.execPath, plan.dryRun, { stdio: 'inherit', env });
+  console.log(`PLAN: ${plan.name} -> Cloudflare account ${st.cloudflareAccountId}\n  dry-run: node ${plan.dryRun.slice(1).join(' ')}\n  deploy : node ${plan.deploy.slice(1).join(' ')}`);
+  const dry = spawn(process.execPath, plan.dryRun, { stdio: 'inherit', env: runEnv });
   if ((dry.status ?? 1) !== 0) throw new Error('dry-run failed — not deploying');
 
-  if (!a.flags.has('execute')) {
+  if (!execute) {
     console.log(`dry-run only — add --execute --confirm ${plan.name} to deploy`);
     return 0;
   }
-  if (a.confirm !== plan.name) throw new StagingGuardError([`--confirm must equal "${plan.name}"`]);
-  const r = spawn(process.execPath, plan.deploy, { stdio: 'inherit', env });
+  const who = verifyCloudflareAccount(st, { env, spawn });
+  console.log(`account check OK: ${who.email} -> ${who.accountId} (only account)`);
+  const r = spawn(process.execPath, plan.deploy, { stdio: 'inherit', env: who.env });
   return r.status ?? 1;
 }
 

@@ -1,0 +1,16 @@
+# LOCAL E2E ONLY — the notify sink (workers/notify-sink) under `wrangler dev` (local mode).
+# KV is simulated locally (state in a temp dir via --persist-to). Never deployed: no account_id, no routes.
+# The sink's own check requires SINK_ENVIRONMENT=staging; that is a value of the sink code, not a target.
+# Tokens (SINK_TELEGRAM_TOKEN, SINK_SENDGRID_KEY, SINK_READ_TOKEN) are random per run, passed with --var.
+
+name = "anta-notify-sink-local-e2e"
+main = "../../../notify-sink/src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = false
+
+[[kv_namespaces]]
+binding = "SINK_KV"
+id = "local-e2e-sink-kv"
+
+[vars]
+SINK_ENVIRONMENT = "staging"

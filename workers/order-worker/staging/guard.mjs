@@ -12,6 +12,9 @@ export const SINK_WORKER_NAME = 'anta-notify-sink-staging';
 export const STAGING_WORKER_HOST_RE = /^anta-order-notify-staging\.([a-z0-9-]+)\.workers\.dev$/;
 const SINK_HOST_CAPTURE = /^anta-notify-sink-staging\.([a-z0-9-]+)\.workers\.dev$/;
 const MIN_TOKEN = 24;
+export const CF_ACCOUNT_ID_RE = /^[0-9a-f]{32}$/;
+// Deliberately narrow (no quotes, spaces or shell metacharacters): the value is passed to CLIs as an argument.
+export const EMAIL_RE = /^[a-z0-9._+-]{1,64}@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
@@ -108,7 +111,16 @@ export function assertStagingConfig(cfg, { repoRoot = REPO_ROOT, env = process.e
     }
   }
 
-  // 6. Ambient credentials / project overrides that could redirect a client library.
+  // 6. Accounts whose permissions the deploy scripts will use. Required, never defaulted:
+  //    a missing/malformed value stops every script (staging/accounts.mjs verifies them live before deploys).
+  const cfAccount = String(cfg.cloudflareAccountId || '');
+  if (!CF_ACCOUNT_ID_RE.test(cfAccount)) p.push('cloudflareAccountId missing or not a 32-character Cloudflare account id');
+  const cfEmail = String(cfg.cloudflareLoginEmail || '').toLowerCase();
+  if (!EMAIL_RE.test(cfEmail)) p.push('cloudflareLoginEmail missing or not a plain e-mail address');
+  const fbEmail = String(cfg.firebaseAccountEmail || '').toLowerCase();
+  if (!EMAIL_RE.test(fbEmail)) p.push('firebaseAccountEmail missing or not a plain e-mail address');
+
+  // 7. Ambient credentials / project overrides that could redirect a client library.
   for (const v of ['GCLOUD_PROJECT', 'GOOGLE_CLOUD_PROJECT', 'FIREBASE_PROJECT_ID', 'CLOUDSDK_CORE_PROJECT']) {
     if (env[v] && env[v] !== projectId) p.push(`environment variable ${v}="${env[v]}" points to another project`);
   }
@@ -122,7 +134,7 @@ export function assertStagingConfig(cfg, { repoRoot = REPO_ROOT, env = process.e
   }
   if (env.FIRESTORE_EMULATOR_HOST) p.push('FIRESTORE_EMULATOR_HOST is set (unset it for staging runs)');
 
-  // 7. Test tokens (only for scripts that call the Workers).
+  // 8. Test tokens (only for scripts that call the Workers).
   if (requireTokens) {
     for (const v of ['STAGING_SINK_READ_TOKEN', 'STAGING_WORKER_AUTH_TOKEN']) {
       if (String(env[v] || '').length < MIN_TOKEN) p.push(`environment variable ${v} missing or shorter than ${MIN_TOKEN}`);
@@ -138,11 +150,14 @@ export function assertStagingConfig(cfg, { repoRoot = REPO_ROOT, env = process.e
     sinkHost: sHost,
     serviceAccountKeyPath: keyPath,
     firebaseWebConfig: { ...web },
+    cloudflareAccountId: cfAccount,
+    cloudflareLoginEmail: cfEmail,
+    firebaseAccountEmail: fbEmail,
   });
 }
 
 /** Minimal checks on a wrangler TOML file (text based, no TOML lib needed). */
-export function assertWranglerFile(path, { expectName, expectTarget, projectId, sinkHost } = {}) {
+export function assertWranglerFile(path, { expectName, expectTarget, projectId, sinkHost, accountId } = {}) {
   const p = [];
   let text = '';
   try {
@@ -158,6 +173,9 @@ export function assertWranglerFile(path, { expectName, expectTarget, projectId, 
   if (code.includes(PROD_PROJECT_ID)) p.push('wrangler file references the production project');
   if (/dairsharaf\.com/i.test(code)) p.push('wrangler file references the production site');
   if (/^\s*\[env\./m.test(code)) p.push('wrangler [env.*] sections are not allowed (no indirection)');
+  // The account is pinned via CLOUDFLARE_ACCOUNT_ID by the deploy script; a different account_id in the file is refused.
+  const fileAccount = (code.match(/^\s*account_id\s*=\s*"([^"]*)"/m) || [])[1];
+  if (fileAccount !== undefined && fileAccount !== accountId) p.push('wrangler account_id differs from the configured staging Cloudflare account');
   if (expectTarget) {
     const t = (code.match(/__DEPLOY_TARGET__\s*=\s*"'([a-z]+)'"/) || [])[1];
     if (t !== expectTarget) p.push(`build target is "${t}", expected "${expectTarget}"`);

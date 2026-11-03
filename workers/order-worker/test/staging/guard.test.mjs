@@ -21,6 +21,19 @@ let keyPath;
 let prodKeyPath;
 let good;
 const TOKENS = { STAGING_SINK_READ_TOKEN: 'r'.repeat(32), STAGING_WORKER_AUTH_TOKEN: 'w'.repeat(32) };
+const STAGING_CF = '0123456789abcdef0123456789abcdef';
+const STAGING_EMAIL = 'staging-owner@example.com';
+// Answers the read-only account queries as a correctly logged-in staging setup would; records every call.
+const cliSpy = (status = 0) => {
+  const s = (cmd, args) => {
+    s.calls.push([cmd, ...args]);
+    if (args.includes('whoami')) return { status: 0, stdout: JSON.stringify({ loggedIn: true, authType: 'OAuth Token', email: STAGING_EMAIL, accounts: [{ id: STAGING_CF, name: 'staging' }] }) };
+    if (args[0] === 'projects:list') return { status: 0, stdout: JSON.stringify({ status: 'success', result: [{ projectId: 'dairsharaf-staging' }] }) };
+    return { status };
+  };
+  s.calls = [];
+  return s;
+};
 
 before(() => {
   dir = mkdtempSync(join(tmpdir(), 'staging-guard-test-'));
@@ -34,6 +47,9 @@ before(() => {
     sinkUrl: 'https://anta-notify-sink-staging.acme.workers.dev',
     serviceAccountKeyPath: keyPath,
     firebaseWebConfig: { apiKey: 'staging-fake-api-key', authDomain: 'dairsharaf-staging.firebaseapp.com', projectId: 'dairsharaf-staging', appId: '1:000:web:staging' },
+    cloudflareAccountId: STAGING_CF,
+    cloudflareLoginEmail: STAGING_EMAIL,
+    firebaseAccountEmail: STAGING_EMAIL,
   };
 });
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -196,7 +212,7 @@ test('every staging script refuses a production-pointing config before ANY reque
 });
 
 test('deploy-rules: plan only by default; --execute needs the exact staging project id', async () => {
-  const deps = { config: good, env: {}, spawn: spawnSpy() };
+  const deps = { config: good, env: {}, spawn: cliSpy() };
   assert.equal(await deployRulesMain([], deps), 0);
   assert.equal(deps.spawn.calls.length, 0, 'plan only');
   await assert.rejects(deployRulesMain(['--execute'], deps), StagingGuardError);
@@ -204,9 +220,11 @@ test('deploy-rules: plan only by default; --execute needs the exact staging proj
   await assert.rejects(deployRulesMain(['--execute', '--confirm', 'dairsharaf-staging2'], deps), StagingGuardError);
   assert.equal(deps.spawn.calls.length, 0);
   assert.equal(await deployRulesMain(['--execute', '--confirm', 'dairsharaf-staging'], deps), 0);
-  assert.equal(deps.spawn.calls.length, 1);
-  const cmd = deps.spawn.calls[0].join(' ');
+  assert.equal(deps.spawn.calls.length, 2, 'account check + deploy');
+  assert.match(deps.spawn.calls[0].join(' '), /projects:list --json --account staging-owner@example\.com/);
+  const cmd = deps.spawn.calls[1].join(' ');
   assert.match(cmd, /--project dairsharaf-staging/);
+  assert.match(cmd, /--account staging-owner@example\.com/);
   assert.match(cmd, /--only firestore:rules/);
   assert.equal(cmd.includes(PROD), false);
 });
@@ -215,13 +233,15 @@ test('deploy-workers: committed placeholders refused; filled file -> dry-run onl
   await assert.rejects(deployWorkersMain(['--which', 'order'], { config: good, env: {}, spawn: spawnSpy() }), /REPLACE_WITH_/);
   await assert.rejects(deployWorkersMain(['--which', 'prod'], { config: good, env: {}, spawn: spawnSpy(), tomlOverride: writeTmp('o.toml', filledOrderToml()) }), StagingGuardError);
 
-  const deps = { config: good, env: {}, spawn: spawnSpy(), tomlOverride: writeTmp('o2.toml', filledOrderToml()) };
+  const deps = { config: good, env: {}, spawn: cliSpy(), tomlOverride: writeTmp('o2.toml', filledOrderToml()) };
   assert.equal(await deployWorkersMain(['--which', 'order'], deps), 0);
   assert.equal(deps.spawn.calls.length, 1, 'dry-run only');
   assert.ok(deps.spawn.calls[0].includes('--dry-run'));
 
   await assert.rejects(deployWorkersMain(['--which', 'order', '--execute', '--confirm', 'anta-order-notify'], deps), StagingGuardError);
+  assert.equal(deps.spawn.calls.length, 1, 'wrong --confirm refused before any spawn');
   assert.equal(await deployWorkersMain(['--which', 'order', '--execute', '--confirm', 'anta-order-notify-staging'], deps), 0);
+  assert.ok(deps.spawn.calls.at(-2).includes('whoami'), 'account checked right before the deploy');
   const last = deps.spawn.calls.at(-1);
   assert.equal(last.includes('--dry-run'), false);
   assert.ok(last.includes('deploy'));

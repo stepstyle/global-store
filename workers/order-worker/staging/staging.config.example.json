@@ -1,6 +1,9 @@
 {
-  "_comment": "Copy to staging.config.json (git-ignored) and fill in. No secrets here: the service account key stays in a file OUTSIDE the repo; tokens come from environment variables STAGING_SINK_READ_TOKEN and STAGING_WORKER_AUTH_TOKEN.",
+  "_comment": "Copy to staging.config.json (git-ignored) and fill in. No secrets here: the service account key stays in a file OUTSIDE the repo; tokens come from environment variables STAGING_SINK_READ_TOKEN and STAGING_WORKER_AUTH_TOKEN. Account ids/e-mails are identifiers (not secrets) and are REQUIRED: every script stops if one is missing.",
   "projectId": "dairsharaf-staging",
+  "cloudflareAccountId": "REPLACE_WITH_STAGING_CLOUDFLARE_ACCOUNT_ID",
+  "cloudflareLoginEmail": "REPLACE_WITH_STAGING_EMAIL",
+  "firebaseAccountEmail": "REPLACE_WITH_STAGING_EMAIL",
   "workerUrl": "https://anta-order-notify-staging.REPLACE_WITH_WORKERS_SUBDOMAIN.workers.dev",
   "sinkUrl": "https://anta-notify-sink-staging.REPLACE_WITH_WORKERS_SUBDOMAIN.workers.dev",
   "serviceAccountKeyPath": "C:\\Users\\REPLACE_ME\\.secrets\\dairsharaf-staging-order-worker.json",
