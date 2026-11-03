@@ -11,7 +11,8 @@
 >   `anta-order-notify` → **Deployments** وتسجيل Version ID هنا.
 > - الملف **لا يحتوي أسرارًا**؛ كل المفاتيح تُقرأ من `env`.
 >
-> هذه النسخة **مرجع توثيقي فقط** — لا يوجد `wrangler.toml` ولا أي إعداد نشر في هذا المجلد.
+> هذه النسخة **مرجع توثيقي فقط**. `wrangler.toml` الموجود في هذا المجلد يخص **v2 للتطوير المحلي فقط**
+> (اسم مختلف `anta-order-notify-localdev`، بلا أي بيئة إنتاج) — انظر قسم «Worker v2» أدناه.
 
 ## المعلومات المعروفة
 
@@ -70,3 +71,57 @@
 | C15 | CORS يسمح فقط بـ `content-type, x-worker-auth` (سبب فشل إرسال `Authorization` سابقًا) |
 
 التفاصيل والخطة: [`docs/order-pipeline/README.md`](../../docs/order-pipeline/README.md).
+
+---
+
+# Worker v2 — المرحلة 1 (محلي فقط، غير منشور)
+
+> ⛔ **لم يُنشر.** لا يوجد سكربت `deploy` في `package.json`، و`wrangler.toml` محلي فقط باسم مختلف.
+> الكود يرفض العمل (`CONFIG_ERROR`، بلا أي اتصال خارجي) إذا كان `ENVIRONMENT=local` مع مشروع غير `demo-`
+> أو `antastore1-82b50`، أو أي عنوان خدمة غير `127.0.0.1`/`localhost`.
+
+## البنية
+
+| الملف | الدور |
+|---|---|
+| `src/index.js` | التوجيه، CORS، Turnstile، Rate limit، Cron (`scheduled`) |
+| `src/config.js` | قراءة المتغيرات + **حواجز الإنتاج** |
+| `src/firestore.js` | عميل REST (`get`/`batchGet`/`commit`/`runQuery`) + الترميز + المصادقة (محاكي أو حساب خدمة) |
+| `src/validate.js` | التحقق من الطلب (allow-list) + بصمة الهوية |
+| `src/pricing.js`, `src/pricing-config.js` | أسعار الخادم (جدول التوصيل منسوخ من `Checkout.tsx`؛ لا شحن مجاني) |
+| `src/inventory.js` | خطة المخزون حسب شكل المنتج (بنية Firestore الخام، لا خصم جزئي) |
+| `src/orders.js` | إنشاء/تبنّي/مطابقة + commit ذري + مسار الحالة |
+| `src/notify.js` | حجز ← إرسال ← تسجيل لتيليجرام وSendGrid |
+
+## المسارات
+
+| المسار | الحماية | الوظيفة |
+|---|---|---|
+| `POST /create-order` | CORS allow-list، 32KB، Rate limit، Turnstile (`log` افتراضيًا)، تحقق كامل | متوافق مع `Checkout.tsx` الحالي (`{order}`) |
+| `GET /orders/:id/status` | صيغة الرقم، Rate limit، `no-store` | `{ok, exists, status}` فقط — بلا بيانات شخصية |
+| `GET /test`, `POST /notify-order` | `x-worker-auth` (مقارنة ثابتة الزمن) | أدوات المالك |
+| `/firestore-test` | — | **حُذف** |
+| Cron `*/5` | — | إعادة الإشعارات المعلقة؛ المطابقة (**معطلة افتراضيًا**) |
+
+## القرارات المطبّقة (موافقة 2026-11-03)
+
+- منتجات الألوان/الأحجام: الخصم من `variants[i].stock` للمتغير المحدد فقط؛ `stock` العام **لا يُلمس**.
+- نقص المخزون في أي سطر: تحذير `STOCK_SHORTFALL` + `STOCK_NOT_DEDUCTED`، **لا خصم لأي سطر في الطلب**.
+- المشاكل التجارية (سعر، مخزون، منتج/متغير مفقود) تُعلَّم ⚠️ ولا تُرفض — لأن `Checkout.tsx` الحالي لا ينتظر الرد.
+- لا شحن مجاني.
+- `RECONCILE_ENABLED=false` افتراضيًا؛ عند تفعيله لا يُعالَج طلب إلا إذا: لا سجل له، `status=new`، يجتاز التحقق
+  الكامل، `id` = رقم المستند، `createdAt` وقت خادم (±60ث من `createTime`)، وداخل النافذة وبعد فترة السماح.
+- `userId` غير موثَّق: في وضع الإنشاء يُخزَّن `guest` + `claimedUserId`؛ في التبنّي يؤخذ من مستند المتصفح.
+
+## الاختبارات (2026-11-03) — كلها محلية
+
+| المجموعة | الأمر | النتيجة |
+|---|---|---|
+| وحدات | `npm run test:unit` | **68/68** |
+| تكامل (محاكي Firestore `demo-dairsharaf-orders` + خوادم وهمية) | `npm run test:integration` | **84/84** |
+| Smoke في `workerd` الحقيقي (`wrangler dev` محلي) | `npm run test:smoke` | **3/3** |
+| بناء فقط | `npm run build:check` (`wrangler deploy --dry-run`) | ✅ `--dry-run: exiting now` — بلا رفع، بلا بيانات اعتماد |
+| قواعد Firestore (عدم انحدار) | `firebase/rules-test: npm test` | **228/228** |
+
+المنافذ: محاكي 8086، `wrangler dev` 8787، الخوادم الوهمية 8790. على Windows قد يبقى المحاكي/`workerd` يعمل
+بعد التشغيل — أوقفه بـ `Get-NetTCPConnection -LocalPort 8086 -State Listen | % { Stop-Process -Id $_.OwningProcess }`.

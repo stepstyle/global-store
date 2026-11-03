@@ -1,0 +1,33 @@
+# ⚠️ LOCAL DEVELOPMENT ONLY — there is deliberately NO production environment in this file.
+# - name differs from the production Worker ("anta-order-notify") so a mistaken deploy can't overwrite it
+# - all values below are dummies; the Worker refuses to run (CONFIG_ERROR) if ENVIRONMENT=local
+#   is combined with a non-demo project or any non-localhost URL (see src/config.js)
+name = "anta-order-notify-localdev"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = false
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+ENVIRONMENT = "local"
+FIREBASE_PROJECT_ID = "demo-dairsharaf-orders"
+FIRESTORE_AUTH = "emulator"
+FIRESTORE_BASE_URL = "http://127.0.0.1:8086/v1"
+OAUTH_TOKEN_URL = "http://127.0.0.1:8790/oauth/token"
+TELEGRAM_API_BASE = "http://127.0.0.1:8790/telegram"
+SENDGRID_API_BASE = "http://127.0.0.1:8790/sendgrid"
+TURNSTILE_VERIFY_URL = "http://127.0.0.1:8790/turnstile/siteverify"
+TELEGRAM_BOT_TOKEN = "local-dummy-bot-token"
+TELEGRAM_CHAT_ID = "local-dummy-chat"
+SENDGRID_API_KEY = "local-dummy-sendgrid-key"
+ADMIN_EMAIL = "admin@example.invalid"
+EMAIL_FROM = "orders@example.invalid"
+WORKER_AUTH_TOKEN = "local-dummy-worker-auth-token-0001"
+TURNSTILE_SECRET = "1x0000000000000000000000000000000AA"
+ALLOWED_ORIGINS = "https://dairsharaf.com,https://www.dairsharaf.com,http://localhost:3000"
+STOCK_MODE = "apply"
+PRICE_CHECK_MODE = "log"
+TURNSTILE_MODE = "log"
+RECONCILE_ENABLED = "false"
