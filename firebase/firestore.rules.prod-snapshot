@@ -1,0 +1,95 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function rolesDoc() {
+      return /databases/$(database)/documents/config/roles;
+    }
+
+    function ownerUid() {
+      return exists(rolesDoc()) ? get(rolesDoc()).data.ownerUid : null;
+    }
+
+    function isOwner() {
+      return signedIn() && ownerUid() != null && request.auth.uid == ownerUid();
+    }
+
+    function isAdmin() {
+      return signedIn() && (
+        (ownerUid() != null && request.auth.uid == ownerUid()) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isSelf(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    // ✅ المالك فقط يتحكم بالأدمنز
+    match /admins/{uid} {
+      allow read: if isOwner();
+      allow create, update, delete: if isOwner();
+    }
+
+    // ✅ المنتجات: قراءة للجميع
+    match /products/{id} {
+      allow read: if true;
+      allow create, delete: if isAdmin();
+      // 🚨 تعديل احترافي: السماح للعميل بتحديث أرقام التقييمات فقط داخل المنتج (بدون المساس بالسعر أو الاسم)
+      allow update: if isAdmin() || (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ratingAvg', 'ratingCount', 'rating', 'reviews', 'updatedAt']));
+    }
+
+    // ✅ الأقسام: قراءة للجميع، تعديل للأدمن/المالك فقط
+    match /categories/{id} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+   // ✅ الطلبات:
+    match /orders/{id} {
+      // 1. السماح بإنشاء طلب، ولكن بشروط أمنية صارمة (Strict Validation)
+      allow create: if true
+        // 🚨 أ) يمنع الكتابة فوق طلب موجود مسبقاً (يجب أن يكون المستند جديداً تماماً)
+        && !exists(/databases/$(database)/documents/orders/$(id))
+        // 🚨 ب) إجبار الهكر والعميل أن تكون حالة الطلب الافتراضية دائماً 'new'
+        && request.resource.data.status == 'new';
+
+      // 2. السماح بفتح صفحة (نجاح الطلب) لأي شخص يمتلك رقم الطلب العشوائي الطويل
+      allow get: if true;
+
+      // 3. عرض قائمة الطلبات السابقة مسموح للأدمن أو لصاحب الطلب فقط
+      allow list: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+
+      allow update: if isAdmin();
+      allow delete: if isOwner();
+    }
+
+    // ✅ التقييمات:
+    match /reviews/{id} {
+      allow read: if true;
+      allow create: if signedIn();
+      allow delete: if isAdmin();
+      // 🚨 تعديل احترافي: السماح بتعديل التقييم لصاحبه، والسماح للآخرين بعمل "لايك" فقط
+      allow update: if isAdmin() ||
+                    (signedIn() && resource.data.userId == request.auth.uid) ||
+                    (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likesBy', 'likesCount', 'updatedAt']));
+    }
+
+    // ✅ users:
+    match /users/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+      allow create, update: if isSelf(uid) || isAdmin();
+      allow delete: if isOwner();
+    }
+
+    // ✅ config:
+    match /config/{doc} {
+      allow read: if isAdmin();
+      allow write: if isOwner();
+    }
+  }
+}
