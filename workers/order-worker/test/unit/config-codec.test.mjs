@@ -27,7 +27,8 @@ const guards = [
   ['missing URL falls back to nothing in local', { TELEGRAM_API_BASE: '' }],
   ['service-account auth in local', { FIRESTORE_AUTH: 'service-account' }],
   ['missing ENVIRONMENT', { ENVIRONMENT: '' }],
-  ['staging not supported yet', { ENVIRONMENT: 'staging' }],
+  ['ENVIRONMENT=staging on a local build', { ENVIRONMENT: 'staging' }],
+  ['ENVIRONMENT=production on a local build', { ENVIRONMENT: 'production' }],
   ['localhost lookalike host', { FIRESTORE_BASE_URL: 'http://127.0.0.1.evil.com/v1' }],
   ['PRICE_CHECK_MODE=enforce not available in phase 1', { PRICE_CHECK_MODE: 'enforce' }],
 ];

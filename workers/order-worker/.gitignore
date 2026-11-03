@@ -1,5 +1,12 @@
 node_modules/
 .wrangler/
 .dry-run/
+.dry-run-*/
 .dev.vars
+.dev.vars.*
 *.log
+# staging: filled-in config and any key material must never be committed
+staging/staging.config.json
+*.key.json
+*service-account*.json
+.secrets/

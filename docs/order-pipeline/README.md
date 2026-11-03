@@ -4,6 +4,8 @@
 - **الحالة:** المرحلة 0 ✅ (commit `b1e3368`). المرحلة 1 ✅ **محليًا**: Worker v2 مبني ومختبَر
   (وحدات 68/68، تكامل 84/84، workerd 3/3، dry-run ✅) — [`workers/order-worker/README.md`](../../workers/order-worker/README.md#worker-v2--المرحلة-1-محلي-فقط-غير-منشور).
   **لم يُنشر. لا تغيير على الإنتاج.**
+- **Staging S0 ✅ محليًا:** هدف البناء مثبّت، حواجز staging/production، المستقبِل الوهمي، سكربتات محروسة —
+  [`workers/order-worker/staging/README.md`](../../workers/order-worker/staging/README.md). لا موارد سحابية بعد.
 - **آخر تحديث:** 2026-11-03
 
 ---

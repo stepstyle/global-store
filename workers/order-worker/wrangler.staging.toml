@@ -1,0 +1,52 @@
+# STAGING ONLY — order Worker v2.  ⛔ Never deploy this file directly: use staging/deploy-workers.mjs,
+# which verifies the name, build target, project id and that no placeholder is left.
+#
+# - name ends with -staging and is different from the production Worker "anta-order-notify"
+# - __DEPLOY_TARGET__ = 'staging' is compiled in: this bundle can NEVER run as production
+#   (src/config.js refuses ENVIRONMENT != build target), whatever variables are set later
+# - notifications go ONLY to the staging sink Worker (anta-notify-sink-staging), never to Telegram/SendGrid
+# - Turnstile: Cloudflare's public always-pass TEST secret only
+#
+# Secrets (set with `wrangler secret put <NAME> --config wrangler.staging.toml`, never in this file):
+#   FIREBASE_CLIENT_EMAIL   service account of the STAGING project only (…@<staging>.iam.gserviceaccount.com)
+#   FIREBASE_PRIVATE_KEY    its private key
+#   TELEGRAM_BOT_TOKEN      = the sink's SINK_TELEGRAM_TOKEN (random, not a real bot token)
+#   SENDGRID_API_KEY        = the sink's SINK_SENDGRID_KEY  (random, not a real SendGrid key)
+#   WORKER_AUTH_TOKEN       random, staging only
+
+name = "anta-order-notify-staging"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = true
+
+[define]
+__DEPLOY_TARGET__ = "'staging'"
+
+[triggers]
+crons = ["* * * * *"]
+
+[[ratelimits]]
+name = "CREATE_RATE_LIMITER"
+namespace_id = "41001"
+simple = { limit = 20, period = 60 }
+
+[[ratelimits]]
+name = "STATUS_RATE_LIMITER"
+namespace_id = "41002"
+simple = { limit = 120, period = 60 }
+
+[vars]
+ENVIRONMENT = "staging"
+FIREBASE_PROJECT_ID = "dairsharaf-staging"
+FIRESTORE_AUTH = "service-account"
+TELEGRAM_API_BASE = "https://anta-notify-sink-staging.REPLACE_WITH_WORKERS_SUBDOMAIN.workers.dev/telegram"
+SENDGRID_API_BASE = "https://anta-notify-sink-staging.REPLACE_WITH_WORKERS_SUBDOMAIN.workers.dev/sendgrid"
+TELEGRAM_CHAT_ID = "staging-sink-chat"
+ADMIN_EMAIL = "staging-admin@example.invalid"
+EMAIL_FROM = "staging-orders@example.invalid"
+TURNSTILE_MODE = "enforce"
+TURNSTILE_SECRET = "1x0000000000000000000000000000000AA"
+ALLOWED_ORIGINS = "http://localhost:3000"
+STOCK_MODE = "apply"
+PRICE_CHECK_MODE = "log"
+RECONCILE_ENABLED = "false"

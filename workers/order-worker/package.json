@@ -7,7 +7,9 @@
     "test:unit": "node --test \"test/unit/*.test.mjs\"",
     "test:integration": "firebase emulators:exec --only firestore --project demo-dairsharaf-orders --config test/firebase.json \"node --test --test-concurrency=1 test/integration.test.mjs\"",
     "test:smoke": "firebase emulators:exec --only firestore --project demo-dairsharaf-orders --config test/firebase.json \"node --test test/smoke-wrangler.test.mjs\"",
-    "build:check": "wrangler deploy --dry-run --outdir .dry-run"
+    "build:check": "wrangler deploy --dry-run --outdir .dry-run",
+    "test:staging-guards": "node --test \"test/staging/*.test.mjs\"",
+    "build:check:staging": "wrangler deploy --dry-run --config wrangler.staging.toml --outdir .dry-run-staging"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "4.0.1",

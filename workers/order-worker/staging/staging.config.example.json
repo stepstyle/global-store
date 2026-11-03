@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy to staging.config.json (git-ignored) and fill in. No secrets here: the service account key stays in a file OUTSIDE the repo; tokens come from environment variables STAGING_SINK_READ_TOKEN and STAGING_WORKER_AUTH_TOKEN.",
+  "projectId": "dairsharaf-staging",
+  "workerUrl": "https://anta-order-notify-staging.REPLACE_WITH_WORKERS_SUBDOMAIN.workers.dev",
+  "sinkUrl": "https://anta-notify-sink-staging.REPLACE_WITH_WORKERS_SUBDOMAIN.workers.dev",
+  "serviceAccountKeyPath": "C:\\Users\\REPLACE_ME\\.secrets\\dairsharaf-staging-order-worker.json",
+  "firebaseWebConfig": {
+    "apiKey": "REPLACE_WITH_STAGING_WEB_API_KEY",
+    "authDomain": "dairsharaf-staging.firebaseapp.com",
+    "projectId": "dairsharaf-staging",
+    "appId": "REPLACE_WITH_STAGING_WEB_APP_ID"
+  }
+}

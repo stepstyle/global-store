@@ -7,6 +7,10 @@ main = "src/index.js"
 compatibility_date = "2025-06-01"
 workers_dev = false
 
+# Build-time target (see src/config.js). ENVIRONMENT must equal it or the Worker refuses to run.
+[define]
+__DEPLOY_TARGET__ = "'local'"
+
 [triggers]
 crons = ["*/5 * * * *"]
 
