@@ -23,7 +23,8 @@ workers_dev = true
 __DEPLOY_TARGET__ = "'staging'"
 
 [triggers]
-crons = ["* * * * *"]
+# same schedule as production (wrangler.toml): backlog / CPU measured on staging represent the real cadence
+crons = ["*/5 * * * *"]
 
 [[ratelimits]]
 name = "CREATE_RATE_LIMITER"
@@ -46,7 +47,8 @@ ADMIN_EMAIL = "staging-admin@example.invalid"
 EMAIL_FROM = "staging-orders@example.invalid"
 TURNSTILE_MODE = "enforce"
 TURNSTILE_SECRET = "1x0000000000000000000000000000000AA"
-ALLOWED_ORIGINS = "http://localhost:3000"
+# the local Vite dev server listens on 127.0.0.1 only (vite.config.ts) — the browser's Origin is this exact value
+ALLOWED_ORIGINS = "http://127.0.0.1:3000"
 STOCK_MODE = "apply"
 PRICE_CHECK_MODE = "log"
 RECONCILE_ENABLED = "false"

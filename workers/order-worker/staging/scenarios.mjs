@@ -52,6 +52,42 @@ export function makeCreateBudget({ limit = 18, windowMs = 61_000 } = {}) {
   };
 }
 
+/**
+ * Polls fn until it returns a truthy value or `ms` elapse. Hard deadline: a check that never answers cannot extend
+ * the wait. Each attempt gets an AbortSignal (fn(signal)) that is ABORTED at the deadline — reads that pass it to
+ * fetch are cancelled. Promise.race alone cancels nothing: a read that ignores the signal (e.g. the Firestore client
+ * in src/firestore.js, which takes no signal) keeps running until its own end — on staging every request is bounded
+ * by guardedFetch's per-request timeout (staging/guard.mjs). The deadline timer is always cleared (no timer keeps
+ * the process alive after the result).
+ */
+export function makeWaitFor(defaultMs) {
+  return async (fn, ms = defaultMs, step = 500) => {
+    const end = Date.now() + ms;
+    for (;;) {
+      const left = Math.max(0, end - Date.now());
+      const ac = new AbortController();
+      let timer;
+      const deadline = new Promise((resolve) => {
+        timer = setTimeout(() => {
+          ac.abort(new Error('waitFor: deadline reached'));
+          resolve(undefined);
+        }, left + step);
+      });
+      const attempt = Promise.resolve().then(() => fn(ac.signal));
+      attempt.catch(() => {}); // a read cancelled AFTER the deadline must not become an unhandled rejection
+      let v;
+      try {
+        v = await Promise.race([attempt, deadline]);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (v) return v;
+      if (Date.now() > end) return v;
+      await sleep(step);
+    }
+  };
+}
+
 export function buildScenarios(ctx) {
   const { W, S, sinkAuth, get } = ctx;
   const budget = makeCreateBudget(ctx.createBudget);
@@ -94,17 +130,10 @@ export function buildScenarios(ctx) {
     }
     return { ...r, retries503: retries };
   };
-  const sinkCalls = async () => (await (await fetch(`${S}/calls`, { headers: sinkAuth })).json()).calls || [];
-  const sinkFor = async (id) => (await sinkCalls()).filter((c) => c.orderId === id);
-  const waitFor = async (fn, ms = notifyWaitMs, step = 500) => {
-    const end = Date.now() + ms;
-    for (;;) {
-      const v = await fn();
-      if (v) return v;
-      if (Date.now() > end) return v;
-      await sleep(step);
-    }
-  };
+  // `signal` (optional): cancels the read when a waitFor deadline is reached
+  const sinkCalls = async (signal) => (await (await fetch(`${S}/calls`, { headers: sinkAuth, signal })).json()).calls || [];
+  const sinkFor = async (id, signal) => (await sinkCalls(signal)).filter((c) => c.orderId === id);
+  const waitFor = makeWaitFor(notifyWaitMs);
 
   const scenarios = [
     ['S01', 'happy path: Firestore commit, stock once, notified once', async () => {
@@ -117,8 +146,8 @@ export function buildScenarios(ctx) {
       assert.equal(await stock('p-simple'), 8);
       assert.equal(await stock('p-variants', 'var_red'), 4);
       assert.equal(await stock('p-variants'), 0);
-      const calls = await waitFor(async () => {
-        const c = await sinkFor(o.id);
+      const calls = await waitFor(async (signal) => {
+        const c = await sinkFor(o.id, signal);
         return c.filter((x) => x.ok).length >= 2 ? c : null;
       });
       assert.ok(calls, 'telegram + email reached the sink');
@@ -197,7 +226,7 @@ export function buildScenarios(ctx) {
       assert.equal((await create(o)).status, 200);
       const led = await get(`orderLedger/${o.id}`);
       assert.equal(led.priceMismatch, true);
-      const tg = await waitFor(async () => (await sinkFor(o.id)).find((c) => c.channel === 'telegram' && c.ok));
+      const tg = await waitFor(async (signal) => (await sinkFor(o.id, signal)).find((c) => c.channel === 'telegram' && c.ok));
       assert.ok(tg);
       assert.equal(tg.priceMismatch, true);
       assert.equal(tg.serverTotal, 8.2);
@@ -218,8 +247,10 @@ export function buildScenarios(ctx) {
       assert.equal((await create(checkoutOrder(), { token: null })).status, 403);
       const evil = await fetch(`${W}/orders/${makeOrderId()}/status`, { headers: { origin: 'https://evil.example' } });
       assert.equal(evil.headers.get('access-control-allow-origin'), null);
-      const dev = await fetch(`${W}/orders/${makeOrderId()}/status`, { headers: { origin: 'http://localhost:3000' } });
-      assert.equal(dev.headers.get('access-control-allow-origin'), 'http://localhost:3000');
+      // the local dev origin the Worker under test allows (staging: exactly http://127.0.0.1:3000)
+      const devOrigin = ctx.devOrigin ?? 'http://127.0.0.1:3000';
+      const dev = await fetch(`${W}/orders/${makeOrderId()}/status`, { headers: { origin: devOrigin } });
+      assert.equal(dev.headers.get('access-control-allow-origin'), devOrigin);
     }],
     ['S10', 'rate limit binding answers 429 under a burst', async () => {
       const N = 40;
@@ -230,7 +261,7 @@ export function buildScenarios(ctx) {
   ];
 
   if (!ctx.skipCron) {
-    scenarios.push(['S11', `Telegram failure retried by cron (${ctx.triggerCron ? 'triggered locally' : 'real cron, up to 3 min'})`, async () => {
+    scenarios.push(['S11', `Telegram failure retried by cron (${ctx.triggerCron ? 'triggered locally' : `real cron, up to ${Math.round((ctx.cronWaitMs ?? 180_000) / 60_000)} min`})`, async () => {
       await fetch(`${S}/control`, { method: 'POST', headers: { ...sinkAuth, 'content-type': 'application/json' }, body: JSON.stringify({ failNext: { telegram: 1 } }) });
       const o = checkoutOrder();
       assert.equal((await create(o)).status, 200);
@@ -260,7 +291,7 @@ export function buildScenarios(ctx) {
           assert.equal(r.status, 200, JSON.stringify(r.body));
           const led = await get(`orderLedger/${o.id}`);
           assert.ok(['created', 'adopted'].includes(led.mode));
-          const tg = await waitFor(async () => (await sinkFor(o.id)).filter((c) => c.channel === 'telegram' && c.ok).length === 1);
+          const tg = await waitFor(async (signal) => (await sinkFor(o.id, signal)).filter((c) => c.channel === 'telegram' && c.ok).length === 1);
           assert.ok(tg, `#${i} exactly one telegram`);
         }
       } finally {

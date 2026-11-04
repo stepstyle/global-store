@@ -183,7 +183,7 @@ test('wrangler files: filled staging file passes; every tampering is refused', (
     '[env.production] section': (t) => `${t}\n[env.production]\nname = "anta-order-notify"\n`,
     'Telegram not to sink': (t) => t.replace('https://anta-notify-sink-staging.acme.workers.dev/telegram', 'https://api.telegram.org'),
     'sink on other subdomain': (t) => t.replaceAll('anta-notify-sink-staging.acme.workers.dev', 'anta-notify-sink-staging.zzz.workers.dev'),
-    'production site origin': (t) => t.replace('ALLOWED_ORIGINS = "http://localhost:3000"', 'ALLOWED_ORIGINS = "https://dairsharaf.com"'),
+    'production site origin': (t) => t.replace('ALLOWED_ORIGINS = "http://127.0.0.1:3000"', 'ALLOWED_ORIGINS = "https://dairsharaf.com"'),
   };
   for (const [name, f] of Object.entries(tamper)) {
     assert.throws(() => assertWranglerFile(writeTmp(`bad-${name.replace(/\W+/g, '_')}.toml`, f(filledOrderToml())), opts), StagingGuardError, name);
@@ -213,13 +213,13 @@ test('every staging script refuses a production-pointing config before ANY reque
 
 test('deploy-rules: plan only by default; --execute needs the exact staging project id', async () => {
   const deps = { config: good, env: {}, spawn: cliSpy() };
-  assert.equal(await deployRulesMain([], deps), 0);
+  assert.equal(await deployRulesMain(['--rules', 'compat'], deps), 0);
   assert.equal(deps.spawn.calls.length, 0, 'plan only');
-  await assert.rejects(deployRulesMain(['--execute'], deps), StagingGuardError);
-  await assert.rejects(deployRulesMain(['--execute', '--confirm', PROD], deps), StagingGuardError);
-  await assert.rejects(deployRulesMain(['--execute', '--confirm', 'dairsharaf-staging2'], deps), StagingGuardError);
+  await assert.rejects(deployRulesMain(['--rules', 'compat', '--execute'], deps), StagingGuardError);
+  await assert.rejects(deployRulesMain(['--rules', 'compat', '--execute', '--confirm', PROD], deps), StagingGuardError);
+  await assert.rejects(deployRulesMain(['--rules', 'compat', '--execute', '--confirm', 'dairsharaf-staging2'], deps), StagingGuardError);
   assert.equal(deps.spawn.calls.length, 0);
-  assert.equal(await deployRulesMain(['--execute', '--confirm', 'dairsharaf-staging'], deps), 0);
+  assert.equal(await deployRulesMain(['--rules', 'compat', '--execute', '--confirm', 'dairsharaf-staging'], deps), 0);
   assert.equal(deps.spawn.calls.length, 2, 'account check + deploy');
   assert.match(deps.spawn.calls[0].join(' '), /projects:list --json --account staging-owner@example\.com/);
   const cmd = deps.spawn.calls[1].join(' ');
@@ -250,4 +250,202 @@ test('deploy-workers: committed placeholders refused; filled file -> dry-run onl
   const failingDry = { ...deps, spawn: spawnSpy(1) };
   await assert.rejects(deployWorkersMain(['--which', 'order', '--execute', '--confirm', 'anta-order-notify-staging'], failingDry), /dry-run failed/);
   assert.equal(failingDry.spawn.calls.length, 1, 'no real deploy after a failed dry-run');
+});
+
+// ------------------------------------------------------------------ priority-1 staging preparation (local only)
+import { RULES_SETS, RULES_DIR, STAGING_PROJECT_ID, resolveRulesChoice, planRulesDeploy } from '../../staging/deploy-rules.mjs';
+import { CRON_PERIOD_MS, CRON_WAIT_MS, CRON_STEP_MS, STAGING_DEV_ORIGIN } from '../../staging/run-tests.mjs';
+import { buildScenarios } from '../../staging/scenarios.mjs';
+import { execFileSync } from 'node:child_process';
+import { parseArgs } from '../../staging/common.mjs';
+
+const tomlValue = (text, key) => (text.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'm')) || [])[1]?.trim();
+
+test('wrangler.staging.toml: browser origin is exactly the local Vite address 127.0.0.1:3000; cron every 5 minutes', () => {
+  const t = readFileSync(resolve(REPO_ROOT, 'workers/order-worker/wrangler.staging.toml'), 'utf8');
+  assert.equal(tomlValue(t, 'ALLOWED_ORIGINS'), '"http://127.0.0.1:3000"');
+  assert.equal(tomlValue(t, 'crons'), '["*/5 * * * *"]');
+  assert.equal(/localhost/.test(t.replace(/^#.*$/gm, '')), false, 'no localhost origin left');
+  assert.equal(STAGING_DEV_ORIGIN, 'http://127.0.0.1:3000', 'run-tests checks the same origin');
+  // the filled-in staging file is still accepted by the wrangler guard
+  const st = assertStagingConfig(good, { env: {} });
+  assert.deepEqual(assertWranglerFile(writeTmp('ok-p1.toml', filledOrderToml()), { expectName: 'anta-order-notify-staging', expectTarget: 'staging', projectId: st.projectId, sinkHost: st.sinkHost }), { name: 'anta-order-notify-staging' });
+});
+
+test('production wrangler.toml is untouched (same as the last commit): cron and origins unchanged', () => {
+  const now = readFileSync(resolve(REPO_ROOT, 'workers/order-worker/wrangler.toml'), 'utf8').replace(/\r\n/g, '\n');
+  const committed = execFileSync('git', ['show', 'HEAD:workers/order-worker/wrangler.toml'], { cwd: REPO_ROOT, encoding: 'utf8' }).replace(/\r\n/g, '\n');
+  assert.equal(now, committed);
+  assert.equal(tomlValue(now, 'crons'), '["*/5 * * * *"]');
+});
+
+test('run-tests: the cron wait fits the 5-minute schedule and is bounded', () => {
+  assert.equal(CRON_PERIOD_MS, 5 * 60_000);
+  assert.ok(CRON_WAIT_MS >= 2 * CRON_PERIOD_MS, 'covers two schedule periods (one order per run)');
+  assert.ok(CRON_WAIT_MS <= 15 * 60_000, 'bounded');
+  assert.ok(CRON_STEP_MS > 0 && CRON_STEP_MS < CRON_WAIT_MS);
+});
+
+test('scenarios: a cron check that NEVER answers still ends at the wait limit (no endless wait)', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => (/\/create-order$/.test(String(url)) ? new Response(JSON.stringify({ ok: true }), { status: 200 }) : new Response('{}', { status: 200 }));
+  try {
+    const ctx = {
+      W: 'https://w.test', S: 'https://s.test', sinkAuth: {}, turnstileToken: 't', projectId: 'x',
+      get: () => new Promise(() => {}), // a read that never answers
+      cronWaitMs: 300, cronStepMs: 50, skipBrowser: true,
+    };
+    const s11 = buildScenarios(ctx).find(([id]) => id === 'S11');
+    assert.ok(s11, 'S11 present');
+    const t0 = Date.now();
+    await assert.rejects(s11[2](), /telegram eventually sent by cron/);
+    assert.ok(Date.now() - t0 < 3_000, `ended after ${Date.now() - t0} ms`);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('deploy-rules: each allowed set (compat | transition | final) -> plan only, the RIGHT file, nothing spawned', async () => {
+  for (const kind of ['compat', 'transition', 'final']) {
+    const spawn = cliSpy();
+    assert.equal(await deployRulesMain(['--rules', kind], { config: good, env: {}, spawn }), 0, kind);
+    assert.equal(spawn.calls.length, 0, `${kind}: plan only`);
+    const plan = planRulesDeploy(assertStagingConfig(good, { env: {} }), resolveRulesChoice(parseArgs(['--rules', kind])));
+    assert.equal(plan.kind, kind);
+    assert.equal(readFileSync(join(plan.cwd, 'firestore.rules'), 'utf8'), readFileSync(RULES_SETS[kind], 'utf8'), `${kind}: copies its own file`);
+    assert.ok(RULES_SETS[kind].startsWith(RULES_DIR));
+  }
+});
+
+test('deploy-rules: missing / empty / unknown / path / extra options are refused BEFORE anything is planned or spawned', async () => {
+  const absFinal = RULES_SETS.final;
+  const bad = {
+    'no --rules': [],
+    '--rules without a value': ['--rules'],
+    '--rules followed by another flag': ['--rules', '--execute', '--confirm', STAGING_PROJECT_ID],
+    'unknown name': ['--rules', 'prod'],
+    'case variant': ['--rules', 'FINAL'],
+    'relative path': ['--rules', '../rules-test/firestore.rules.final'],
+    'absolute path to a real rules file': ['--rules', absFinal],
+    'file name instead of set name': ['--rules', 'firestore.rules.final'],
+    'prototype key': ['--rules', '__proto__'],
+    'extra file option': ['--rules', 'final', '--rules-file', absFinal],
+    'equals syntax': ['--rules=final'],
+  };
+  for (const [name, argv] of Object.entries(bad)) {
+    const spawn = cliSpy();
+    await assert.rejects(deployRulesMain(argv, { config: good, env: {}, spawn }), StagingGuardError, name);
+    assert.equal(spawn.calls.length, 0, `${name}: nothing spawned`);
+  }
+});
+
+test('deploy-rules: only "dairsharaf-staging" may be targeted (another *-staging project is refused)', async () => {
+  const st = assertStagingConfig(good, { env: {} });
+  assert.throws(() => planRulesDeploy({ ...st, projectId: 'other-staging' }, resolveRulesChoice(parseArgs(['--rules', 'final']))), StagingGuardError);
+  const other = { ...good, projectId: 'other-staging', firebaseWebConfig: { ...good.firebaseWebConfig, projectId: 'other-staging', authDomain: 'other-staging.firebaseapp.com' } };
+  const spawn = cliSpy();
+  await assert.rejects(deployRulesMain(['--rules', 'final', '--execute', '--confirm', 'other-staging'], { config: other, env: {}, spawn }), StagingGuardError);
+  assert.equal(spawn.calls.length, 0);
+});
+
+test('deploy-rules: --dry-run never deploys (even with --execute --confirm); a real deploy needs --execute AND the exact --confirm', async () => {
+  const dry = cliSpy();
+  assert.equal(await deployRulesMain(['--rules', 'final', '--dry-run', '--execute', '--confirm', STAGING_PROJECT_ID], { config: good, env: {}, spawn: dry }), 0);
+  assert.equal(dry.calls.length, 0, 'dry-run: nothing spawned');
+  const noConfirm = cliSpy();
+  await assert.rejects(deployRulesMain(['--rules', 'final', '--execute'], { config: good, env: {}, spawn: noConfirm }), StagingGuardError);
+  assert.equal(noConfirm.calls.length, 0);
+  const real = cliSpy();
+  assert.equal(await deployRulesMain(['--rules', 'final', '--execute', '--confirm', STAGING_PROJECT_ID], { config: good, env: {}, spawn: real }), 0);
+  assert.equal(real.calls.length, 2, 'account check + deploy (spawn spy, nothing real)');
+  const cmd = real.calls[1].join(' ');
+  assert.match(cmd, /--only firestore:rules --project dairsharaf-staging --account staging-owner@example\.com/);
+  assert.equal(cmd.includes(PROD), false);
+});
+
+// ------------------------------------------------------------------ waitFor deadline + request bounds (local only)
+import { makeWaitFor } from '../../staging/scenarios.mjs';
+import { STAGING_REQUEST_TIMEOUT_MS } from '../../staging/guard.mjs';
+import { createServer } from 'node:http';
+
+const activeTimers = () => process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length;
+
+test('waitFor: a read that HONOURS the signal is really cancelled at the deadline (the server sees the request closed)', async () => {
+  let closed = 0;
+  let opened = 0;
+  const server = createServer((req) => {
+    opened++;
+    req.on('close', () => closed++); // never answers
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.address().port}/calls`;
+  try {
+    const waitFor = makeWaitFor(200);
+    const t0 = Date.now();
+    const v = await waitFor(async (signal) => (await fetch(url, { signal })).json(), 200, 50);
+    assert.equal(v, undefined, 'no result: the deadline ended the wait');
+    assert.ok(Date.now() - t0 < 2_000, `ended after ${Date.now() - t0} ms`);
+    for (let i = 0; i < 40 && closed < opened; i++) await new Promise((r) => setTimeout(r, 25));
+    assert.ok(opened >= 1);
+    assert.equal(closed, opened, 'every request was aborted (closed), none left open');
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('waitFor: a read that IGNORES the signal cannot extend the wait; no unhandled rejection afterwards', async () => {
+  const unhandled = [];
+  const onUnhandled = (e) => unhandled.push(e);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const waitFor = makeWaitFor(150);
+    let release;
+    const t0 = Date.now();
+    // never answers by itself; later rejects (as an aborted read would) — after waitFor has already returned
+    const v = await waitFor(() => new Promise((_, rej) => (release = rej)), 150, 30);
+    assert.equal(v, undefined);
+    assert.ok(Date.now() - t0 < 1_500);
+    release(new Error('late failure of a read that ignored the signal'));
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(unhandled, [], 'the late rejection is handled');
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+});
+
+test('waitFor: after a quick result NO timer stays behind (the process is not kept alive for the remaining wait)', async () => {
+  const before = activeTimers();
+  const waitFor = makeWaitFor(10 * 60_000);
+  const v = await waitFor(async () => 'ready', 10 * 60_000, 5_000); // a 10-minute wait answered at once
+  assert.equal(v, 'ready');
+  assert.equal(activeTimers(), before, 'the 10-minute deadline timer was cleared');
+});
+
+test('waitFor: an error thrown by the check before the deadline still fails the scenario (unchanged)', async () => {
+  const waitFor = makeWaitFor(1_000);
+  await assert.rejects(waitFor(async () => { throw new Error('read failed'); }, 1_000, 20), /read failed/);
+});
+
+test('guardedFetch: every staging request is bounded; the caller\'s own signal still aborts it first', async () => {
+  const st = assertStagingConfig(good, { env: {} });
+  const seen = [];
+  const hangUntilAborted = (input, init) => new Promise((_, rej) => {
+    seen.push(init?.signal);
+    init.signal.addEventListener('abort', () => rej(init.signal.reason));
+  });
+  assert.equal(STAGING_REQUEST_TIMEOUT_MS, 30_000);
+  // default bound applies even when the caller gives no signal (e.g. the Firestore client)
+  const f = guardedFetch(st, hangUntilAborted, { timeoutMs: 80 });
+  const t0 = Date.now();
+  await assert.rejects(f(`${good.workerUrl}/orders/X/status`), (e) => /TimeoutError|aborted|timeout/i.test(String(e?.name || e)));
+  assert.ok(Date.now() - t0 < 1_500);
+  assert.ok(seen[0] instanceof AbortSignal);
+  // the caller's signal wins when it fires first
+  const ac = new AbortController();
+  const p = guardedFetch(st, hangUntilAborted, { timeoutMs: 60_000 })(`${good.sinkUrl}/calls`, { signal: ac.signal });
+  ac.abort(new Error('caller cancelled'));
+  await assert.rejects(p, /caller cancelled/);
+  // blocked hosts are still refused before any request
+  await assert.rejects(guardedFetch(st, hangUntilAborted)('https://firestore.googleapis.com/v1/projects/antastore1-82b50/databases/(default)/documents/x'), StagingGuardError);
 });

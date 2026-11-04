@@ -99,7 +99,7 @@ test('every staging script refuses a config without account values BEFORE any sp
   const env = { STAGING_SINK_READ_TOKEN: 'r'.repeat(32), STAGING_WORKER_AUTH_TOKEN: 'w'.repeat(32) };
   const deps = { config: noAccounts, env, spawn: cli, tomlOverride: orderToml, realFetch };
   await assert.rejects(deployWorkersMain(['--which', 'order', '--execute', '--confirm', 'anta-order-notify-staging'], deps), /cloudflareAccountId/);
-  await assert.rejects(deployRulesMain(['--execute', '--confirm', 'dairsharaf-staging'], deps), /firebaseAccountEmail/);
+  await assert.rejects(deployRulesMain(['--rules', 'final', '--execute', '--confirm', 'dairsharaf-staging'], deps), /firebaseAccountEmail/);
   await assert.rejects(checkAccountsMain(['--cloudflare', '--firebase'], deps), StagingGuardError);
   await assert.rejects(seedMain([], deps), StagingGuardError);
   await assert.rejects(runTestsMain([], deps), StagingGuardError);
@@ -195,7 +195,7 @@ test('Firebase: staging account with --account passes; FIREBASE_TOKEN and projec
 test('Firebase: FIREBASE_TOKEN set (would override --account) -> refused before spawning', async () => {
   const cli = fakeCli();
   refused(() => verifyFirebaseAccount(st, { env: { FIREBASE_TOKEN: 't' }, spawn: cli }), /FIREBASE_TOKEN/);
-  await assert.rejects(deployRulesMain(['--execute', '--confirm', 'dairsharaf-staging'], { config: good, env: { FIREBASE_TOKEN: 't' }, spawn: cli }), /FIREBASE_TOKEN/);
+  await assert.rejects(deployRulesMain(['--rules', 'final', '--execute', '--confirm', 'dairsharaf-staging'], { config: good, env: { FIREBASE_TOKEN: 't' }, spawn: cli }), /FIREBASE_TOKEN/);
   assert.equal(cli.calls.length, 0);
 });
 
@@ -217,7 +217,7 @@ test('Firebase: account that cannot see the staging project -> refused', () => {
 test('Firebase: MULTIPLE accounts logged in (store account is the CLI default) -> only the staging account is used', async () => {
   // Without --account the fake CLI would answer as the store account (sees production) and the check would refuse.
   const cli = fakeCli({ fb: { [EMAIL]: ['dairsharaf-staging'], [OTHER_EMAIL]: [PROD] }, fbDefault: OTHER_EMAIL, fbDefaultProjects: [PROD] });
-  assert.equal(await deployRulesMain(['--execute', '--confirm', 'dairsharaf-staging'], { config: good, env: {}, spawn: cli }), 0);
+  assert.equal(await deployRulesMain(['--rules', 'final', '--execute', '--confirm', 'dairsharaf-staging'], { config: good, env: {}, spawn: cli }), 0);
   assert.equal(cli.calls.length, 2);
   for (const c of cli.calls) {
     const i = c.args.indexOf('--account');
@@ -236,11 +236,11 @@ test('deploy-rules: every wrong-account case stops BEFORE the deploy; plan mode 
   };
   for (const [name, o] of Object.entries(cases)) {
     const cli = fakeCli(o);
-    await assert.rejects(deployRulesMain(['--execute', '--confirm', 'dairsharaf-staging'], { config: good, env: {}, spawn: cli }), StagingGuardError, name);
+    await assert.rejects(deployRulesMain(['--rules', 'final', '--execute', '--confirm', 'dairsharaf-staging'], { config: good, env: {}, spawn: cli }), StagingGuardError, name);
     assert.equal(cli.deploys().length, 0, name);
   }
   const plan = fakeCli();
-  assert.equal(await deployRulesMain([], { config: good, env: {}, spawn: plan }), 0);
+  assert.equal(await deployRulesMain(['--rules', 'final'], { config: good, env: {}, spawn: plan }), 0);
   assert.equal(plan.calls.length, 0);
 });
 

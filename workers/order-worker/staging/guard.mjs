@@ -198,7 +198,14 @@ export function assertWranglerFile(path, { expectName, expectTarget, projectId, 
  * fetch wrapper: only the staging Workers, Google OAuth, and Firestore paths of the staging project.
  * Anything else throws BEFORE the request is made.
  */
-export function guardedFetch(stagingCfg, realFetch = globalThis.fetch) {
+/**
+ * Upper bound for ANY staging script request (Worker, sink, Google OAuth, Firestore — including the Firestore client
+ * from src/firestore.js, which passes no signal of its own): no request can stay open longer than this, so nothing
+ * keeps running long after a test result. Combined with the caller's own signal (whichever fires first aborts).
+ */
+export const STAGING_REQUEST_TIMEOUT_MS = 30_000;
+
+export function guardedFetch(stagingCfg, realFetch = globalThis.fetch, { timeoutMs = STAGING_REQUEST_TIMEOUT_MS } = {}) {
   const allowed = new Set([stagingCfg.workerHost, stagingCfg.sinkHost, 'oauth2.googleapis.com', 'firestore.googleapis.com']);
   const firestorePrefix = `/v1/projects/${stagingCfg.projectId}/databases/`;
   return async (input, init) => {
@@ -212,7 +219,9 @@ export function guardedFetch(stagingCfg, realFetch = globalThis.fetch) {
     if (url.pathname.includes(PROD_PROJECT_ID) || url.search.includes(PROD_PROJECT_ID)) {
       throw new StagingGuardError(['blocked request mentioning the production project']);
     }
-    return realFetch(input, init);
+    const bound = AbortSignal.timeout(timeoutMs);
+    const signal = init?.signal ? AbortSignal.any([init.signal, bound]) : bound;
+    return realFetch(input, { ...init, signal });
   };
 }
 

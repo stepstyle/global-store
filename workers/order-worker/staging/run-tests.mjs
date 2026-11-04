@@ -12,6 +12,15 @@ import { runScenarios } from './scenarios.mjs';
 
 const TURNSTILE_TEST_TOKEN = 'staging-turnstile-test-token'; // accepted by Cloudflare's always-pass TEST secret
 
+// Real cron on staging runs every 5 minutes (wrangler.staging.toml, same as production) and handles ONE order per
+// run. A retried notification can therefore wait up to ~2 schedule periods plus Cloudflare's trigger delay.
+// Hard limit: the wait always ends (fails) after CRON_WAIT_MS — never an endless wait.
+export const CRON_PERIOD_MS = 5 * 60_000;
+export const CRON_WAIT_MS = 12 * 60_000; // 2 periods + 2 min margin
+export const CRON_STEP_MS = 15_000; // poll interval (reads only)
+// the only browser origin the staging Worker allows (the local Vite dev server, vite.config.ts: 127.0.0.1:3000)
+export const STAGING_DEV_ORIGIN = 'http://127.0.0.1:3000';
+
 export async function main(argv, deps = {}) {
   const args = parseArgs(argv);
   const env = deps.env ?? process.env;
@@ -38,8 +47,9 @@ export async function main(argv, deps = {}) {
       const app = initializeApp(st.firebaseWebConfig, `staging-browser-${Date.now()}`);
       return { db: getFirestore(app), done: () => deleteApp(app) };
     },
-    cronWaitMs: 180_000,
-    cronStepMs: 5_000,
+    cronWaitMs: CRON_WAIT_MS,
+    cronStepMs: CRON_STEP_MS,
+    devOrigin: STAGING_DEV_ORIGIN,
     createBudget: { limit: 18, windowMs: 61_000 }, // wrangler.staging.toml: CREATE_RATE_LIMITER 20 / 60 s
     skipCron: args.flags.has('skip-cron'),
     skipBrowser: args.flags.has('skip-browser'),
