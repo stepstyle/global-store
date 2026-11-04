@@ -67,7 +67,8 @@ test('refuses wrangler files that could reach Cloudflare or production', () => {
     'ENVIRONMENT production': (t) => t.replace('ENVIRONMENT = "local"', 'ENVIRONMENT = "production"'),
     'production project': (t) => t.replace('FIREBASE_PROJECT_ID = "demo-dairsharaf-e2e"', `FIREBASE_PROJECT_ID = "${PROD}"`),
     'non-demo project': (t) => t.replace('FIREBASE_PROJECT_ID = "demo-dairsharaf-e2e"', 'FIREBASE_PROJECT_ID = "dairsharaf-staging"'),
-    'production origin': (t) => t.replace('ALLOWED_ORIGINS = "http://localhost:3000"', 'ALLOWED_ORIGINS = "https://dairsharaf.com"'),
+    'production origin': (t) => t.replace(/ALLOWED_ORIGINS = "[^"]*"/, 'ALLOWED_ORIGINS = "https://dairsharaf.com"'),
+    'production origin added to local ones': (t) => t.replace(/ALLOWED_ORIGINS = "([^"]*)"/, 'ALLOWED_ORIGINS = "$1,https://www.dairsharaf.com"'),
   };
   for (const [name, f] of Object.entries(tamper)) {
     const problems = checkWranglerFile(at(`w-${name.replace(/\W+/g, '_')}.toml`, f(base)), allowed);
@@ -76,13 +77,15 @@ test('refuses wrangler files that could reach Cloudflare or production', () => {
   }
 });
 
-test('refuses an emulator config that is not firestore-only on 127.0.0.1 with UI off', () => {
+test('refuses an emulator config that is not firestore(+auth) on 127.0.0.1 with UI off', () => {
   const j = JSON.parse(readFileSync(FILES.firebaseJson, 'utf8'));
   const bad = {
     'emulator on 0.0.0.0': { ...j, emulators: { ...j.emulators, firestore: { ...j.emulators.firestore, host: '0.0.0.0' } } },
     'other port': { ...j, emulators: { ...j.emulators, firestore: { ...j.emulators.firestore, port: 8080 } } },
     'UI enabled': { ...j, emulators: { ...j.emulators, ui: { enabled: true } } },
-    'auth emulator added': { ...j, emulators: { ...j.emulators, auth: { host: '127.0.0.1', port: 9099 } } },
+    'auth emulator on 0.0.0.0': { ...j, emulators: { ...j.emulators, auth: { host: '0.0.0.0', port: 9099 } } },
+    'auth emulator on an unplanned port': { ...j, emulators: { ...j.emulators, auth: { host: '127.0.0.1', port: 9098 } } },
+    'storage emulator added': { ...j, emulators: { ...j.emulators, storage: { host: '127.0.0.1', port: 9199 } } },
     'hosting section': { ...j, hosting: { public: 'dist' } },
   };
   for (const [name, cfg] of Object.entries(bad)) refuses({ ...PLAN, firebaseJson: at(`f-${name.replace(/\W+/g, '_')}.json`, JSON.stringify(cfg)) }, {}, /firebase\.json/);

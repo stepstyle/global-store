@@ -4,18 +4,27 @@
 
 import http from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, generateKeyPairSync } from 'node:crypto';
+import { measureCpu, workerdUnder } from './cpu-measure.mjs';
 import { readFileSync, writeFileSync, mkdirSync, createWriteStream } from 'node:fs';
 import { join } from 'node:path';
 import { Firestore, encodeFields, decodeFields } from '../../src/firestore.js';
 import { PRODUCTS } from '../fixtures.mjs';
 import { MARKER_PATH } from '../../staging/common.mjs';
 import { runScenarios } from '../../staging/scenarios.mjs';
+import { runSubmitScenarios } from './submit-scenarios.mjs';
+import { makeTestSigner } from '../token-signer.mjs';
+import { launchChrome, openTab } from './cdp.mjs';
+import { buildUiScenarios, runUiScenarios } from './ui-scenarios.mjs';
+import { resolve as resolvePath } from 'node:path';
+import { WORKER_ROOT } from './plan.mjs';
 import { assertLocalPlan, localOnlyFetch } from './guard.mjs';
 import { PLAN, PORTS, URLS, FILES, PROJECT_ID, TURNSTILE_PASS_TOKEN } from './plan.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const TMP = process.env.E2E_TMP;
+const CPU_MODE = process.env.E2E_MODE === 'cpu';
+const SUITE = process.env.E2E_SUITE || 'all'; // all | scenarios | submit | ui
 const children = [];
 
 function fail(msg) {
@@ -30,17 +39,201 @@ assertLocalPlan(PLAN, process.env);
 if (process.env.FIRESTORE_EMULATOR_HOST !== `127.0.0.1:${PORTS.emulator}`) fail('emulator is not on the planned port');
 globalThis.fetch = localOnlyFetch(Object.values(PORTS), globalThis.fetch);
 
-// ---------------------------------------------------------------- local Turnstile mock
-const mockCalls = { turnstile: 0, unexpected: [] };
+// ---------------------------------------------------------------- local Turnstile mock + chaos proxy (S13–S22)
+const mockCalls = { turnstile: 0, chaos: 0, jwks: 0, unexpected: [] };
+// TEST key pair for Firebase-style ID tokens, generated in memory for this run (never a Google key). The Worker
+// fetches the public half from this mock (wrangler.order.toml AUTH_JWKS_URL); FORGER signs with another key.
+const AUTH_SIGNER = await makeTestSigner('local-e2e-kid');
+const AUTH_FORGER = await makeTestSigner('local-e2e-kid');
+const chaosHits = new Map();
+async function handleChaos(mode, path, req, res, body) {
+  mockCalls.chaos += 1;
+  const isCreate = path === '/create-order';
+  let orderId = '';
+  try {
+    orderId = JSON.parse(body || '{}')?.order?.id || '';
+  } catch {}
+  const key = `${mode}|${orderId || path}`;
+  const hit = (chaosHits.get(key) || 0) + 1;
+  chaosHits.set(key, hit);
+  const send = (status, obj, headers = {}) => {
+    res.writeHead(status, { 'content-type': 'application/json', ...headers });
+    res.end(JSON.stringify(obj));
+  };
+  const proxy = async (delayMs = 0) => {
+    const r = await fetch(`${URLS.order}${path}`, { method: req.method, headers: { 'content-type': 'application/json' }, body: req.method === 'POST' ? body : undefined });
+    const text = await r.text();
+    if (delayMs) await sleep(delayMs);
+    if (res.writableEnded || res.destroyed) return;
+    res.writeHead(r.status, { 'content-type': 'application/json' });
+    res.end(text);
+  };
+  switch (mode) {
+    case 'drop':
+      return req.socket.destroy();
+    case 'hang':
+      return undefined; // never answers; closed with the server
+    case '500':
+      return send(500, { ok: false, code: 'INTERNAL' });
+    case 'fail-first':
+      return isCreate && hit === 1 ? send(503, { ok: false, code: 'RETRY_LATER' }) : proxy();
+    case '429once':
+      return isCreate && hit === 1 ? send(429, { ok: false, code: 'RATE_LIMITED' }, { 'retry-after': '1' }) : proxy();
+    case 'slow':
+      // first create: the Worker commits, the answer is held past the client timeout; later requests pass
+      return proxy(isCreate && hit === 1 ? 2500 : 0);
+    case 'slow403':
+    case 'slow403drop':
+      // first create commits but its answer is lost; second create = 403 (single-use Turnstile token consumed)
+      if (!isCreate) return mode === 'slow403drop' ? req.socket.destroy() : proxy();
+      if (hit === 1) return proxy(2500);
+      if (hit === 2) return send(403, { ok: false, code: 'TURNSTILE_FAILED' });
+      return proxy();
+    case 'hangcreate':
+      return isCreate ? undefined : proxy(); // creates never answer, status works
+    case 'hangfirst':
+      return isCreate && hit === 1 ? undefined : proxy();
+    default:
+      return send(404, { ok: false, code: 'UNKNOWN_CHAOS' });
+  }
+}
+// /ui/* — the UI suite's Worker URL in phase B: browser-facing (CORS) proxy whose behaviour is switched per scenario
+let uiMode = 'pass';
+const uiHits = new Map();
+
+// ---- signed-in customers in the browser (TEST ONLY) ----
+// The app signs in for real against the Auth EMULATOR, and the Firebase SDK sends its ID token. The Auth emulator
+// cannot sign tokens (alg "none"), and the Worker correctly refuses unsigned tokens. So this proxy — and only this
+// test proxy — re-signs the emulator's token with the run's TEST RSA key, copying uid and times; the Worker then does
+// its full, unchanged RS256 verification against the local JWKS. Nothing leaves 127.0.0.1; tokens are never logged.
+//   uiAuthMode: 'resign' (default) | 'expireFirst' (first create of an order is forwarded already expired) | 'forge'
+let uiAuthMode = 'resign';
+const uiAuthLog = []; // { path, orderId, sub, forwarded: 'valid'|'expired'|'forged'|'untranslated', rawId }
+const rawIds = new Map(); // emulator token -> short id (to tell tokens apart without storing them)
+async function translateEmulatorToken(raw, { orderId, path }) {
+  let header;
+  let claims;
+  try {
+    const [h, p] = raw.split('.');
+    header = JSON.parse(Buffer.from(h, 'base64url').toString('utf8'));
+    claims = JSON.parse(Buffer.from(p, 'base64url').toString('utf8'));
+  } catch {
+    return { token: raw, kind: 'untranslated' };
+  }
+  if (!rawIds.has(raw)) rawIds.set(raw, `t${rawIds.size + 1}`);
+  const rawId = rawIds.get(raw);
+  // only Auth-EMULATOR tokens of THIS demo project are translated; anything else is forwarded as-is (and refused)
+  if (header.alg !== 'none' || claims.aud !== PROJECT_ID || claims.iss !== `https://securetoken.google.com/${PROJECT_ID}` || typeof claims.sub !== 'string') {
+    uiAuthLog.push({ path, orderId, sub: null, forwarded: 'untranslated', rawId });
+    return { token: raw, kind: 'untranslated' };
+  }
+  const isFirstCreate = path === '/create-order' && !uiAuthLog.some((l) => l.orderId === orderId && l.path === path);
+  const now = Math.floor(Date.now() / 1000);
+  const kind = uiAuthMode === 'forge' ? 'forged' : uiAuthMode === 'expireFirst' && isFirstCreate ? 'expired' : 'valid';
+  const times = kind === 'expired'
+    ? { iat: now - 7200, auth_time: now - 7200, exp: now - 3600 }
+    : { iat: claims.iat, auth_time: claims.auth_time ?? claims.iat, exp: claims.exp };
+  const signerFor = kind === 'forged' ? AUTH_FORGER : AUTH_SIGNER;
+  uiAuthLog.push({ path, orderId, sub: claims.sub, forwarded: kind, rawId });
+  return {
+    kind,
+    token: await signerFor.sign({ iss: claims.iss, aud: claims.aud, sub: claims.sub, user_id: claims.sub, email: claims.email, email_verified: claims.email_verified, ...times }),
+  };
+}
+
+async function handleUi(path, req, res, body) {
+  const cors = { 'access-control-allow-origin': req.headers.origin || '*', vary: 'Origin', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization, x-tracking-key' };
+  if (req.method === 'OPTIONS') {
+    if (uiMode === 'drop') return req.socket.destroy();
+    res.writeHead(204, cors);
+    return res.end();
+  }
+  const isCreate = path === '/create-order';
+  let orderId = '';
+  try {
+    orderId = JSON.parse(body || '{}')?.order?.id || '';
+  } catch {}
+  const key = `${uiMode}|${orderId || path}`;
+  const hit = (uiHits.get(key) || 0) + 1;
+  uiHits.set(key, hit);
+  const send = (status, obj, headers = {}) => {
+    res.writeHead(status, { 'content-type': 'application/json', ...cors, ...headers });
+    res.end(JSON.stringify(obj));
+  };
+  const proxy = async (delayMs = 0) => {
+    const headers = { 'content-type': 'application/json' };
+    const m = /^Bearer (.+)$/.exec(String(req.headers.authorization || ''));
+    if (m) headers.authorization = `Bearer ${(await translateEmulatorToken(m[1], { orderId, path })).token}`;
+    else if (req.headers.authorization) headers.authorization = req.headers.authorization; // malformed: pass, Worker refuses
+    if (req.headers['x-tracking-key']) headers['x-tracking-key'] = String(req.headers['x-tracking-key']); // passed through, never logged
+    const r = await fetch(`${URLS.order}${path}`, { method: req.method, headers, body: req.method === 'POST' ? body : undefined });
+    const text = await r.text();
+    if (delayMs === Infinity) return; // 'savehold': the Worker answered, the browser never gets it (closed by the run's end)
+    if (delayMs) await sleep(delayMs);
+    if (res.writableEnded || res.destroyed) return;
+    res.writeHead(r.status, { 'content-type': 'application/json', ...cors });
+    res.end(text);
+  };
+  switch (uiMode) {
+    case 'savehold':
+      // saved by the Worker, the answer never reaches the browser (the tab is closed meanwhile)
+      return isCreate ? proxy(Infinity) : proxy();
+    case 'delaycreate':
+      // the create reaches the Worker only after 8 s: still in flight while the tab is closed / reopened
+      if (isCreate) await sleep(8_000);
+      return proxy();
+    case 'drop':
+      return req.socket.destroy();
+    case 'slow15':
+      return proxy(isCreate && hit === 1 ? 15_000 : 0); // saved, but the answer arrives after the app's 12 s timeout
+    case 'reject403':
+      return isCreate ? send(403, { ok: false, code: 'TURNSTILE_FAILED' }) : proxy();
+    case 'conflict409':
+      return isCreate ? send(409, { ok: false, code: 'ORDER_ID_CONFLICT' }) : send(200, { ok: true, exists: true, status: 'new' });
+    case '429once':
+      return isCreate && hit === 1 ? send(429, { ok: false, code: 'RATE_LIMITED' }, { 'retry-after': '1', 'access-control-expose-headers': 'retry-after' }) : proxy();
+    case '503':
+      return isCreate ? send(503, { ok: false, code: 'RETRY_LATER' }) : proxy();
+    case 'pass':
+    default:
+      return proxy();
+  }
+}
+
 const mock = http.createServer((req, res) => {
   let body = '';
   req.on('data', (c) => (body += c));
   req.on('end', () => {
+    const ui = req.url.match(/^\/ui(\/.*)$/);
+    if (ui) {
+      handleUi(ui[1], req, res, body).catch((e) => {
+        if (!res.headersSent) {
+          res.writeHead(502);
+          res.end(String(e?.message || e));
+        }
+      });
+      return;
+    }
+    const chaos = req.url.match(/^\/chaos\/([a-z0-9-]+)(\/.*)$/);
+    if (chaos) {
+      handleChaos(chaos[1], chaos[2], req, res, body).catch((e) => {
+        if (!res.headersSent) {
+          res.writeHead(502);
+          res.end(String(e?.message || e));
+        }
+      });
+      return;
+    }
     if (req.method === 'POST' && req.url === '/turnstile/siteverify') {
       mockCalls.turnstile += 1;
       const ok = new URLSearchParams(body).get('response') === TURNSTILE_PASS_TOKEN;
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ success: ok }));
+    }
+    if (req.method === 'GET' && req.url === '/jwks') {
+      mockCalls.jwks += 1;
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60' });
+      return res.end(JSON.stringify({ keys: [AUTH_SIGNER.jwk] }));
     }
     mockCalls.unexpected.push(`${req.method} ${req.url}`);
     res.writeHead(404);
@@ -90,8 +283,11 @@ function stopChildren() {
 // ---------------------------------------------------------------- Firestore helpers (emulator, demo project)
 const fs = new Firestore({ projectId: PROJECT_ID, firestoreAuth: 'emulator', urls: { firestore: URLS.firestore } });
 
+// which local rules file the emulator enforces for the browser: compat (default) | transition | final (all test-only)
+const RULES_NAME = ['transition', 'final'].includes(process.env.E2E_RULES) ? process.env.E2E_RULES : 'compat';
 async function loadCompatRules() {
-  const content = readFileSync(FILES.compatRules, 'utf8');
+  const content = readFileSync(RULES_NAME === 'final' ? FILES.finalRules : RULES_NAME === 'transition' ? FILES.transitionRules : FILES.compatRules, 'utf8');
+  console.log(`[inner] emulator rules: firestore.rules.${RULES_NAME} (local test file)`);
   const r = await fetch(`http://127.0.0.1:${PORTS.emulator}/emulator/v1/projects/${PROJECT_ID}:securityRules`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
@@ -111,8 +307,116 @@ async function reseed() {
   if (!r.ok) throw new Error(`seed failed (${r.status})`);
 }
 
+// ---------------------------------------------------------------- UI suite (real web app in headless Chrome)
+async function runUiSuite() {
+  const repoRoot = resolvePath(WORKER_ROOT, '../..');
+  const base = `http://127.0.0.1:${PORTS.vite}`;
+  const only = process.env.E2E_ONLY ? new Set(process.env.E2E_ONLY.split(',')) : null;
+  const killTree = (child) => {
+    if (child?.pid && child.exitCode === null) {
+      try {
+        execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+      } catch {}
+    }
+  };
+  const startVite = async (label, workerUrl) => {
+    const log = createWriteStream(join(TMP, `vite-${label}.log`));
+    const env = {
+      ...process.env,
+      // emulator-only dev config, checked by tools/firebase-env-guard.ts before the server starts
+      VITE_FIREBASE_TARGET: 'emulator',
+      VITE_FIREBASE_PROJECT_ID: PROJECT_ID,
+      VITE_FIRESTORE_EMULATOR_HOST: `127.0.0.1:${PORTS.emulator}`,
+      VITE_AUTH_EMULATOR_HOST: '127.0.0.1:9099',
+      VITE_WORKER_URL: workerUrl,
+    };
+    const child = spawn(process.execPath, [join(repoRoot, 'node_modules/vite/bin/vite.js'), '--port', String(PORTS.vite), '--strictPort', '--host', '127.0.0.1'], { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    child.stdout.pipe(log);
+    child.stderr.pipe(log);
+    children.push({ label: `vite-${label}`, child });
+    await waitReady(`vite-${label}`, base, 90_000);
+    return child;
+  };
+  const waitPortFree = async () => {
+    for (let i = 0; i < 50; i++) {
+      try {
+        await fetch(`${base}/`);
+      } catch {
+        return;
+      }
+      await sleep(200);
+    }
+  };
+
+  const chrome = await launchChrome({ port: PORTS.cdp, tmpDir: TMP, track: (child) => children.push({ label: 'chrome', child }) });
+  console.log(`[inner] UI suite: headless ${chrome.exe.split('\\').pop()} (resolver: loopback only), Vite on ${base}`);
+  const ctx = {
+    base,
+    only,
+    reseed,
+    openTab: () => openTab(PORTS.cdp),
+    setUiMode: async (m) => {
+      uiMode = m;
+      uiHits.clear();
+    },
+    get: async (path) => {
+      const d = await fs.get(path);
+      return d.exists ? decodeFields(d.fields) : null;
+    },
+    countOrdersByPhone: async (phone) =>
+      (await fs.runQuery({ from: [{ collectionId: 'orders' }], where: { fieldFilter: { field: { fieldPath: 'address.phone' }, op: 'EQUAL', value: { stringValue: phone } } } })).length,
+    // ---- signed-in customers (Auth EMULATOR on 127.0.0.1 only; synthetic accounts) ----
+    setUiAuthMode: async (m) => {
+      uiAuthMode = m;
+    },
+    uiAuthLog: () => uiAuthLog.map((l) => ({ ...l })),
+    /** a verified email/password account in the Auth emulator + its users/{uid} profile (role customer) */
+    createCustomer: async ({ email, password, name }) => {
+      const AUTH = `http://127.0.0.1:${PORTS.authEmulator}`;
+      const su = await fetch(`${AUTH}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo-api-key`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password, returnSecureToken: true }),
+      });
+      const sj = await su.json();
+      if (!su.ok || !sj.localId) throw new Error(`auth emulator signUp failed (${su.status})`);
+      const up = await fetch(`${AUTH}/identitytoolkit.googleapis.com/v1/projects/${PROJECT_ID}/accounts:update`, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer owner' }, body: JSON.stringify({ localId: sj.localId, emailVerified: true, displayName: name }),
+      });
+      if (!up.ok) throw new Error(`auth emulator update failed (${up.status})`);
+      const r = await fs.commit([{ update: { name: fs.name(`users/${sj.localId}`), fields: encodeFields({ id: sj.localId, name, email, role: 'customer', orders: [], createdAt: new Date().toISOString() }) } }]);
+      if (!r.ok) throw new Error(`users doc failed (${r.status})`);
+      return sj.localId;
+    },
+    resetAuth: async () => {
+      const r = await fetch(`http://127.0.0.1:${PORTS.authEmulator}/emulator/v1/projects/${PROJECT_ID}/accounts`, { method: 'DELETE' });
+      if (!r.ok) throw new Error(`auth emulator reset failed (${r.status})`);
+    },
+    /** the admin dashboard's status change (storage.ts updateStatus) — server side here */
+    setOrderStatus: async (orderId, status) => {
+      const r = await fs.commit([{ update: { name: fs.name(`orders/${orderId}`), fields: encodeFields({ status, seenByAdmin: true }) }, updateMask: { fieldPaths: ['status', 'seenByAdmin'] } }]);
+      if (!r.ok) throw new Error(`status update failed (${r.status})`);
+    },
+    ledger: async (orderId) => {
+      const d = await fs.get(`orderLedger/${orderId}`);
+      return d.exists ? decodeFields(d.fields) : null;
+    },
+  };
+  const scenarios = buildUiScenarios(ctx);
+  let out = [];
+  // Phase A: the app talks to the local Worker directly (real CORS preflight from http://127.0.0.1:3000)
+  let vite = await startVite('direct', URLS.order);
+  out = out.concat(await runUiScenarios(ctx, 'direct Worker', scenarios.A));
+  killTree(vite);
+  await waitPortFree();
+  // Phase B: the app talks to the switchable local proxy
+  vite = await startVite('proxy', `${URLS.mock}/ui`);
+  out = out.concat(await runUiScenarios(ctx, 'proxy', scenarios.B));
+  killTree(vite);
+  return out;
+}
+
 // ---------------------------------------------------------------- run
 let results = [];
+let cpu = null;
 let fatal = null;
 try {
   await new Promise((r) => mock.listen(PORTS.mock, '127.0.0.1', r));
@@ -124,6 +428,8 @@ try {
   });
   startWrangler('order', FILES.orderToml, PORTS.order, PORTS.orderInspector, {
     TELEGRAM_BOT_TOKEN: T.tg, SENDGRID_API_KEY: T.sg, WORKER_AUTH_TOKEN: T.worker,
+    // UI suite: the current web app sends no Turnstile token -> Phase 1 production mode (log), for this run only
+    ...(SUITE === 'ui' ? { TURNSTILE_MODE: 'log' } : {}),
   }, ['--test-scheduled']);
   await waitReady('sink', URLS.sink);
   await waitReady('order', URLS.order);
@@ -131,7 +437,32 @@ try {
   if (!cfgCheck.ok) throw new Error(`order Worker refused its config: ${JSON.stringify(cfgCheck)}`);
   console.log(`[inner] emulator, sink, order Worker and Turnstile mock up on 127.0.0.1 (${Object.values(PORTS).join(', ')})`);
 
-  results = await runScenarios({
+  if (CPU_MODE) {
+    // throw-away RSA key, generated here, never written to disk, only for the local signing probe
+    const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }).replace(/\r?\n/g, '\\n');
+    startWrangler('probe', FILES.probeToml, PORTS.probe, PORTS.probeInspector, { PROBE_PRIVATE_KEY: pem });
+    await waitReady('probe', URLS.probe);
+    const pidOf = (label) => children.find((c) => c.label === label).child.pid;
+    const orderPids = workerdUnder(pidOf('order'));
+    const probePids = workerdUnder(pidOf('probe'));
+    if (!orderPids.length || !probePids.length) throw new Error('workerd processes not found for CPU sampling');
+    console.log(`[inner] CPU mode: sampling workerd pids order=${orderPids.join(',')} probe=${probePids.join(',')}`);
+    cpu = await measureCpu({
+      W: URLS.order, S: URLS.sink, sinkAuth: { 'x-sink-auth': T.read }, probeUrl: URLS.probe, orderPids, probePids,
+      turnstileToken: TURNSTILE_PASS_TOKEN, reseed,
+      get: async (path) => {
+        const d = await fs.get(path);
+        return d.exists ? decodeFields(d.fields) : null;
+      },
+      // TEST-signed ID tokens (keys served by the local mock's /jwks)
+      idToken: (uid) => AUTH_SIGNER.idToken({ projectId: PROJECT_ID, uid }),
+    });
+  } else if (SUITE === 'ui') {
+    results = await runUiSuite();
+  } else {
+    const suite = SUITE; // all | scenarios (S01–S12) | submit (S13–S27)
+    const only = process.env.E2E_ONLY ? new Set(process.env.E2E_ONLY.split(',')) : null;
+    if (suite !== 'submit') results = await runScenarios({
     label: 'local-e2e',
     projectId: PROJECT_ID,
     W: URLS.order,
@@ -159,15 +490,36 @@ try {
     createBudget: { limit: 18, windowMs: 61_000 }, // wrangler.order.toml: CREATE_RATE_LIMITER 20 / 60 s
     skipCron: false,
     skipBrowser: false,
-    only: process.env.E2E_ONLY ? new Set(process.env.E2E_ONLY.split(',')) : null,
+    only,
   });
+    if (suite !== 'scenarios') {
+      if (results.length) await sleep(62_000); // let S10's deliberate burst leave the per-IP rate-limit window
+      results = results.concat(await runSubmitScenarios({
+        W: URLS.order, MOCK: URLS.mock, turnstileToken: TURNSTILE_PASS_TOKEN, reseed, only,
+        // signed-in customers: test-signed ID tokens for this run's demo project (and forgeries)
+        idToken: (uid, o = {}) => AUTH_SIGNER.idToken({ projectId: PROJECT_ID, uid, ...o }),
+        forgedToken: (uid) => AUTH_FORGER.idToken({ projectId: PROJECT_ID, uid }),
+        // a browser-style order document WITHOUT a ledger entry (what the current Checkout writes directly)
+        seedOrderDoc: async (o) => {
+          const r = await fs.commit([{ update: { name: fs.name(`orders/${o.id}`), fields: encodeFields({ ...o, status: 'new', seenByAdmin: false }) }, currentDocument: { exists: false } }]);
+          if (!r.ok) throw new Error(`seedOrderDoc failed (${r.status})`);
+        },
+        get: async (path) => {
+          const d = await fs.get(path);
+          return d.exists ? decodeFields(d.fields) : null;
+        },
+      }));
+    }
+  }
 } catch (e) {
   fatal = String(e?.message || e);
   console.error(`[inner] FATAL: ${fatal}`);
 } finally {
   stopChildren();
+  mock.closeAllConnections?.(); // includes /chaos/hang sockets
   await new Promise((r) => mock.close(() => r()));
 }
 
-writeFileSync(process.env.E2E_RESULT_FILE, JSON.stringify({ results, fatal, mock: mockCalls }, null, 2));
-process.exit(fatal || results.length === 0 || results.some((r) => !r.ok) || mockCalls.unexpected.length ? 1 : 0);
+writeFileSync(process.env.E2E_RESULT_FILE, JSON.stringify({ mode: CPU_MODE ? 'cpu' : 'scenarios', results, cpu, fatal, mock: mockCalls }, null, 2));
+const incomplete = CPU_MODE ? !cpu : results.length === 0 || results.some((r) => !r.ok);
+process.exit(fatal || incomplete || mockCalls.unexpected.length ? 1 : 0);

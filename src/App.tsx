@@ -8,13 +8,16 @@ import Footer from './components/Footer';
 import CartDrawer from './components/CartDrawer';
 import QuickViewModal from './components/QuickViewModal';
 import CookieBanner from './components/CookieBanner';
+import Toast from './components/Toast';
+import { addToast, removeToast as removeQueuedToast } from './services/toastQueue';
 import AdminGuard from './components/AdminGuard';
 
 // Types & Services
 import { Product, CartItem, ToastMessage, ToastType, Language, User } from './types';
 import { trackPageView, trackEvent } from './services/analytics';
 import { TRANSLATIONS } from './constants';
-import { db as storageDb } from './services/storage'; 
+import { db as storageDb } from './services/storage';
+import { readStoredCart, browserStorage } from './services/cartStorage';
 import { auth, isFirebaseInitialized } from './services/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, getFirestore } from 'firebase/firestore';
@@ -106,7 +109,8 @@ const generateCartItemId = (product: Product, selectedVariant?: any) => {
 // =========================================================
 const App: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
-  const [cart, setCart] = useState<CartItem[]>([]);
+  // initialised from storage synchronously: the save effect below can never overwrite a saved cart with []
+  const [cart, setCart] = useState<CartItem[]>(() => readStoredCart<CartItem>(browserStorage()));
   const [wishlist, setWishlist] = useState<Set<string>>(new Set());
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [quickViewProduct, setQuickViewProduct] = useState<Product | null>(null);
@@ -119,13 +123,14 @@ const App: React.FC = () => {
   const isRtl = language === 'ar';
 
   // --- Helpers ---
+  // queue rules in services/toastQueue.ts: unique ids, an identical visible message is not repeated (StrictMode /
+  // double clicks), at most 3 at a time
   const showToast = useCallback((message: string, type: ToastType) => {
-    const id = Date.now().toString();
-    setToasts((prev) => [...prev, { id, message, type }]);
+    setToasts((prev) => addToast(prev, message, type));
   }, []);
 
   const removeToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((x) => x.id !== id));
+    setToasts((prev) => removeQueuedToast(prev, id));
   }, []);
 
   const t = useCallback((key: any, params?: any) => {
@@ -272,11 +277,6 @@ const App: React.FC = () => {
 
     refreshProducts();
 
-    const sc = localStorage.getItem('anta_cart');
-    if (sc) {
-      try { setCart(JSON.parse(sc)); } catch {}
-    }
-
     const sw = localStorage.getItem('anta_wishlist');
     if (sw) {
       try { setWishlist(new Set(JSON.parse(sw))); } catch {}
@@ -346,6 +346,15 @@ const App: React.FC = () => {
           <CartDrawer />
           <QuickViewModal product={quickViewProduct} isOpen={!!quickViewProduct} onClose={() => setQuickViewProduct(null)} />
           <CookieBanner />
+
+          {/* Toast System (restored: removed by mistake in 1bf3d27, so every showToast was invisible) */}
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 sm:left-auto sm:right-6 sm:translate-x-0 z-[100] flex flex-col gap-2 pointer-events-none" data-testid="toast-region">
+            {toasts.map((toast) => (
+              <div key={toast.id} className="pointer-events-auto">
+                <Toast toast={toast} onClose={removeToast} closeLabel={language === 'ar' ? 'إغلاق' : 'Close'} />
+              </div>
+            ))}
+          </div>
 
           <main className="flex-grow">
             <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-10 h-10 border-4 border-t-blue-600 rounded-full animate-spin" /></div>}>

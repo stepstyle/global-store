@@ -6,7 +6,10 @@ export function corsHeaders(request, cfg) {
   if (origin && cfg.allowedOrigins.includes(origin)) {
     h['access-control-allow-origin'] = origin;
     h['access-control-allow-methods'] = 'GET, POST, OPTIONS';
-    h['access-control-allow-headers'] = 'content-type, x-worker-auth';
+    // authorization = Firebase ID token for signed-in customers. CORS only lets the allow-listed site SEND it;
+    // it is never what authenticates: the token itself is verified (src/auth.js) on every request.
+    // x-tracking-key: the customer's order tracking key (GET /orders/:id/summary) — a header, never a URL part
+    h['access-control-allow-headers'] = 'content-type, authorization, x-tracking-key, x-worker-auth';
     h['access-control-max-age'] = '600';
   }
   return h;

@@ -20,7 +20,9 @@ before(async () => {
   mock = await startMockServices(8790);
   child = spawn(
     process.execPath,
-    [resolve(root, 'node_modules/wrangler/bin/wrangler.js'), 'dev', '--ip', '127.0.0.1', '--port', '8787', '--test-scheduled', '--show-interactive-dev-session=false'],
+    [resolve(root, 'node_modules/wrangler/bin/wrangler.js'), 'dev', '--local', '--ip', '127.0.0.1', '--port', '8787', '--test-scheduled', '--show-interactive-dev-session=false',
+      // optional: run against another compatibility date (e.g. production's) without editing wrangler.toml
+      ...(process.env.SMOKE_COMPAT_DATE ? ['--compatibility-date', process.env.SMOKE_COMPAT_DATE] : [])],
     { cwd: root, env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' }, stdio: ['ignore', 'pipe', 'pipe'] }
   );
   child.stdout.on('data', (d) => (output += d));

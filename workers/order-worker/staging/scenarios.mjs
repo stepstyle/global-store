@@ -79,6 +79,21 @@ export function buildScenarios(ctx) {
     await budget.take(orders.length);
     return Promise.all(orders.map((o) => create(o, { budgeted: false })));
   };
+  /**
+   * What a real client (src/services/orderSubmit.ts) does with 503 RETRY_LATER: resend the SAME order (same number,
+   * same payload) after a short backoff. A 503 is NOT assumed to mean "nothing saved": the resend is idempotent
+   * (ledger -> replay), so the final stock count is what proves exactly-once.
+   */
+  const settle503 = async (o, first) => {
+    let r = first;
+    let retries = 0;
+    while (r.status === 503 && retries < 5) {
+      retries++;
+      await sleep(200 * retries);
+      r = await create(o);
+    }
+    return { ...r, retries503: retries };
+  };
   const sinkCalls = async () => (await (await fetch(`${S}/calls`, { headers: sinkAuth })).json()).calls || [];
   const sinkFor = async (id) => (await sinkCalls()).filter((c) => c.orderId === id);
   const waitFor = async (fn, ms = notifyWaitMs, step = 500) => {
@@ -160,17 +175,22 @@ export function buildScenarios(ctx) {
       assert.ok(sf.warnings.some((w) => w.code === 'STOCK_NOT_DEDUCTED'));
       assert.equal(await stock('p-empty-variants'), before, 'no partial deduction');
     }],
-    ['S06', 'concurrency: last item x2 in parallel, 10 parallel on one product', async () => {
+    ['S06', 'concurrency: last item x2 in parallel, 10 parallel on one product (503 -> client resend, same number)', async () => {
       const a = checkoutOrder({ items: [line('p-last-one', 1)] });
       const b = checkoutOrder({ items: [line('p-last-one', 1)], overrides: { address: { ...a.address, phone: '+962771111111' } } });
-      const rs = await createParallel([a, b]);
+      const pair = [a, b];
+      const rs = await Promise.all((await createParallel(pair)).map((r, i) => settle503(pair[i], r)));
       assert.ok(rs.every((r) => r.status === 200), rs.map((r) => r.status).join(','));
       assert.equal(await stock('p-last-one'), 0);
       const start = await stock('p-hundred');
       const os = Array.from({ length: 10 }, () => checkoutOrder({ items: [line('p-hundred', 1)] }));
-      const r10 = await createParallel(os);
+      const first = await createParallel(os);
+      const r10 = await Promise.all(first.map((r, i) => settle503(os[i], r)));
+      const resent = r10.reduce((n, r) => n + r.retries503, 0);
+      if (resent) console.log(`    S06: ${resent} resend(s) after 503 (first statuses ${first.map((r) => r.status).join(',')})`);
       assert.ok(r10.every((r) => r.status === 200), r10.map((r) => r.status).join(','));
-      assert.equal(await stock('p-hundred'), start - 10);
+      for (const o of os) assert.ok(await get(`orderLedger/${o.id}`), `ledger for ${o.id}`);
+      assert.equal(await stock('p-hundred'), start - 10, 'exactly once per order, even with resends');
     }],
     ['S07', 'tampered prices flagged; sink summary shows server total', async () => {
       const o = checkoutOrder({ items: [{ ...line('p-simple', 2), price: 0.01 }, { ...line('p-variants', 1, { variantId: 'var_red' }), price: 0.01 }] });

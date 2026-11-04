@@ -56,7 +56,7 @@ const Account: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!user?.email || activeTab !== 'orders') return;
+    if (!user?.id || activeTab !== 'orders') return;
 
     const fetchUserOrders = async () => {
       setIsLoadingOrders(true); // تفعيل التحميل بسلاسة عند فتح التبويب
@@ -64,7 +64,9 @@ const Account: React.FC = () => {
         const db = await getFirestoreDb();
         const q = query(
           collection(db, 'orders'),
-          where('customerEmail', '==', user.email)
+          // the signed-in account's own orders (userId = verified uid). Not by e-mail: an e-mail typed by a guest is
+          // no proof of ownership, and the final rules refuse e-mail-based reads.
+          where('userId', '==', user.id)
         );
         
         const querySnapshot = await getDocs(q);

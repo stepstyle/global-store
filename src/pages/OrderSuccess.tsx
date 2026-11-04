@@ -1,8 +1,6 @@
 // src/pages/OrderSuccess.tsx
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import * as ReactRouterDOM from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
-import { getFirestoreDb } from '../services/firebase';
 import {
   CheckCircle,
   Package,
@@ -13,19 +11,22 @@ import {
   StickyNote,
   ArrowRight,
   Home,
-  Clock
+  Clock,
+  MessageCircle
 } from 'lucide-react';
 import { useCart } from '../App';
 import { Order } from '../types';
 import SEO from '../components/SEO';
+import { checkSuccessPage, confirmedOrders, whatsappUrl, STORE_WHATSAPP, trackingKeys } from '../services/checkoutFlow';
+import { formatTrackingKey } from '../services/orderSubmit';
+import { currentIdentity } from '../services/firebase';
 
-const { useParams, Link, useLocation, useNavigate } = ReactRouterDOM as any;
+const { useParams, Link, useNavigate } = ReactRouterDOM as any;
 
-type Status = 'idle' | 'loading' | 'success' | 'error';
-
-type OrderSuccessLocationState = {
-  order?: Order | null;
-};
+// success  = confirmed by the Worker in this tab AND reported by the Worker's status endpoint now
+// exists   = the Worker reports the order, but this device did not confirm it (no details shown)
+// unknown  = the Worker could not be reached: nothing is claimed
+type Status = 'idle' | 'loading' | 'success' | 'exists' | 'unknown' | 'error';
 
 const ORDER_SUCCESS_CACHE_PREFIX = 'order_success_';
 
@@ -52,7 +53,6 @@ const getOrderCacheKey = (orderId: string) => `${ORDER_SUCCESS_CACHE_PREFIX}${or
 
 const OrderSuccess: React.FC = () => {
   const { id } = useParams();
-  const location = useLocation();
   const navigate = useNavigate();
   const { t, showToast, language } = useCart() as any;
 
@@ -144,89 +144,46 @@ const OrderSuccess: React.FC = () => {
     return parsed;
   }, []);
 
-  const cacheOrder = useCallback((value: Order | null | undefined) => {
-    if (!value || typeof window === 'undefined') return;
-
-    const orderId = safeText((value as any)?.id);
-    if (!orderId) return;
-
-    try {
-      sessionStorage.setItem(getOrderCacheKey(orderId), JSON.stringify(value));
-    } catch (error) {
-      console.error('Failed to cache order success payload:', error);
-    }
-  }, []);
-
-  const resolveOrderFromState = useCallback((): Order | null => {
-    const state = (location?.state || {}) as OrderSuccessLocationState;
-    const stateOrder = state?.order ?? null;
-
-    if (!stateOrder) return null;
-
-    const stateOrderId = safeText((stateOrder as any)?.id);
-    if (!stateOrderId || stateOrderId !== safeId) return null;
-
-    return stateOrder;
-  }, [location, safeId]);
-
-  const loadOrder = useCallback(async () => {
-    if (!safeId) {
-      setOrder(null);
-      setStatus('error');
-      setErrorMsg(tr('رقم الطلب مفقود.', 'Order ID is missing.'));
-      return;
-    }
-
-    setStatus('loading');
-    setErrorMsg('');
-
-    try {
-      const stateOrder = resolveOrderFromState();
-      const cachedOrder = getCachedOrder(safeId);
-      const initialOrder = stateOrder || cachedOrder;
-
-      if (initialOrder) {
-        setOrder(initialOrder);
-        setStatus('success');
-      }
-
-      const firestoreDb = await getFirestoreDb();
-      const docRef = doc(firestoreDb, 'orders', safeId);
-      const docSnap = await getDoc(docRef);
-
-      if (docSnap.exists()) {
-        const freshOrder = { id: docSnap.id, ...docSnap.data() } as Order;
-        setOrder(freshOrder);
-        cacheOrder(freshOrder);
-        setStatus('success');
-      } else {
-        if (!initialOrder) {
-          setOrder(null);
-          setStatus('error');
-          setErrorMsg(
-            tr(
-              'لم نتمكن من العثور على هذا الطلب في نظامنا. قد يكون رقم الطلب غير صحيح.',
-              'We could not find this order in our system. The order ID might be incorrect.'
-            )
-          );
-        }
-      }
-    } catch (error) {
-      console.error('OrderSuccess loadOrder failed:', error, { safeId });
-      setOrder((prev) => {
-        if (!prev) {
-          setStatus('error');
-          setErrorMsg(
-            tr(
-              'حدث خطأ غير متوقع أثناء استرداد بيانات الطلب. يرجى المحاولة لاحقاً.',
-              'An unexpected error occurred while retrieving order details. Please try again later.'
-            )
-          );
-        }
-        return prev;
-      });
-    }
-  }, [safeId, tr, resolveOrderFromState, getCachedOrder, cacheOrder]);
+  /**
+   * No success from navigation state or cached data alone, and no Firestore read of the order:
+   * the order Worker's status endpoint decides together with the confirmation recorded in this tab.
+   */
+  const loadOrder = useCallback(async () => {
+    setOrder(null);
+    setErrorMsg('');
+    if (!safeId) {
+      setStatus('error');
+      setErrorMsg(tr('رقم الطلب مفقود.', 'Order ID is missing.'));
+      return;
+    }
+    setStatus('loading');
+    try {
+      const verdict = await checkSuccessPage(
+        safeId,
+        confirmedOrders(),
+        { workerUrl: String(import.meta.env.VITE_WORKER_URL || ''), timeoutMs: 10_000 },
+        { fetch: (url: string, init?: Record<string, unknown>) => window.fetch(url, init as RequestInit) as any }
+      );
+      if (verdict === 'confirmed') {
+        setOrder(getCachedOrder(safeId)); // details for THIS device only; may be null
+        setStatus('success');
+      } else if (verdict === 'exists_unverified') {
+        setStatus('exists');
+      } else if (verdict === 'unknown') {
+        setStatus('unknown');
+      } else {
+        setStatus('error');
+        setErrorMsg(
+          verdict === 'invalid'
+            ? tr('رقم الطلب غير صحيح.', 'The order number is invalid.')
+            : tr('لم نتمكن من العثور على هذا الطلب في نظامنا. قد يكون رقم الطلب غير صحيح.', 'We could not find this order in our system. The order ID might be incorrect.')
+        );
+      }
+    } catch (error) {
+      console.error('OrderSuccess loadOrder failed:', error, { safeId });
+      setStatus('unknown');
+    }
+  }, [safeId, tr, getCachedOrder]);
 
   useEffect(() => {
     loadOrder();
@@ -241,6 +198,33 @@ const OrderSuccess: React.FC = () => {
       showToast?.(tt('copyFailed', 'تعذر النسخ', 'Copy failed'), 'error');
     }
   };
+
+  // tracking code of THIS device's order (kept in localStorage at confirmation). Shown here only; never in a URL.
+  // only for the identity that placed the order (shared device: another account never sees it)
+  const [trackingCode, setTrackingCode] = useState('');
+  // null identity = the account could not be confirmed in time: no code is shown (never "assume a guest")
+  const [codeIdentityUnknown, setCodeIdentityUnknown] = useState(false);
+  const [codeCheck, setCodeCheck] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    currentIdentity().then((who) => {
+      if (!alive) return;
+      setCodeIdentityUnknown(who === null);
+      setTrackingCode(who === null ? '' : formatTrackingKey(trackingKeys().get(safeId, who) || ''));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [safeId, codeCheck]);
+  const copyTrackingCode = async () => {
+    try {
+      if (!trackingCode) return;
+      await navigator.clipboard.writeText(trackingCode);
+      showToast?.(tt('copied', 'تم النسخ بنجاح', 'Copied successfully'), 'success');
+    } catch {
+      showToast?.(tt('copyFailed', 'تعذر النسخ', 'Copy failed'), 'error');
+    }
+  };
 
   const copyOrderNote = async () => {
     try {
@@ -271,19 +255,35 @@ const OrderSuccess: React.FC = () => {
       <div className="bg-white max-w-xl w-full rounded-[2.5rem] shadow-xl shadow-slate-200/50 border border-slate-100 p-8 sm:p-10 text-center animate-in zoom-in-95 duration-500">
         
         {/* Status Icon */}
-        {status === 'error' ? (
-          <div className="w-24 h-24 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mx-auto mb-6 rotate-12 transition-transform">
-            <AlertTriangle size={48} strokeWidth={2} />
-          </div>
-        ) : (
-          <div className="w-24 h-24 bg-emerald-50 text-emerald-500 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner border border-emerald-100">
-            <CheckCircle size={48} strokeWidth={2.5} />
-          </div>
-        )}
+        {status === 'success' ? (
+          <div className="w-24 h-24 bg-emerald-50 text-emerald-500 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner border border-emerald-100">
+            <CheckCircle size={48} strokeWidth={2.5} />
+          </div>
+        ) : status === 'error' ? (
+          <div className="w-24 h-24 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mx-auto mb-6 rotate-12 transition-transform">
+            <AlertTriangle size={48} strokeWidth={2} />
+          </div>
+        ) : status === 'exists' || status === 'unknown' ? (
+          <div className="w-24 h-24 bg-amber-50 text-amber-500 rounded-3xl flex items-center justify-center mx-auto mb-6 border border-amber-100">
+            <AlertTriangle size={48} strokeWidth={2} />
+          </div>
+        ) : (
+          <div className="w-24 h-24 bg-slate-50 text-slate-400 rounded-3xl flex items-center justify-center mx-auto mb-6 border border-slate-100">
+            <Clock size={48} strokeWidth={2} />
+          </div>
+        )}
 
-        <h1 className="text-3xl sm:text-4xl font-black text-slate-900 mb-3 tracking-tight">
-          {status === 'error' ? tt('error', 'عذراً، حدث خطأ!', 'Oops, an error occurred!') : tt('thankYou', 'شكراً لتسوقك معنا!', 'Thank You for Shopping!')}
-        </h1>
+        <h1 className="text-3xl sm:text-4xl font-black text-slate-900 mb-3 tracking-tight" data-testid="success-status" data-status={status}>
+          {status === 'success'
+            ? tt('thankYou', 'شكراً لتسوقك معنا!', 'Thank You for Shopping!')
+            : status === 'error'
+            ? tt('error', 'عذراً، حدث خطأ!', 'Oops, an error occurred!')
+            : status === 'exists'
+            ? tr('طلبك مسجّل لدينا', 'Your order is registered')
+            : status === 'unknown'
+            ? tr('تعذّر التحقق من الطلب الآن', 'We could not verify the order right now')
+            : tr('جاري التحقق من الطلب...', 'Checking your order...')}
+        </h1>
 
         {/* Loading State */}
         {status === 'loading' && (
@@ -325,7 +325,85 @@ const OrderSuccess: React.FC = () => {
           </div>
         )}
 
-        {/* Success State */}
+        {/* Registered, but not confirmed on this device: no details shown */}
+        {status === 'exists' && (
+          <div className="mt-4">
+            <p className="text-slate-600 font-bold mb-6 px-4 leading-relaxed">
+              {tr('الطلب رقم', 'Order')} <span dir="ltr" className="font-black">#{safeId}</span>{' '}
+              {tr('مسجّل في نظامنا. لحماية بياناتك لا نعرض تفاصيله هنا. للاستفسار تواصل معنا برقم الطلب.', 'is registered in our system. To protect your data its details are not shown here. Contact us with the order number for any question.')}
+            </p>
+            <div className="flex flex-col gap-3">
+              <a href={whatsappUrl(STORE_WHATSAPP, safeId, { kind: 'unconfirmed' })} target="_blank" rel="noopener noreferrer" className="w-full py-4 rounded-2xl bg-[#25D366] text-white font-extrabold flex items-center justify-center gap-2">
+                <MessageCircle size={20} /> {tr('تواصل مع المكتبة عبر واتساب', 'Contact the shop on WhatsApp')}
+              </a>
+              <Link to="/" className="block">
+                <button className="w-full py-4 rounded-2xl border-2 border-slate-100 text-slate-700 font-bold hover:bg-slate-50 transition-all">
+                  {tt('backToHome', 'العودة للرئيسية', 'Return Home')}
+                </button>
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* The order Worker could not be reached: nothing is claimed */}
+        {status === 'unknown' && (
+          <div className="mt-4">
+            <p className="text-slate-600 font-bold mb-6 px-4 leading-relaxed">
+              {tr('لا نستطيع الآن التأكد من حالة الطلب رقم', 'We cannot check the status of order')} <span dir="ltr" className="font-black">#{safeId}</span>.{' '}
+              {tr('أعد المحاولة بعد قليل، ولا تنشئ طلبًا جديدًا قبل التأكد.', 'Please try again shortly, and do not place a new order before it is confirmed.')}
+            </p>
+            <div className="flex flex-col gap-3">
+              <button className="w-full py-4 rounded-2xl bg-sky-400 hover:bg-sky-500 text-white font-extrabold" onClick={retryLoad}>
+                {tr('إعادة التحقق', 'Check again')}
+              </button>
+              <a href={whatsappUrl(STORE_WHATSAPP, safeId, { kind: 'unconfirmed' })} target="_blank" rel="noopener noreferrer" className="w-full py-4 rounded-2xl bg-[#25D366] text-white font-extrabold flex items-center justify-center gap-2">
+                <MessageCircle size={20} /> {tr('تواصل مع المكتبة عبر واتساب', 'Contact the shop on WhatsApp')}
+              </a>
+            </div>
+          </div>
+        )}
+
+        {status === 'success' && codeIdentityUnknown && (
+          <div className="mt-2 mb-6 rounded-2xl border border-slate-200 bg-white p-4 text-start" data-testid="tracking-code-identity-unknown">
+            <p className="text-sm font-bold text-slate-600 leading-relaxed">
+              {tr('تعذّر التحقق من حسابك الآن، لذلك لا نعرض رمز التتبع.', 'We could not confirm your account right now, so the tracking code is not shown.')}
+            </p>
+            <button type="button" onClick={() => setCodeCheck((n) => n + 1)} className="mt-2 text-xs font-black text-sky-700 underline">
+              {tr('إعادة التحقق', 'Check again')}
+            </button>
+          </div>
+        )}
+
+        {/* Tracking code: only on the device that placed the order (never in a link: pixels/analytics may record URLs) */}
+        {status === 'success' && trackingCode && (
+          <div className="mt-2 mb-6 rounded-2xl border border-sky-100 bg-sky-50 p-4 text-start" data-testid="tracking-code-box">
+            <p className="text-xs font-black text-sky-700 uppercase tracking-widest mb-1">{tr('رمز تتبع الطلب', 'Order tracking code')}</p>
+            <div className="flex items-center justify-between gap-3">
+              <span dir="ltr" className="font-black text-slate-900 tracking-wider break-all" data-testid="tracking-code-value">{trackingCode}</span>
+              <button type="button" onClick={copyTrackingCode} className="shrink-0 inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-xl">
+                <Copy size={14} /> {tr('نسخ', 'Copy')}
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-2 leading-relaxed">
+              {tr('احتفظ بهذا الرمز لعرض تفاصيل طلبك من جهاز آخر في صفحة التتبع. لا تشاركه مع أحد؛ رقم الطلب وحده يعرض الحالة فقط.', 'Keep this code to see your order details from another device on the tracking page. Do not share it; the order number alone shows only the status.')}
+            </p>
+          </div>
+        )}
+
+        {/* Confirmed, but this device has no stored details (e.g. storage cleared) */}
+        {status === 'success' && !order && (
+          <div className="mt-2">
+            <p className="text-slate-500 mb-6 font-medium leading-relaxed">
+              {tr('تم تأكيد طلبك رقم', 'Your order')} <span dir="ltr" className="font-black text-slate-900">#{safeId}</span>{' '}
+              {tr('بنجاح.', 'is confirmed.')}
+            </p>
+            <Link to="/" className="block">
+              <button className="w-full py-4 rounded-2xl bg-black text-white font-extrabold">{tt('backToHome', 'الاستمرار بالتسوق', 'Continue Shopping')}</button>
+            </Link>
+          </div>
+        )}
+
+        {/* Success State */}
         {status === 'success' && order && (
           <div className="mt-2 animate-in fade-in duration-500">
             <p className="text-slate-500 mb-8 font-medium leading-relaxed">
@@ -336,7 +414,19 @@ const OrderSuccess: React.FC = () => {
               )}
             </p>
 
-            {/* 💳 تنبيه إذا كان الدفع عبر CliQ */}
+            {safeText((order as any)?.paymentMethod).toLowerCase() === 'cliq' && (
+              <a
+                href={whatsappUrl(STORE_WHATSAPP, safeId, { kind: 'cliq_receipt', cliqReference: safeText((order as any)?.paymentDetails?.cliqReference), customerName: safeText((order as any)?.address?.fullName) })}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="cliq-whatsapp"
+                className="mb-4 w-full py-4 rounded-2xl bg-[#25D366] text-white font-extrabold flex items-center justify-center gap-2 shadow-lg shadow-[#25D366]/30"
+              >
+                <MessageCircle size={20} /> {tr('أرسل صورة إيصال CliQ عبر واتساب', 'Send the CliQ receipt on WhatsApp')}
+              </a>
+            )}
+
+            {/* 💳 تنبيه إذا كان الدفع عبر CliQ */}
             {safeText((order as any)?.paymentMethod).toLowerCase() === 'cliq' && (
                <div className="mb-6 bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex items-start gap-3 text-indigo-800 text-start animate-in slide-in-from-bottom-2">
                  <Clock className="shrink-0 mt-0.5 text-indigo-500" size={20} />

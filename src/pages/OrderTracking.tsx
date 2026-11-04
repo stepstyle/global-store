@@ -10,12 +10,13 @@ import {
   AlertTriangle,
   Copy,
   RefreshCw,
-  StickyNote,
   Home
 } from 'lucide-react';
 import { Order } from '../types';
 import { useCart } from '../App';
-import { db } from '../services/storage';
+import { fetchOrderStatus, fetchOrderSummary, normalizeTrackingKey, type SubmitDeps, type SubmitOptions } from '../services/orderSubmit';
+import { trackingKeys } from '../services/checkoutFlow';
+import { getFirebaseAuth, currentIdentity } from '../services/firebase';
 import SEO from '../components/SEO';
 import LazyImage from '../components/LazyImage'; // 🚀 استيراد مكون الصور
 
@@ -39,9 +40,15 @@ const OrderTracking: React.FC = () => {
   const { t, getProductTitle, language, showToast } = useCart() as any;
 
   const [orderId, setOrderId] = useState('');
+  // tracking key typed by the customer (only for orders placed on ANOTHER device; this device remembers its own)
+  const [trackingCode, setTrackingCode] = useState('');
   const [order, setOrder] = useState<Order | null>(null);
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState('');
+  // false = only the public status is known (order number alone: no details, never personal data)
+  const [hasDetails, setHasDetails] = useState(false);
+  const workerOpts = useMemo<SubmitOptions>(() => ({ workerUrl: String(import.meta.env.VITE_WORKER_URL || ''), timeoutMs: 12_000 }), []);
+  const workerDeps = useMemo<SubmitDeps>(() => ({ fetch: (url, init) => window.fetch(url, init as RequestInit) as any }), []);
 
   // 🌍 دعم اللغتين وصياغة الشركات (Corporate Tone)
   const isAR = language === 'ar';
@@ -134,7 +141,7 @@ const OrderTracking: React.FC = () => {
   }, [order, steps.length, getCurrentStepIndex]);
 
   const trackById = useCallback(
-    async (rawId: string) => {
+    async (rawId: string, typedKey: string = '') => {
       const id = sanitizeOrderId(rawId);
 
       if (!id) {
@@ -147,26 +154,52 @@ const OrderTracking: React.FC = () => {
       setStatus('loading');
       setError('');
       setOrder(null);
+      setHasDetails(false);
 
       try {
-        const found = await db.orders.getById(id);
-
-        if (found) {
-          setOrder(found);
-          setStatus('success');
-          setError('');
-        } else {
+        // 1) public status from the order Worker (no Firestore read, no personal data)
+        const st = await fetchOrderStatus(id, workerOpts, workerDeps);
+        if (st === null) throw new Error('status unavailable');
+        if (!st.exists) {
           setOrder(null);
           setStatus('error');
           setError(tt('orderNotFound', 'عذراً، لم نتمكن من العثور على شحنة بهذا الرقم. يرجى التحقق والمحاولة مجدداً.', 'Sorry, we couldn\'t locate a shipment with this ID. Please verify and try again.'));
+          return;
         }
+        // 2) non-personal details only with proof: this device's tracking key, a typed key, or the signed-in owner
+        // this device's key only for the identity that placed the order (shared device: never another account's)
+        // unknown identity (session not restored in time) -> no device key at all (status only, or a typed code)
+        const who = typedKey ? null : await currentIdentity();
+        const key = normalizeTrackingKey(typedKey || '') || (who === null ? null : trackingKeys().get(id, who));
+        let idToken: string | null = null;
+        try {
+          idToken = (await getFirebaseAuth()?.currentUser?.getIdToken()) || null;
+        } catch {
+          idToken = null;
+        }
+        const sum = key || idToken ? await fetchOrderSummary(id, { key, idToken }, workerOpts, workerDeps) : { kind: 'denied' as const };
+        if (sum.kind === 'ok') {
+          const s = sum.order;
+          setOrder({
+            id,
+            status: s.status,
+            date: s.date,
+            total: s.total,
+            items: s.items.map((it) => ({ name: it.name, quantity: it.quantity, price: it.price, image: it.image, selectedVariant: it.variant ? { label: it.variant } : null })),
+          } as any);
+          setHasDetails(true);
+        } else {
+          setOrder({ id, status: st.status, items: [] } as any);
+          if (typedKey) setError(tt('trackingCodeInvalid', 'رمز التتبع غير صحيح لهذا الطلب. نعرض لك حالة الطلب فقط.', 'The tracking code does not match this order. Showing the order status only.'));
+        }
+        setStatus('success');
       } catch {
         setOrder(null);
         setStatus('error');
         setError(tt('trackingFailed', 'حدث خطأ أثناء محاولة تتبع الشحنة. يرجى المحاولة لاحقاً.', 'An error occurred while tracking the shipment. Please try again later.'));
       }
     },
-    [tt]
+    [tt, workerOpts, workerDeps]
   );
 
   // ✅ Auto-fill + Auto-track إذا كان قادماً من رابط
@@ -178,7 +211,7 @@ const OrderTracking: React.FC = () => {
 
   const handleTrack = async (e: React.FormEvent) => {
     e.preventDefault();
-    await trackById(orderId);
+    await trackById(orderId, trackingCode);
   };
 
   const copyText = async (text: string) => {
@@ -191,7 +224,6 @@ const OrderTracking: React.FC = () => {
   };
 
   const seoTitle = useMemo(() => tt('trackOrder', 'تتبع الشحنة', 'Track Shipment'), [tt]);
-  const orderNote = useMemo(() => safeText((order as any)?.note), [order]);
 
   return (
     <div className="min-h-screen bg-slate-50 py-12 lg:py-20 relative overflow-hidden">
@@ -208,7 +240,7 @@ const OrderTracking: React.FC = () => {
 
         {/* Search Card */}
         <div className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-xl shadow-slate-200/40 border border-slate-100 mb-8 animate-in fade-in zoom-in-95 duration-500">
-          <form onSubmit={handleTrack} className="flex flex-col sm:flex-row gap-4">
+          <form onSubmit={handleTrack} className="flex flex-col sm:flex-row sm:flex-wrap gap-4">
             <div className="relative flex-1 group">
               <span className="absolute inset-y-0 start-4 flex items-center text-slate-400 group-focus-within:text-sky-500 transition-colors">
                 <Search size={20} strokeWidth={2.5} />
@@ -223,6 +255,23 @@ const OrderTracking: React.FC = () => {
                 className="w-full py-4 ps-12 pe-4 bg-slate-50 rounded-2xl border border-slate-200 focus:bg-white focus:ring-2 focus:ring-sky-400/30 focus:border-sky-400 outline-none transition-all font-bold text-slate-800 placeholder:font-medium placeholder:text-slate-400"
                 aria-label={tt('enterOrderId', 'أدخل رقم التتبع', 'Enter tracking number')}
                 dir="ltr"
+              />
+            </div>
+
+            {/* tracking code: only needed on ANOTHER device (this device remembers its own orders' codes) */}
+            <div className="relative w-full sm:order-last">
+              <input
+                type="text"
+                inputMode="text"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={tt('trackingCodeOptional', 'رمز التتبع (اختياري) لعرض تفاصيل الطلب', 'Tracking code (optional) to see order details')}
+                value={trackingCode}
+                onChange={(e) => setTrackingCode(e.target.value.slice(0, 40))}
+                className="w-full py-3 px-4 bg-slate-50 rounded-2xl border border-slate-200 focus:bg-white focus:ring-2 focus:ring-sky-400/30 focus:border-sky-400 outline-none transition-all font-bold text-slate-800 placeholder:font-medium placeholder:text-slate-400 tracking-wider"
+                aria-label={tt('trackingCode', 'رمز التتبع', 'Tracking code')}
+                dir="ltr"
+                data-testid="tracking-code"
               />
             </div>
 
@@ -316,8 +365,10 @@ const OrderTracking: React.FC = () => {
               })}
             </div>
 
+            {hasDetails ? (
+              <>
             {/* Items Summary */}
-            <div className="mt-8 bg-white p-6 rounded-3xl border border-slate-200/70 shadow-sm relative overflow-hidden">
+            <div data-testid="tracking-details" className="mt-8 bg-white p-6 rounded-3xl border border-slate-200/70 shadow-sm relative overflow-hidden">
               <div className="absolute left-0 top-0 w-1.5 h-full bg-slate-800" />
               <h3 className="font-black text-sm mb-5 text-slate-900 uppercase tracking-widest">{tt('orderSummary', 'تفاصيل الشحنة', 'Shipment Details')}</h3>
 
@@ -380,28 +431,12 @@ const OrderTracking: React.FC = () => {
               </div>
             </div>
 
-            {/* Order Note */}
-            {orderNote && (
-              <div className="mt-5 rounded-3xl border border-slate-200/70 bg-white p-6 shadow-sm relative overflow-hidden">
-                <div className="absolute left-0 top-0 w-1.5 h-full bg-yellow-400" />
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <div className="flex items-center gap-2 text-slate-800">
-                    <StickyNote size={18} className="text-yellow-500 shrink-0" />
-                    <p className="text-sm font-black uppercase tracking-widest">{tt('orderNote', 'ملاحظات إضافية', 'Additional Notes')}</p>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => copyText(orderNote)}
-                    className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-100 px-3 py-1.5 rounded-xl transition-colors shrink-0"
-                    title={tt('copy', 'نسخ', 'Copy')}
-                  >
-                    <Copy size={14} /> <span className="hidden sm:inline-block">{tt('copy', 'نسخ', 'Copy')}</span>
-                  </button>
-                </div>
-
-                <p className="text-sm font-semibold text-slate-600 leading-relaxed whitespace-pre-wrap break-words bg-slate-50 p-4 rounded-2xl">
-                  {orderNote}
+              </>
+            ) : (
+              <div className="mt-8 flex items-start gap-3 bg-slate-50 border border-slate-100 border-dashed p-5 rounded-3xl" data-testid="tracking-status-only">
+                <Package size={22} className="text-slate-400 shrink-0 mt-0.5" />
+                <p className="text-sm font-bold text-slate-500 leading-relaxed">
+                  {tt('trackingStatusOnly', 'نعرض حالة الطلب فقط. لعرض تفاصيل الطلب استخدم نفس الجهاز الذي طلبت منه، أو أدخل رمز التتبع الظاهر في صفحة تأكيد الطلب.', 'Showing the order status only. To see the order details, use the device you ordered from, or enter the tracking code shown on the order confirmation page.')}
                 </p>
               </div>
             )}
@@ -410,7 +445,7 @@ const OrderTracking: React.FC = () => {
             <div className="mt-8 flex flex-col sm:flex-row gap-3">
               <button
                 className="flex-1 py-4 flex items-center justify-center gap-2 bg-black hover:bg-slate-800 text-white font-extrabold rounded-2xl transition-all shadow-md shadow-black/20 disabled:opacity-50"
-                onClick={() => trackById((order as any).id)}
+                onClick={() => trackById((order as any).id, trackingCode)}
                 disabled={status === 'loading'}
                 type="button"
               >

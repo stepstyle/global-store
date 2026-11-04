@@ -12,11 +12,13 @@ import { loadConfig, WORKER_VERSION } from './config.js';
 import { Firestore } from './firestore.js';
 import { corsHeaders, json, readJsonBody, hasValidWorkerAuth, clientIp, log } from './http.js';
 import { allowRequest } from './ratelimit.js';
-import { createOrder, orderStatus, reconcileOrphans } from './orders.js';
+import { createOrder, orderStatus, orderSummary, reconcileOrphans } from './orders.js';
 import { processNotifications, retryPendingNotifications } from './notify.js';
 import { ORDER_ID_RE } from './validate.js';
+import { AuthError, bearerToken, verifyFirebaseIdToken } from './auth.js';
 
 const STATUS_PATH = /^\/orders\/([^/]+)\/status$/;
+const SUMMARY_PATH = /^\/orders\/([^/]+)\/summary$/;
 
 async function verifyTurnstile(cfg, token, ip) {
   if (!token || !cfg.turnstileSecret) return false;
@@ -54,6 +56,23 @@ async function handle(request, env, ctx, cfg) {
     if (error === 413) return reply({ ok: false, code: 'PAYLOAD_TOO_LARGE' }, 413);
     if (error) return reply({ ok: false, code: 'INVALID_JSON' }, 400);
 
+    // Customer identity: ONLY from a verified Firebase ID token. No header = guest (old site + guests keep working).
+    // A header that is present but invalid/expired is an explicit 401 — never a silent fallback to guest.
+    let auth = null;
+    try {
+      const token = bearerToken(request.headers.get('authorization'));
+      if (token !== undefined) {
+        const v = await verifyFirebaseIdToken(token, { projectId: cfg.projectId, jwksUrl: cfg.authJwksUrl });
+        auth = { uid: v.uid };
+      }
+    } catch (e) {
+      if (!(e instanceof AuthError)) throw e;
+      log('auth.rejected', { code: e.code, reason: e.reason });
+      if (e.code === 'AUTH_UNAVAILABLE') return reply({ ok: false, code: 'AUTH_UNAVAILABLE' }, 503);
+      return reply({ ok: false, code: e.code }, 401);
+    }
+
+    // after the identity check, so a 401 (refresh + resend) never burns a single-use Turnstile token
     if (cfg.turnstileMode !== 'off') {
       const token = body?.turnstileToken || request.headers.get('cf-turnstile-response');
       const passed = await verifyTurnstile(cfg, token, ip);
@@ -64,7 +83,8 @@ async function handle(request, env, ctx, cfg) {
     }
 
     const rawOrder = body && typeof body === 'object' ? body.order ?? body : null;
-    const r = await createOrder(fs, cfg, rawOrder, ctx);
+    // tracking-key HASH chosen by the customer's browser (outside the order: not part of the payload hash)
+    const r = await createOrder(fs, cfg, rawOrder, ctx, auth, { trackingKeyHash: body?.trackingKeyHash });
     return reply(r.body, r.status);
   }
 
@@ -80,6 +100,29 @@ async function handle(request, env, ctx, cfg) {
       return reply({ ok: false, code: 'INVALID_ID' }, 400);
     }
     const r = await orderStatus(fs, id);
+    return reply(r.body, r.status);
+  }
+
+  // ---------------- order summary (tracking key or verified owner; no personal data) ----------------
+  const sm = url.pathname.match(SUMMARY_PATH);
+  if (sm) {
+    if (request.method !== 'GET') return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    if (!(await allowRequest(env, cfg, 'status', ip))) return reply({ ok: false, code: 'RATE_LIMITED' }, 429);
+    let id;
+    try {
+      id = decodeURIComponent(sm[1]);
+    } catch {
+      return reply({ ok: false, code: 'NOT_FOUND' }, 404);
+    }
+    // optional owner identity; an invalid token simply grants nothing (same 404 as every other refusal)
+    let authUid = null;
+    try {
+      const token = bearerToken(request.headers.get('authorization'));
+      if (token !== undefined) authUid = (await verifyFirebaseIdToken(token, { projectId: cfg.projectId, jwksUrl: cfg.authJwksUrl })).uid;
+    } catch (e) {
+      if (!(e instanceof AuthError)) throw e;
+    }
+    const r = await orderSummary(fs, id, { key: request.headers.get('x-tracking-key'), authUid });
     return reply(r.body, r.status);
   }
 

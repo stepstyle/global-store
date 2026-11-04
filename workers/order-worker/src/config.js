@@ -13,6 +13,8 @@
 //                hosts only, sink forbidden, Turnstile test secrets forbidden
 // Any violation => the Worker answers CONFIG_ERROR to every request and makes no outbound call.
 
+import { GOOGLE_SECURETOKEN_JWKS_URL } from './auth.js';
+
 export const PROD_PROJECT_ID = 'antastore1-82b50';
 export const WORKER_VERSION = 'v2.0.0-phase1';
 export const STAGING_PROJECT_RE = /^[a-z][a-z0-9-]{2,22}-staging$/;
@@ -89,6 +91,13 @@ export function loadConfig(env = {}) {
     turnstile: str(env.TURNSTILE_VERIFY_URL) || (remote ? 'https://challenges.cloudflare.com/turnstile/v0/siteverify' : ''),
   };
 
+  // Firebase ID token keys (src/auth.js). staging/production: ONLY Google's official URL (cannot be redirected).
+  // local: a loopback test-key server, or empty (then a request that carries a token gets 503 AUTH_UNAVAILABLE).
+  const authJwksRaw = str(env.AUTH_JWKS_URL);
+  const authJwksUrl = remote ? authJwksRaw || GOOGLE_SECURETOKEN_JWKS_URL : authJwksRaw;
+  if (remote && authJwksUrl !== GOOGLE_SECURETOKEN_JWKS_URL) errors.push(`${environment} AUTH_JWKS_URL must be ${GOOGLE_SECURETOKEN_JWKS_URL}`);
+  if (environment === 'local' && authJwksUrl && !LOCAL_URL.test(authJwksUrl)) errors.push('local requires AUTH_JWKS_URL on 127.0.0.1/localhost');
+
   if (!['local', 'staging', 'production'].includes(target)) errors.push(`unknown build target "${target}"`);
   if (!['local', 'staging', 'production'].includes(environment)) errors.push('ENVIRONMENT must be local|staging|production');
   if (environment !== target) errors.push(`ENVIRONMENT "${environment || 'unset'}" does not match build target "${target}"`);
@@ -164,6 +173,7 @@ export function loadConfig(env = {}) {
     projectId,
     firestoreAuth,
     urls,
+    authJwksUrl,
     stockMode,
     priceCheckMode,
     turnstileMode,
@@ -176,6 +186,10 @@ export function loadConfig(env = {}) {
     reconcileBatch: num(env.RECONCILE_BATCH, 20),
     leaseMs: num(env.NOTIFY_LEASE_MS, 60 * 1000),
     notifyMaxAttempts: num(env.NOTIFY_MAX_ATTEMPTS, 5),
+    // one Telegram / SendGrid call may not outlive its claim (a lease that expires mid-send could cause a duplicate)
+    notifySendTimeoutMs: num(env.NOTIFY_SEND_TIMEOUT_MS, 15 * 1000),
+    // extra wait before an order whose notification failed is due again (0 = next cron run, behind every other due order)
+    notifyRetryBaseMs: num(env.NOTIFY_RETRY_BASE_MS, 0),
     maxBodyBytes: num(env.MAX_BODY_BYTES, 32 * 1024),
     rateLimitCreatePerMin: num(env.RATE_LIMIT_CREATE_PER_MIN, 10),
     rateLimitStatusPerMin: num(env.RATE_LIMIT_STATUS_PER_MIN, 60),

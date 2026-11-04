@@ -1,0 +1,247 @@
+rules_version = '2';
+// =====================================================================
+// ⚠️ TEST-ONLY — NOT DEPLOYED. Do not copy into Firebase Console.
+// "transition" ruleset (proposal): compat + order READS closed as in final. Deployed right after the new
+// frontend, so public reads close as early as possible while stale tabs of the old site can still place orders.
+//
+// Goal: close privilege-escalation / data-injection holes WITHOUT any
+// change to the current storefront code. Guest checkout keeps working:
+//   - orders create stays open to guests (schema-validated)
+//   - orders get-by-id stays open (OrderSuccess + OrderTracking need it)
+// Base: firebase/firestore.rules.prod-snapshot (2026-11-03)
+// =====================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- identity helpers (unchanged semantics) ----------
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function rolesDoc() {
+      return /databases/$(database)/documents/config/roles;
+    }
+
+    function ownerUid() {
+      return exists(rolesDoc()) ? get(rolesDoc()).data.get('ownerUid', null) : null;
+    }
+
+    function isOwner() {
+      return signedIn() && ownerUid() != null && request.auth.uid == ownerUid();
+    }
+
+    function isAdmin() {
+      return signedIn() && (
+        (ownerUid() != null && request.auth.uid == ownerUid()) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isSelf(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function verifiedEmail() {
+      return signedIn()
+        && request.auth.token.get('email_verified', false) == true
+        && request.auth.token.get('email', '') is string
+        && request.auth.token.get('email', '') != '';
+    }
+
+    // ---------- validation helpers ----------
+    function changed() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function isStr(v, max) {
+      return v is string && v.size() <= max;
+    }
+
+    function optStr(m, k, max) {
+      return !(k in m) || m[k] == null || isStr(m[k], max);
+    }
+
+    function isNum(v, lo, hi) {
+      return v is number && v >= lo && v <= hi;
+    }
+
+    function optNum(m, k, lo, hi) {
+      return !(k in m) || isNum(m[k], lo, hi);
+    }
+
+    // ---------- admins ----------
+    match /admins/{uid} {
+      // + an admin may read their OWN admins doc (AdminGuard.tsx needs this;
+      //   prod lets only the owner read, so non-owner admins fail AdminGuard)
+      allow read: if isOwner() || isSelf(uid);
+      allow create, update, delete: if isOwner();
+    }
+
+    // ---------- products ----------
+    // reviews.ts:syncProductAggregate() still writes aggregates from the client,
+    // so the rating path stays — but bounded.
+    function ratingOnlyUpdate() {
+      let d = request.resource.data;
+      let newCount = d.get('ratingCount', 0);
+      let oldCount = resource.data.get('ratingCount', 0);
+      return signedIn()
+        && changed().hasOnly(['ratingAvg', 'ratingCount', 'rating', 'reviews', 'updatedAt'])
+        && isNum(d.get('ratingAvg', 0), 0, 5)
+        && newCount is int
+        && newCount >= 0
+        && math.abs(newCount - oldCount) <= 1
+        && d.get('rating', 0) == d.get('ratingAvg', 0)
+        && d.get('reviews', 0) == newCount
+        && (!('updatedAt' in changed()) || d.updatedAt == request.time);
+    }
+
+    match /products/{id} {
+      allow read: if true;
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || ratingOnlyUpdate();
+    }
+
+    // ---------- categories (unchanged) ----------
+    match /categories/{id} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ---------- orders ----------
+    // Exact key set written by the DEPLOYED Checkout.tsx -> storage.ts db.orders.create()
+    // (checked against origin/main 3fd9dac; undefined values are removed by cleanForFirestore()).
+    // Length limits are deliberately generous: the deployed form has NO maxLength on name, street,
+    // CliQ reference or the note in Checkout/Cart, so a tight limit would reject real orders.
+    function orderKeys() {
+      return ['id', 'userId', 'status', 'seenByAdmin', 'date', 'createdAt', 'createdAtMs',
+              'updatedAt', 'items', 'subtotal', 'discountAmount', 'shippingCost', 'total',
+              'shippingMethodId', 'shippingMethod', 'paymentMethod', 'customerEmail',
+              'consents', 'note', 'paymentDetails', 'address', 'addressMeta'];
+    }
+
+    function validNewOrder(id) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(orderKeys())
+        && d.keys().hasAll(['id', 'userId', 'status', 'items', 'total', 'address', 'paymentMethod', 'createdAt'])
+        && d.id == id
+        && d.status == 'new'
+        && d.get('seenByAdmin', false) == false
+        && d.createdAt == request.time
+        && (!('updatedAt' in d) || d.updatedAt == request.time)
+        // a signed-in user may only attach their own uid; anyone may use 'guest'
+        && (d.userId == 'guest' || (signedIn() && d.userId == request.auth.uid))
+        && d.items is list && d.items.size() >= 1 && d.items.size() <= 200
+        && isNum(d.total, 0, 100000)
+        && optNum(d, 'subtotal', 0, 100000)
+        && optNum(d, 'discountAmount', 0, 100000)
+        && optNum(d, 'shippingCost', 0, 1000)
+        && optNum(d, 'createdAtMs', 0, 100000000000000)
+        && optStr(d, 'date', 40)
+        && d.paymentMethod in ['cod', 'cliq']
+        && d.address is map
+        && d.address.keys().hasOnly(['fullName', 'city', 'street', 'phone'])
+        && optStr(d.address, 'fullName', 300)
+        && optStr(d.address, 'city', 300)
+        && optStr(d.address, 'street', 1500)
+        && optStr(d.address, 'phone', 30)
+        && optStr(d, 'note', 3000)
+        && optStr(d, 'customerEmail', 320)
+        && optStr(d, 'shippingMethod', 200)
+        && optStr(d, 'shippingMethodId', 60)
+        // nested maps: only the keys the deployed Checkout writes (no smuggled fields)
+        && (!('consents' in d) || (d.consents is map
+              && d.consents.keys().hasOnly(['acceptedStorePolicies', 'acceptedDeliveryPolicy', 'saveInfo', 'billingSameAsShipping'])))
+        && (!('addressMeta' in d) || (d.addressMeta is map
+              && d.addressMeta.keys().hasOnly(['country', 'countryCode', 'citySlug', 'ammanAreaId', 'saveInfo', 'phoneDial', 'phoneLocal'])))
+        && (!('paymentDetails' in d) || (
+              d.paymentDetails is map
+              && d.paymentDetails.keys().hasOnly(['cliqReference', 'isPaid'])
+              && d.paymentDetails.get('isPaid', false) == false
+              && optStr(d.paymentDetails, 'cliqReference', 300)));
+    }
+
+    function canReadOrder() {
+      return isAdmin()
+        || (signedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    match /orders/{id} {
+      allow create: if validNewOrder(id);
+
+      // CLOSED: the new OrderSuccess/OrderTracking use the Worker (status / summary with tracking key).
+      allow get: if canReadOrder();
+
+      // + verified-email branch fixes Account.tsx (queries by customerEmail; denied in prod)
+      allow list: if canReadOrder();
+
+      allow update: if isAdmin();
+      allow delete: if isOwner();
+    }
+
+    // orderLedger, worker_test, …: no match block => denied to all clients
+    // (the Worker uses a service account and bypasses rules).
+
+    // ---------- reviews ----------
+    function reviewKeys() {
+      return ['productId', 'userId', 'userName', 'userEmail', 'rating', 'comment', 'status',
+              'likesCount', 'likesBy', 'adminReply', 'createdAt', 'updatedAt'];
+    }
+
+    function validRating(v) {
+      return v is int && v >= 1 && v <= 5;
+    }
+
+    match /reviews/{id} {
+      allow read: if true;
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(reviewKeys())
+        && request.resource.data.userId == request.auth.uid
+        && validRating(request.resource.data.rating)
+        && request.resource.data.get('status', 'published') == 'published'
+        && request.resource.data.get('likesCount', 0) == 0
+        && request.resource.data.get('adminReply', null) == null
+        && isStr(request.resource.data.get('comment', ''), 2000);
+
+      allow delete: if isAdmin();
+
+      allow update: if isAdmin()
+        // author may edit content only (not status / adminReply / likes)
+        || (signedIn()
+            && resource.data.userId == request.auth.uid
+            && changed().hasOnly(['rating', 'comment', 'userName', 'userEmail', 'updatedAt'])
+            && validRating(request.resource.data.rating)
+            && isStr(request.resource.data.get('comment', ''), 2000))
+        // anyone signed in may toggle THEIR OWN like only
+        || (signedIn()
+            && changed().hasOnly(['likesBy', 'likesCount', 'updatedAt'])
+            && request.resource.data.likesBy is map
+            && request.resource.data.likesBy.diff(resource.data.get('likesBy', {})).affectedKeys().hasOnly([request.auth.uid])
+            && request.resource.data.likesCount == request.resource.data.likesBy.size());
+    }
+
+    // ---------- users ----------
+    match /users/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+
+      // self-registration can only ever create a 'customer'
+      allow create: if isAdmin() || (
+        isSelf(uid)
+        && request.resource.data.get('role', 'customer') == 'customer'
+        && request.resource.data.get('id', uid) == uid);
+
+      // self-updates may not touch role or id
+      allow update: if isAdmin() || (isSelf(uid) && !changed().hasAny(['role', 'id']));
+
+      allow delete: if isOwner();
+    }
+
+    // ---------- config ----------
+    // The storefront reads only config/roles (AdminGuard.tsx). Other config docs (config/sendgrid holds an
+    // API key) are read by Cloud Functions with the Admin SDK, which bypasses rules -> owner only.
+    match /config/{doc} {
+      allow read: if isOwner() || (isAdmin() && doc == 'roles');
+      allow write: if isOwner();
+    }
+  }
+}

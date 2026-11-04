@@ -6,7 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "emulators:dev": "firebase emulators:start --only firestore,auth --project demo-dairsharaf-dev --config firebase/dev-emulator.firebase.json",
+    "test:firebase-guard": "node --test tools/firebase-guard.test.mjs",
+    "test:order-submit": "node --test tests/unit/orderSubmit.test.mjs",
+    "test:cart-storage": "node --test tests/unit/cartStorage.test.mjs",
+    "test:order-limits": "node --test tests/unit/orderLimits.test.mjs",
+    "test:attempt-recovery": "node --test tests/unit/attemptRecovery.test.mjs",
+    "test:toast-queue": "node --test tests/unit/toastQueue.test.mjs",
+    "test:dev-rules": "firebase emulators:exec --only firestore,auth --project demo-dairsharaf-dev --config firebase/dev-emulator.firebase.json \"node --test tools/dev-emulator.rules.test.mjs\""
   },
   "dependencies": {
     "@google/genai": "^1.31.0",

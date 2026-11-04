@@ -6,7 +6,7 @@
 
 name = "anta-order-notify-local-e2e"
 main = "../../src/index.js"
-compatibility_date = "2025-06-01"
+compatibility_date = "2026-03-07" # = production Worker (anta-order-notify) as of 2026-11-03
 workers_dev = false
 
 [define]
@@ -34,12 +34,13 @@ OAUTH_TOKEN_URL = "http://127.0.0.1:8789/oauth/token"
 TELEGRAM_API_BASE = "http://127.0.0.1:8788/telegram"
 SENDGRID_API_BASE = "http://127.0.0.1:8788/sendgrid"
 TURNSTILE_VERIFY_URL = "http://127.0.0.1:8789/turnstile/siteverify"
+AUTH_JWKS_URL = "http://127.0.0.1:8789/jwks" # TEST public keys for ID tokens (local mock), never Google
 TELEGRAM_CHAT_ID = "local-e2e-sink-chat"
 ADMIN_EMAIL = "local-e2e-admin@example.invalid"
 EMAIL_FROM = "local-e2e-orders@example.invalid"
 TURNSTILE_MODE = "enforce"
 TURNSTILE_SECRET = "1x0000000000000000000000000000000AA"
-ALLOWED_ORIGINS = "http://localhost:3000"
+ALLOWED_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000" # local dev/UI-test origins only (test file)
 STOCK_MODE = "apply"
 PRICE_CHECK_MODE = "log"
 RECONCILE_ENABLED = "false"

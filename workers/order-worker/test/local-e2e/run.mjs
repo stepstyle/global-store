@@ -100,13 +100,15 @@ say(`temp dir ${TMP}`);
 say('starting Firestore emulator (demo project) -> wrangler dev --local (sink + order) -> scenarios S01–S12');
 const t0 = Date.now();
 const inner = FILES.inner.replace(/\\/g, '/');
-const cmd = `firebase emulators:exec --only firestore --project ${PROJECT_ID} --config "${FILES.firebaseJson}" "node ${inner}"`;
+// the UI suite also needs the Auth emulator (real sign-in in the browser); other suites stay Firestore-only
+const only = (process.env.E2E_SUITE || 'all') === 'ui' ? '"firestore,auth"' : 'firestore';
+const cmd = `firebase emulators:exec --only ${only} --project ${PROJECT_ID} --config "${FILES.firebaseJson}" "node ${inner}"`;
 const child = spawn(cmd, { cwd: WORKER_ROOT, env, shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let out = '';
 const echo = (d) => {
   const s = String(d);
   out += s;
-  for (const l of s.split(/\r?\n/)) if (/^(✔|✖|\s{4}\S|local-e2e:|\[inner\])/.test(l)) console.log(l);
+  for (const l of s.split(/\r?\n/)) if (/^(✔|✖|\s{4}\S|local-e2e:|\[inner\])/.test(l)) console.log(l.replace(/PROBE_PRIVATE_KEY\S*/g, 'PROBE_PRIVATE_KEY:<redacted>'));
 };
 child.stdout.on('data', echo);
 child.stderr.on('data', echo);
@@ -125,7 +127,14 @@ const readMonitor = () => {
     }
   }).filter(Boolean);
   tracked = new Map(ev.filter((e) => e.type === 'pid').map((e) => [e.pid, e.name]));
+  trackedCreated = new Map(ev.filter((e) => e.type === 'pid').map((e) => [e.pid, e.created || null]));
   return ev;
+};
+let trackedCreated = new Map();
+/** start time (UTC ISO, ms — same format as monitor.ps1) of the process that owns `pid` NOW, or null */
+const createdNow = (pid) => {
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-Command', `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}" -Property CreationDate; if ($p) { ([datetime]$p.CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ') }`], { encoding: 'utf8' });
+  return String(r.stdout || '').trim() || null;
 };
 const listening = (port) => {
   const r = spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess) -join ','`], { encoding: 'utf8' });
@@ -137,9 +146,12 @@ if (process.platform === 'win32') {
   readMonitor();
   for (const [k, p] of Object.entries(PORTS)) {
     for (const pid of listening(p)) {
-      if (tracked.has(pid)) {
+      // only OUR process: same PID AND same start time (a re-used PID belongs to another program -> never stopped)
+      if (tracked.has(pid) && trackedCreated.get(pid) && createdNow(pid) === trackedCreated.get(pid)) {
         spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
         leftovers.push(`${k}=${p} held by our ${tracked.get(pid)} (pid ${pid}) -> stopped`);
+      } else if (tracked.has(pid)) {
+        leftovers.push(`${k}=${p} held by pid ${pid}: PID was ours but the process identity differs (re-used) -> left untouched`);
       } else {
         leftovers.push(`${k}=${p} held by pid ${pid} NOT started by this run -> left untouched`);
       }
@@ -154,7 +166,10 @@ for (const [k, p] of Object.entries(PORTS)) if (!(await portFree(p))) stillBusy.
 
 // ---------------------------------------------------------------- 7. report
 const events = readMonitor();
-const violations = events.filter((e) => e.type === 'violation');
+// a connection whose owner could not be re-identified counts as a violation (fail-safe)
+const violations = events.filter((e) => e.type === 'violation' || e.type === 'unverified');
+// PID now owned by a DIFFERENT program (other start time/path): not a test process — reported with evidence, never hidden
+const pidReused = events.filter((e) => e.type === 'pid_reused');
 const jail = readFileSync(JAIL_LOG, 'utf8').split(/\r?\n/).filter(Boolean);
 const res = existsSync(RESULT) ? JSON.parse(readFileSync(RESULT, 'utf8')) : { results: [], fatal: 'inner run produced no result file', mock: {} };
 const after = { firebase: statOf(realFirebaseStore), wranglerLogs: listOf(realWranglerLogs) };
@@ -162,16 +177,25 @@ const isolatedWranglerLogs = listOf(join(XDG, '.wrangler', 'logs'));
 const names = [...new Set([...tracked.values()])].sort();
 
 const passed = res.results.filter((r) => r.ok).length;
+const cpuMode = res.mode === 'cpu';
+const cpuLines = !res.cpu ? [] : [
+  `CPU (ESTIMATE, local workerd on this PC — not Cloudflare): ${res.cpu.method}`,
+  `  idle CPU of order workerd: ${res.cpu.idleCpuMsPerSecond} ms/s; pids order=${res.cpu.orderPids.join(',')} probe=${res.cpu.probePids.join(',')}`,
+  ...res.cpu.rows.map((r) => `  ${String(r.estMsPerOp).padStart(7)} ms/op (raw ${String(r.rawMsPerOp).padStart(7)})  n=${String(r.n).padEnd(3)}  ${r.label}`),
+];
 const lines = [
   '',
-  '================ LOCAL E2E REPORT ================',
-  `scenarios: ${passed}/${res.results.length} passed${res.fatal ? `  (FATAL: ${res.fatal})` : ''}`,
+  `================ LOCAL E2E REPORT (${cpuMode ? 'CPU measurement' : 'scenarios'}) ================`,
+  cpuMode ? `cpu measurement: ${res.cpu ? 'completed' : 'NOT completed'}${res.fatal ? `  (FATAL: ${res.fatal})` : ''}` : `scenarios: ${passed}/${res.results.length} passed${res.fatal ? `  (FATAL: ${res.fatal})` : ''}`,
+  ...cpuLines,
   ...res.results.map((r) => `  ${r.ok ? 'PASS' : 'FAIL'}  ${r.id}  ${r.name}${r.ok ? '' : `\n          ${r.error.split('\n')[0]}`}`),
   `duration: ${((Date.now() - t0) / 1000).toFixed(0)} s, emulators:exec exit code ${code}`,
   `isolation — external attempts blocked by the Node jail: ${jail.length}`,
   ...jail.map((l) => `    ${l}`),
   `isolation — non-loopback TCP connections seen by the monitor: ${process.platform === 'win32' ? violations.length : 'n/a'}`,
-  ...violations.map((v) => `    ${v.name} (pid ${v.pid}) -> ${v.remote} ${v.state}`),
+  ...violations.map((v) => `    [${v.type}] ${v.name} (pid ${v.pid}, started ${v.tracked?.created ?? '?'}) -> ${v.remote} ${v.state} at ${v.at ?? '?'}`),
+  `isolation — connections by a RE-USED pid (another program, not ours): ${pidReused.length}`,
+  ...pidReused.map((v) => `    pid ${v.pid} -> ${v.remote} ${v.state} at ${v.at}: ours was ${v.tracked?.name} started ${v.tracked?.created} (${v.tracked?.path || 'path n/a'}); NOW ${v.current?.name} started ${v.current?.created} (${v.current?.path || 'path n/a'}, parent ${v.current?.parent})`),
   `isolation — processes monitored: ${tracked.size} (${names.join(', ')})`,
   `isolation — unexpected calls to the local mock: ${(res.mock?.unexpected || []).length}; turnstile verifications: ${res.mock?.turnstile ?? 0}`,
   `your firebase-tools login store unchanged: ${before.firebase === after.firebase ? 'yes' : 'NO'}`,
@@ -182,7 +206,12 @@ const lines = [
 ];
 console.log(lines.join('\n'));
 
-const isolationOk = jail.length === 0 && violations.length === 0 && before.firebase === after.firebase && before.wranglerLogs === after.wranglerLogs;
-const ok = code === 0 && !res.fatal && res.results.length > 0 && passed === res.results.length && isolationOk && stillBusy.length === 0;
+// a desktop browser or an updater in the test's process tree means the browser isolation cannot be guaranteed
+const FORBIDDEN_PROCS = ['chrome.exe', 'msedge.exe', 'updater.exe', 'googleupdate.exe', 'microsoftedgeupdate.exe'];
+const forbiddenSeen = names.filter((n) => FORBIDDEN_PROCS.includes(String(n).toLowerCase()));
+console.log(`isolation — desktop browser / updater processes in the test tree: ${forbiddenSeen.length ? forbiddenSeen.join(', ') : 'none'}`);
+const isolationOk = jail.length === 0 && violations.length === 0 && forbiddenSeen.length === 0 && before.firebase === after.firebase && before.wranglerLogs === after.wranglerLogs;
+const workOk = cpuMode ? !!res.cpu : res.results.length > 0 && passed === res.results.length;
+const ok = code === 0 && !res.fatal && workOk && isolationOk && stillBusy.length === 0;
 console.log(ok ? 'RESULT: PASS' : `RESULT: FAIL${isolationOk ? '' : ' (isolation)'}`);
 process.exit(ok ? 0 : 1);

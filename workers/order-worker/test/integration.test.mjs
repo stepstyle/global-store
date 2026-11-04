@@ -10,6 +10,9 @@ import {
 } from './helpers.mjs';
 import { checkoutOrder, line, makeOrderId, PRODUCTS, CSV_PRODUCT_ID } from './fixtures.mjs';
 import { encodeFields } from '../src/firestore.js';
+import { makeTestSigner } from './token-signer.mjs';
+import { clearKeyCache } from '../src/auth.js';
+import { normalizeTrackingKey, hashTrackingKey } from '../src/tracking.js';
 
 let mock;
 const env = (o = {}) => makeEnv(mock.url, o);
@@ -209,7 +212,7 @@ describe('duplicates, foreign order ids, injected fields, userId spoofing', () =
     const attacker = { ...o, address: { ...o.address, phone: '+962780000000', fullName: 'Attacker' } };
     const r = await createOrderReq(env(), attacker);
     assert.equal(r.status, 409);
-    assert.equal(r.body.code, 'ORDER_ID_CONFLICT');
+    assert.equal(r.body.code, 'ORDER_EXISTS');
     const stored = await getDecoded(`orders/${o.id}`);
     assert.equal(stored.address.phone, '+962791234567');
     await assertProcessedOnce(o.id, { modes: ['created'] });
@@ -222,7 +225,7 @@ describe('duplicates, foreign order ids, injected fields, userId spoofing', () =
     const attacker = checkoutOrder({ id: victim.id, items: [line('p-hundred', 50)] });
     const r = await createOrderReq(env(), attacker);
     assert.equal(r.status, 409);
-    assert.equal(r.body.code, 'ORDER_ID_CONFLICT');
+    assert.equal(r.body.code, 'ORDER_EXISTS');
     assert.equal(await count('orderLedger'), 0);
     assert.equal(await productStock('p-hundred'), 100);
     assert.equal(mock.state.calls.length, 0);
@@ -762,5 +765,755 @@ describe('reconciliation (disabled by default; strict checks when enabled)', () 
     const c = await runCron(env({ RECONCILE_GRACE_MS: '0' }));
     assert.equal(c.reconcile.enabled, false);
     assert.equal(await count('orderLedger'), 0);
+  });
+});
+
+// ===========================================================================
+// Signed-in customers: Firebase ID token -> verified uid (TEST keys from a local mock, no Google service)
+// ===========================================================================
+describe('signed-in customers (Firebase ID token)', () => {
+  const PROJECT = 'demo-dairsharaf-orders';
+  const ALICE = 'aliceUid000000000000000000A1';
+  const MALLORY = 'malloryUid0000000000000000M1';
+  let signer; // the "Google" key set the mock serves
+  let forger; // a different key pair claiming the same kid
+  const bearer = (t) => ({ authorization: `Bearer ${t}` });
+  const tokenFor = (uid, o = {}) => signer.idToken({ projectId: PROJECT, uid, ...o });
+
+  before(async () => {
+    signer = await makeTestSigner('test-kid-1');
+    forger = await makeTestSigner('test-kid-1');
+  });
+
+  async function freshAuth() {
+    await fresh();
+    clearKeyCache();
+    mock.state.jwks = { keys: [signer.jwk] };
+    mock.state.jwksFail = false;
+  }
+  async function nothingWritten(id, msg) {
+    assert.equal(await count('orders'), 0, `${msg}: no order`);
+    assert.equal(await count('orderLedger'), 0, `${msg}: no ledger`);
+    assert.equal(await productStock('p-simple'), 10, `${msg}: stock untouched`);
+    assert.equal(mock.sent('telegram') + mock.sent('email'), 0, `${msg}: no notification`);
+    assert.equal(await getDecoded(`orders/${id}`), null);
+  }
+
+  test('valid token + body userId = same uid -> order linked to the verified uid, processed once', async () => {
+    await freshAuth();
+    const o = checkoutOrder({ userId: ALICE });
+    const r = await createOrderReq(env(), o, bearer(await tokenFor(ALICE)));
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body, { ok: true, orderId: o.id, replay: false });
+    const { ledger, order } = await assertProcessedOnce(o.id, { modes: ['created'] });
+    assert.equal(order.userId, ALICE);
+    assert.equal(order.userIdVerified, true);
+    assert.equal('claimedUserId' in order, false);
+    assert.equal(ledger.userIdVerified, true);
+    assert.equal(ledger.userIdSource, 'firebase-id-token');
+    assert.ok(!codes(ledger).includes('USERID_UNVERIFIED'));
+  });
+
+  test('valid token + body userId "guest" (profile not loaded yet) -> still linked to the verified uid', async () => {
+    await freshAuth();
+    const o = checkoutOrder({ userId: 'guest' });
+    const r = await createOrderReq(env(), o, bearer(await tokenFor(ALICE)));
+    assert.equal(r.status, 200);
+    assert.equal((await getDecoded(`orders/${o.id}`)).userId, ALICE);
+  });
+
+  test('no token: guest order unchanged; body uid without token -> guest + claimedUserId (old site unchanged)', async () => {
+    await freshAuth();
+    const g = checkoutOrder({ userId: 'guest' });
+    assert.equal((await createOrderReq(env(), g)).status, 200);
+    assert.equal((await getDecoded(`orders/${g.id}`)).userId, 'guest');
+    const c = checkoutOrder({ userId: ALICE });
+    assert.equal((await createOrderReq(env(), c)).status, 200);
+    const stored = await getDecoded(`orders/${c.id}`);
+    assert.equal(stored.userId, 'guest');
+    assert.equal(stored.claimedUserId, ALICE);
+    assert.equal((await getDecoded(`orderLedger/${c.id}`)).userIdSource, 'claimed-unverified-dropped');
+  });
+
+  test('token uid differs from body userId -> 403 USERID_MISMATCH, nothing written', async () => {
+    await freshAuth();
+    const o = checkoutOrder({ userId: ALICE });
+    const r = await createOrderReq(env(), o, bearer(await tokenFor(MALLORY)));
+    assert.equal(r.status, 403);
+    assert.deepEqual(r.body, { ok: false, code: 'USERID_MISMATCH' });
+    await nothingWritten(o.id, 'mismatch');
+  });
+
+  test('EXPIRED token -> 401 AUTH_EXPIRED, nothing written; fresh token, SAME id -> created once; again -> replay', async () => {
+    await freshAuth();
+    const o = checkoutOrder({ userId: ALICE });
+    const old = await tokenFor(ALICE, { nowSec: Math.floor(Date.now() / 1000) - 7200 }); // expired an hour ago
+    const r1 = await createOrderReq(env(), o, bearer(old));
+    assert.equal(r1.status, 401);
+    assert.deepEqual(r1.body, { ok: false, code: 'AUTH_EXPIRED' });
+    await nothingWritten(o.id, 'expired');
+    const r2 = await createOrderReq(env(), o, bearer(await tokenFor(ALICE)));
+    assert.deepEqual(r2.body, { ok: true, orderId: o.id, replay: false });
+    const r3 = await createOrderReq(env(), o, bearer(await tokenFor(ALICE, { extra: { iat: Math.floor(Date.now() / 1000) - 1 } })));
+    assert.deepEqual(r3.body, { ok: true, orderId: o.id, replay: true }, 'renewed token -> same payload hash -> replay');
+    await assertProcessedOnce(o.id, { modes: ['created'] });
+    assert.equal((await getDecoded(`orders/${o.id}`)).userId, ALICE);
+  });
+
+  const unsignedNone = () => {
+    const b = (x) => Buffer.from(JSON.stringify(x)).toString('base64url');
+    const now = Math.floor(Date.now() / 1000);
+    return `${b({ alg: 'none', typ: 'JWT' })}.${b({ iss: `https://securetoken.google.com/${PROJECT}`, aud: PROJECT, sub: ALICE, iat: now, auth_time: now, exp: now + 3600 })}.`;
+  };
+  for (const [name, make] of [
+    ['FORGED signature (other key, same kid)', () => forger.idToken({ projectId: PROJECT, uid: ALICE })],
+    ['token of ANOTHER project', () => signer.idToken({ projectId: 'demo-other-project', uid: ALICE })],
+    ['unsigned alg:none token (Auth-emulator style)', async () => unsignedNone()],
+    ['token issued in the future', () => signer.idToken({ projectId: PROJECT, uid: ALICE, nowSec: Math.floor(Date.now() / 1000) + 3600 })],
+  ]) {
+    test(`${name} -> 401 AUTH_INVALID, nothing written, never downgraded to guest`, async () => {
+      await freshAuth();
+      const o = checkoutOrder({ userId: ALICE });
+      const r = await createOrderReq(env(), o, bearer(await make()));
+      assert.equal(r.status, 401);
+      assert.deepEqual(r.body, { ok: false, code: 'AUTH_INVALID' });
+      await nothingWritten(o.id, name);
+    });
+  }
+
+  test('malformed Authorization header (Basic, empty Bearer) -> 401, nothing written', async () => {
+    await freshAuth();
+    const o = checkoutOrder({ userId: 'guest' });
+    for (const h of ['Basic dXNlcjpwYXNz', 'Bearer ', 'Bearer']) {
+      const r = await createOrderReq(env(), o, { authorization: h });
+      assert.equal(r.status, 401, h);
+    }
+    await nothingWritten(o.id, 'malformed header');
+  });
+
+  test('key server unavailable -> 503 AUTH_UNAVAILABLE, nothing written; later the same id succeeds', async () => {
+    await freshAuth();
+    mock.state.jwksFail = true;
+    const o = checkoutOrder({ userId: ALICE });
+    const t = await tokenFor(ALICE);
+    const r1 = await createOrderReq(env(), o, bearer(t));
+    assert.equal(r1.status, 503);
+    assert.deepEqual(r1.body, { ok: false, code: 'AUTH_UNAVAILABLE' });
+    await nothingWritten(o.id, 'keys down');
+    mock.state.jwksFail = false;
+    assert.deepEqual((await createOrderReq(env(), o, bearer(t))).body, { ok: true, orderId: o.id, replay: false });
+  });
+
+  test('owner never changes after saving: guest order + later token -> replay, still guest', async () => {
+    await freshAuth();
+    const o = checkoutOrder({ userId: 'guest' });
+    assert.equal((await createOrderReq(env(), o)).status, 200);
+    const r = await createOrderReq(env(), o, bearer(await tokenFor(ALICE)));
+    assert.deepEqual(r.body, { ok: true, orderId: o.id, replay: true });
+    assert.equal((await getDecoded(`orders/${o.id}`)).userId, 'guest');
+    await assertProcessedOnce(o.id, { modes: ['created'] });
+  });
+
+  // ---------------- replay of an order OWNED by a verified account ----------------
+  const EXISTS409 = { ok: false, code: 'ORDER_EXISTS' };
+  async function aliceOwnedOrder() {
+    await freshAuth();
+    const o = checkoutOrder({ userId: ALICE });
+    assert.equal((await createOrderReq(env(), o, bearer(await tokenFor(ALICE)))).status, 200);
+    const ledger = await getDecoded(`orderLedger/${o.id}`);
+    assert.equal(ledger.ownerUid, ALICE, 'verified owner stored in the ledger');
+    return o;
+  }
+  async function unchangedAfter(o, msg) {
+    await assertProcessedOnce(o.id, { modes: ['created'], msg }); // 1 order, 1 ledger, stock once, 1 telegram + 1 email
+    const stored = await getDecoded(`orders/${o.id}`);
+    assert.equal(stored.userId, ALICE, `${msg}: owner unchanged`);
+    assert.equal((await getDecoded(`orderLedger/${o.id}`)).ownerUid, ALICE, `${msg}: ledger owner unchanged`);
+  }
+
+  test('replay: the OWNER (fresh token) -> replay; nothing processed twice', async () => {
+    const o = await aliceOwnedOrder();
+    for (let i = 0; i < 3; i++) {
+      assert.deepEqual((await createOrderReq(env(), o, bearer(await tokenFor(ALICE)))).body, { ok: true, orderId: o.id, replay: true });
+    }
+    await unchangedAfter(o, 'owner replays');
+  });
+
+  test('replay: ANOTHER account -> 409 ORDER_EXISTS, identical whether the payload matches or not; nothing changes', async () => {
+    const o = await aliceOwnedOrder();
+    const same = await createOrderReq(env(), o, bearer(await tokenFor(MALLORY)));
+    const otherPhone = await createOrderReq(env(), { ...o, address: { ...o.address, phone: '+962790000999' } }, bearer(await tokenFor(MALLORY)));
+    const otherItems = await createOrderReq(env(), { ...o, userId: MALLORY }, bearer(await tokenFor(MALLORY)));
+    for (const r of [same, otherPhone, otherItems]) {
+      assert.equal(r.status, 409);
+      assert.deepEqual(r.body, EXISTS409);
+    }
+    assert.equal(same.text, otherPhone.text, 'byte-identical answers: no confirmation oracle');
+    assert.equal(same.text, otherItems.text);
+    await unchangedAfter(o, 'other account');
+  });
+
+  test('replay: NO token -> 409 ORDER_EXISTS, identical for matching and non-matching payloads; nothing changes', async () => {
+    const o = await aliceOwnedOrder();
+    const same = await createOrderReq(env(), o);
+    const differs = await createOrderReq(env(), { ...o, address: { ...o.address, phone: '+962790000998' } });
+    assert.equal(same.status, 409);
+    assert.deepEqual(same.body, EXISTS409);
+    assert.equal(same.text, differs.text);
+    assert.equal(same.status, differs.status);
+    await unchangedAfter(o, 'no token');
+  });
+
+  test('replay: owned order created with body userId "guest" (profile not loaded) -> still owner-only', async () => {
+    await freshAuth();
+    const o = checkoutOrder({ userId: 'guest' });
+    assert.equal((await createOrderReq(env(), o, bearer(await tokenFor(ALICE)))).status, 200);
+    assert.deepEqual((await createOrderReq(env(), o)).body, EXISTS409, 'the body says guest, the ledger says Alice');
+    assert.deepEqual((await createOrderReq(env(), o, bearer(await tokenFor(MALLORY)))).body, EXISTS409);
+    assert.deepEqual((await createOrderReq(env(), o, bearer(await tokenFor(ALICE)))).body, { ok: true, orderId: o.id, replay: true });
+    assert.equal((await getDecoded(`orders/${o.id}`)).userId, ALICE);
+  });
+
+  test('account switch while an attempt is pending: Alice saved (answer lost), Mallory signs in and retries -> 409, then Alice -> replay', async () => {
+    const o = await aliceOwnedOrder(); // Alice's first send was saved; pretend its answer never arrived
+    const r1 = await createOrderReq(env(), o, bearer(await tokenFor(MALLORY))); // same tab, other account, same frozen payload
+    assert.deepEqual(r1.body, EXISTS409, 'no false "confirmed" for Mallory, no USERID_MISMATCH detail either');
+    const r2 = await createOrderReq(env(), o, bearer(await tokenFor(ALICE)));
+    assert.deepEqual(r2.body, { ok: true, orderId: o.id, replay: true });
+    await unchangedAfter(o, 'account switch');
+  });
+
+  test('replay: parallel owner + other account + no token -> owner gets replay, others 409; one order, stock once', async () => {
+    const o = await aliceOwnedOrder();
+    const rs = await Promise.all([
+      createOrderReq(env(), o, bearer(await tokenFor(ALICE))),
+      createOrderReq(env(), o, bearer(await tokenFor(MALLORY))),
+      createOrderReq(env(), o),
+      createOrderReq(env(), o, bearer(await tokenFor(ALICE))),
+    ]);
+    assert.deepEqual(rs.map((r) => r.status), [200, 409, 409, 200]);
+    await unchangedAfter(o, 'parallel');
+  });
+
+  test('legacy ledger WITHOUT ownerUid but userIdVerified (written before this change): owner taken from the order doc', async () => {
+    const o = await aliceOwnedOrder();
+    const fsA = adminDb();
+    const del = await fsA.commit([{ update: { name: fsA.name(`orderLedger/${o.id}`), fields: {} }, updateMask: { fieldPaths: ['ownerUid'] } }]);
+    assert.ok(del.ok);
+    assert.equal('ownerUid' in (await getDecoded(`orderLedger/${o.id}`)), false);
+    assert.deepEqual((await createOrderReq(env(), o, bearer(await tokenFor(MALLORY)))).body, EXISTS409);
+    assert.deepEqual((await createOrderReq(env(), o)).body, EXISTS409);
+    assert.deepEqual((await createOrderReq(env(), o, bearer(await tokenFor(ALICE)))).body, { ok: true, orderId: o.id, replay: true });
+  });
+
+  test('legacy verified ledger whose order doc was deleted -> owner unprovable -> nobody gets a confirmation, nothing recreated', async () => {
+    const o = await aliceOwnedOrder();
+    const fsA = adminDb();
+    await fsA.commit([
+      { update: { name: fsA.name(`orderLedger/${o.id}`), fields: {} }, updateMask: { fieldPaths: ['ownerUid'] } },
+      { delete: fsA.name(`orders/${o.id}`) },
+    ]);
+    for (const h of [bearer(await tokenFor(ALICE)), bearer(await tokenFor(MALLORY)), {}]) {
+      assert.deepEqual((await createOrderReq(env(), o, h)).body, EXISTS409);
+    }
+    assert.equal(await getDecoded(`orders/${o.id}`), null, 'never recreated');
+    assert.equal(await productStock('p-simple'), 8, 'no second deduction');
+  });
+
+  test('guest orders unchanged: anyone may replay the same payload (no identity to check); different payload -> ORDER_EXISTS (single 409 code)', async () => {
+    await freshAuth();
+    const o = checkoutOrder({ userId: 'guest' });
+    assert.equal((await createOrderReq(env(), o)).status, 200);
+    assert.equal('ownerUid' in (await getDecoded(`orderLedger/${o.id}`)), false);
+    assert.deepEqual((await createOrderReq(env(), o)).body, { ok: true, orderId: o.id, replay: true });
+    assert.deepEqual((await createOrderReq(env(), o, bearer(await tokenFor(MALLORY)))).body, { ok: true, orderId: o.id, replay: true });
+    const diff = await createOrderReq(env(), { ...o, address: { ...o.address, phone: '+962790000997' } });
+    assert.deepEqual(diff.body, { ok: false, code: 'ORDER_EXISTS' });
+    assert.equal((await getDecoded(`orders/${o.id}`)).userId, 'guest');
+    await assertProcessedOnce(o.id, { modes: ['created'] });
+  });
+
+  test('old site, no token, claimed uid (stored as guest): replay unchanged, ledger has no owner', async () => {
+    await freshAuth();
+    const o = checkoutOrder({ userId: ALICE });
+    assert.equal((await createOrderReq(env(), o)).status, 200);
+    const ledger = await getDecoded(`orderLedger/${o.id}`);
+    assert.equal(ledger.userIdVerified, false);
+    assert.equal('ownerUid' in ledger, false);
+    assert.deepEqual((await createOrderReq(env(), o)).body, { ok: true, orderId: o.id, replay: true });
+    assert.equal((await getDecoded(`orders/${o.id}`)).userId, 'guest');
+  });
+
+  test('old site: browser-written order doc WITHOUT ledger -> adopted (owner from the browser doc is NOT treated as verified) -> replay unchanged', async () => {
+    await freshAuth();
+    const o = checkoutOrder({ userId: 'guest' });
+    await putDoc(`orders/${o.id}`, { ...o, status: 'new', seenByAdmin: false }, { serverTimeFields: ['createdAt', 'updatedAt'] });
+    const r1 = await createOrderReq(env(), o, bearer(await tokenFor(ALICE)));
+    assert.deepEqual(r1.body, { ok: true, orderId: o.id, replay: false });
+    const ledger = await getDecoded(`orderLedger/${o.id}`);
+    assert.equal(ledger.mode, 'adopted');
+    assert.equal('ownerUid' in ledger, false, 'adoption never assigns a verified owner');
+    assert.equal((await getDecoded(`orders/${o.id}`)).userId, 'guest', 'browser document untouched');
+    assert.deepEqual((await createOrderReq(env(), o)).body, { ok: true, orderId: o.id, replay: true });
+    await assertProcessedOnce(o.id, { modes: ['adopted'] });
+  });
+
+  test('5 parallel identical requests with valid tokens -> one order for the uid, others replay', async () => {
+    await freshAuth();
+    const o = checkoutOrder({ userId: ALICE });
+    const rs = await Promise.all(Array.from({ length: 5 }, async () => createOrderReq(env(), o, bearer(await tokenFor(ALICE)))));
+    assert.ok(rs.every((r) => r.status === 200 && r.body.ok === true));
+    assert.equal(rs.filter((r) => r.body.replay === false).length, 1);
+    await assertProcessedOnce(o.id, { modes: ['created'] });
+  });
+
+  test('CORS preflight allows the Authorization header for allowed origins only', async () => {
+    const good = await callWorker(env(), { method: 'OPTIONS', path: '/create-order', headers: { origin: 'https://dairsharaf.com', 'access-control-request-headers': 'authorization, content-type' } });
+    assert.equal(good.status, 204);
+    assert.equal(good.headers.get('access-control-allow-origin'), 'https://dairsharaf.com');
+    assert.match(good.headers.get('access-control-allow-headers'), /(^|, )authorization(,|$)/);
+    const evil = await callWorker(env(), { method: 'OPTIONS', path: '/create-order', headers: { origin: 'https://evil.example', 'access-control-request-headers': 'authorization' } });
+    assert.equal(evil.headers.get('access-control-allow-origin'), null);
+    assert.equal(evil.headers.get('access-control-allow-headers'), null);
+  });
+
+  test('CORS is not authentication: an allowed origin with a forged token is still refused', async () => {
+    await freshAuth();
+    const o = checkoutOrder({ userId: ALICE });
+    const r = await createOrderReq(env(), o, { origin: 'https://dairsharaf.com', ...bearer(await forger.idToken({ projectId: PROJECT, uid: ALICE })) });
+    assert.equal(r.status, 401);
+    await nothingWritten(o.id, 'forged with allowed origin');
+  });
+
+  for (const rulesName of ['prod', 'compat']) {
+    test(`[${rulesName} rules] My Orders and the review purchase check see the token-linked order (only Alice's)`, async () => {
+      await freshAuth();
+      const mine = checkoutOrder({ userId: ALICE });
+      const theirs = checkoutOrder({ userId: MALLORY });
+      const unverified = checkoutOrder({ userId: ALICE }); // old-site style: no token
+      assert.equal((await createOrderReq(env(), mine, bearer(await tokenFor(ALICE)))).status, 200);
+      assert.equal((await createOrderReq(env(), theirs, bearer(await tokenFor(MALLORY)))).status, 200);
+      assert.equal((await createOrderReq(env(), unverified)).status, 200);
+      // admin marks Alice's order delivered (status-only update, like storage.ts updateStatus)
+      const fsAdmin = adminDb();
+      const up = await fsAdmin.commit([{ update: { name: fsAdmin.name(`orders/${mine.id}`), fields: encodeFields({ status: 'delivered' }) }, updateMask: { fieldPaths: ['status'] } }]);
+      assert.ok(up.ok);
+
+      const tenv = await browserEnv(rulesName);
+      try {
+        const { collection, query, where, orderBy, getDocs } = await import('firebase/firestore');
+        const db = tenv.authenticatedContext(ALICE, { email: 'alice@example.com', email_verified: true }).firestore();
+        // = storage.ts db.orders.getByUserId (MyOrders.tsx, hasPurchasedProduct)
+        const snap = await getDocs(query(collection(db, 'orders'), where('userId', '==', ALICE), orderBy('createdAt', 'desc')));
+        assert.deepEqual(snap.docs.map((d) => d.id), [mine.id], 'only the verified order of Alice');
+        const bought = snap.docs.some((d) => ['processing', 'shipped', 'delivered'].includes(d.data().status) && (d.data().items || []).some((i) => i.productId === 'p-simple'));
+        assert.equal(bought, true, 'review allowed once delivered');
+        const mdb = tenv.authenticatedContext(MALLORY, { email: 'm@example.com', email_verified: true }).firestore();
+        await assert.rejects(getDocs(query(collection(mdb, 'orders'), where('userId', '==', ALICE))));
+      } finally {
+        await tenv.cleanup();
+      }
+    });
+  }
+});
+
+// ===========================================================================
+// Order summary for tracking (GET /orders/:id/summary): tracking key or verified owner, never personal data
+// ===========================================================================
+describe('order summary (tracking key)', () => {
+  const PROJECT = 'demo-dairsharaf-orders';
+  const ALICE = 'aliceUid000000000000000000A1';
+  const MALLORY = 'malloryUid0000000000000000M1';
+  const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  const newKey = () => [...crypto.getRandomValues(new Uint8Array(24))].map((b) => B32[b % 32]).join('');
+  const hashOf = async (k) => hashTrackingKey(normalizeTrackingKey(k));
+  let signer;
+  before(async () => {
+    signer = await makeTestSigner('test-kid-summary');
+  });
+  async function freshS() {
+    await fresh();
+    clearKeyCache();
+    mock.state.jwks = { keys: [signer.jwk] };
+    mock.state.jwksFail = false;
+  }
+  const create = (order, { keyHash, token } = {}) =>
+    callWorker(env(), {
+      method: 'POST', path: '/create-order',
+      body: { order, ...(keyHash !== undefined ? { trackingKeyHash: keyHash } : {}) },
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
+  const summary = (id, { key, token } = {}) =>
+    callWorker(env(), {
+      path: `/orders/${encodeURIComponent(id)}/summary`,
+      headers: { ...(key !== undefined ? { 'x-tracking-key': key } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    });
+  const DENIED = '{"ok":false,"code":"NOT_FOUND"}';
+  const PII = (o) => [o.address.fullName, o.address.phone, o.address.street, o.address.city, o.customerEmail, o.note, o.paymentDetails?.cliqReference, 'claimedUserId', 'userId', 'ownerUid', 'trackingKeyHash'].filter(Boolean);
+  const piiOrder = (over = {}) => checkoutOrder({
+    payment: 'cliq',
+    overrides: {
+      customerEmail: 'secret.buyer@example.com', note: 'leave with neighbour 0799000111',
+      address: { fullName: 'Secret Buyer Name', city: 'Hidden City', street: 'Hidden Street 9', phone: '+962791234567' },
+      ...over,
+    },
+  });
+
+  test('key holder gets the summary: allow-listed fields only, NO personal data (CliQ order)', async () => {
+    await freshS();
+    const k = newKey();
+    const o = piiOrder();
+    assert.equal((await create(o, { keyHash: await hashOf(k) })).status, 200);
+    const r = await summary(o.id, { key: k });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(Object.keys(r.body), ['ok', 'order']);
+    assert.deepEqual(Object.keys(r.body.order).sort(), ['date', 'discountAmount', 'id', 'items', 'paid', 'paymentMethod', 'shippingCost', 'shippingMethod', 'status', 'subtotal', 'total'].sort());
+    for (const secret of PII(o)) assert.equal(r.text.includes(secret), false, `summary leaks ${secret}`);
+    assert.equal(r.text.includes(k), false, 'the key is never echoed');
+    assert.equal(r.body.order.status, 'new');
+    assert.equal(r.body.order.paymentMethod, 'cliq');
+    assert.equal(r.body.order.paid, false);
+    assert.equal(r.body.order.items.length, o.items.length);
+    assert.equal(r.headers.get('cache-control'), 'no-store');
+    // the key works in any formatting the customer may type
+    const typed = k.toLowerCase().match(/.{4}/g).join('-');
+    assert.equal((await summary(o.id, { key: typed })).status, 200);
+  });
+
+  test('every refusal is the SAME 404: missing / wrong / malformed key, other order\'s key, unknown order', async () => {
+    await freshS();
+    const k1 = newKey();
+    const k2 = newKey();
+    const o1 = piiOrder();
+    const o2 = piiOrder({ address: { fullName: 'Other Buyer', city: 'X', street: 'Y', phone: '+962791234568' } });
+    assert.equal((await create(o1, { keyHash: await hashOf(k1) })).status, 200);
+    assert.equal((await create(o2, { keyHash: await hashOf(k2) })).status, 200);
+    const answers = [
+      await summary(o1.id),
+      await summary(o1.id, { key: newKey() }),
+      await summary(o1.id, { key: 'not-a-key' }),
+      await summary(o1.id, { key: k2 }), // swapped keys
+      await summary(o2.id, { key: k1 }),
+      await summary(makeOrderId(), { key: k1 }), // unknown order
+      await summary('not-an-id', { key: k1 }),
+    ];
+    for (const a of answers) {
+      assert.equal(a.status, 404);
+      assert.equal(a.text, DENIED);
+    }
+    assert.equal((await summary(o1.id, { key: k1 })).status, 200);
+    assert.equal((await summary(o2.id, { key: k2 })).status, 200);
+  });
+
+  test('order number alone: public status only (no details), summary refused', async () => {
+    await freshS();
+    const o = piiOrder();
+    assert.equal((await create(o, { keyHash: await hashOf(newKey()) })).status, 200);
+    const st = await callWorker(env(), { path: `/orders/${o.id}/status` });
+    assert.deepEqual(st.body, { ok: true, exists: true, status: 'new' });
+    assert.equal((await summary(o.id)).text, DENIED);
+  });
+
+  test('lost create response: the browser already has the key; the retry is a replay and the key works', async () => {
+    await freshS();
+    const k = newKey();
+    const h = await hashOf(k);
+    const o = piiOrder();
+    assert.equal((await create(o, { keyHash: h })).status, 200); // saved, answer "lost"
+    const again = await create(o, { keyHash: h }); // same attempt -> same key -> same hash
+    assert.deepEqual(again.body, { ok: true, orderId: o.id, replay: true });
+    assert.equal((await getDecoded(`orderLedger/${o.id}`)).trackingKeyHash, h);
+    assert.equal((await summary(o.id, { key: k })).status, 200);
+    await assertProcessedOnce(o.id, { modes: ['created'] });
+  });
+
+  test('a third party replaying the SAME guest payload with its own key gets nothing: stored hash unchanged, its key refused', async () => {
+    await freshS();
+    const kOwner = newKey();
+    const kAttacker = newKey();
+    const o = piiOrder();
+    assert.equal((await create(o, { keyHash: await hashOf(kOwner) })).status, 200);
+    const r = await create(o, { keyHash: await hashOf(kAttacker) });
+    assert.deepEqual(r.body, { ok: true, orderId: o.id, replay: true }, 'replay says nothing about the key');
+    assert.equal(r.text.includes(kOwner), false);
+    assert.equal((await getDecoded(`orderLedger/${o.id}`)).trackingKeyHash, await hashOf(kOwner), 'hash written once');
+    assert.equal((await summary(o.id, { key: kAttacker })).text, DENIED);
+    assert.equal((await summary(o.id, { key: kOwner })).status, 200);
+    await assertProcessedOnce(o.id, { modes: ['created'] });
+  });
+
+  test('old orders (no key stored, guest or claimed uid): status works, summary refused for any key', async () => {
+    await freshS();
+    const g = checkoutOrder({ userId: 'guest' });
+    const c = checkoutOrder({ userId: ALICE });
+    assert.equal((await create(g)).status, 200);
+    assert.equal((await create(c)).status, 200);
+    for (const o of [g, c]) {
+      assert.equal('trackingKeyHash' in (await getDecoded(`orderLedger/${o.id}`)), false);
+      assert.equal((await summary(o.id, { key: newKey() })).text, DENIED);
+      assert.equal((await callWorker(env(), { path: `/orders/${o.id}/status` })).body.exists, true);
+    }
+  });
+
+  test('old site: browser-written order without ledger -> summary refused until processed', async () => {
+    await freshS();
+    const o = checkoutOrder({ userId: 'guest' });
+    await putDoc(`orders/${o.id}`, { ...o, status: 'new', seenByAdmin: false }, { serverTimeFields: ['createdAt', 'updatedAt'] });
+    assert.equal((await summary(o.id, { key: newKey() })).text, DENIED);
+  });
+
+  test('malformed trackingKeyHash in a create request is ignored (order still created, no hash stored)', async () => {
+    await freshS();
+    const o = checkoutOrder({ userId: 'guest' });
+    assert.equal((await create(o, { keyHash: 'XYZ' })).status, 200);
+    assert.equal('trackingKeyHash' in (await getDecoded(`orderLedger/${o.id}`)), false);
+  });
+
+  test('verified OWNER may read the summary without a key; other account / bad token / no token refused', async () => {
+    await freshS();
+    const o = checkoutOrder({ userId: ALICE });
+    const aliceToken = await signer.idToken({ projectId: PROJECT, uid: ALICE });
+    assert.equal((await create(o, { token: aliceToken })).status, 200);
+    assert.equal((await summary(o.id, { token: aliceToken })).status, 200);
+    assert.equal((await summary(o.id, { token: await signer.idToken({ projectId: PROJECT, uid: MALLORY }) })).text, DENIED);
+    assert.equal((await summary(o.id, { token: 'garbage.token.here' })).text, DENIED);
+    assert.equal((await summary(o.id)).text, DENIED);
+  });
+
+  test('unified 409: owned order (other account) and guest order (different payload) answer byte-identically', async () => {
+    await freshS();
+    const owned = checkoutOrder({ userId: ALICE });
+    const guest = checkoutOrder({ userId: 'guest' });
+    assert.equal((await create(owned, { token: await signer.idToken({ projectId: PROJECT, uid: ALICE }) })).status, 200);
+    assert.equal((await create(guest)).status, 200);
+    const a = await create(owned, { token: await signer.idToken({ projectId: PROJECT, uid: MALLORY }) });
+    const b = await create({ ...guest, address: { ...guest.address, phone: '+962790000123' } });
+    assert.equal(a.status, 409);
+    assert.equal(a.text, b.text);
+    assert.equal(a.text, '{"ok":false,"code":"ORDER_EXISTS"}');
+  });
+
+  test('CORS: allowed origin may send x-tracking-key; summary rate-limited like status', async () => {
+    const pre = await callWorker(env(), { method: 'OPTIONS', path: '/orders/ORD-AAAA1111-BBBB/summary', headers: { origin: 'https://dairsharaf.com', 'access-control-request-headers': 'x-tracking-key' } });
+    assert.match(pre.headers.get('access-control-allow-headers'), /x-tracking-key/);
+    const lim = env({ RATE_LIMIT_STATUS_PER_MIN: '2' });
+    const codes = [];
+    for (let i = 0; i < 4; i++) codes.push((await callWorker(lim, { path: '/orders/ORD-AAAA1111-BBBB/summary', headers: { 'cf-connecting-ip': '10.200.0.9' } })).status);
+    assert.ok(codes.includes(429), codes.join(','));
+  });
+});
+
+// ===========================================================================
+describe('cron: ONE order per run, oldest due first, channels independent, no duplicates', () => {
+  const sentFor = (ch, id) => mock.state.calls.filter((c) => c.channel === ch && c.ok && c.orderId === id).length;
+  const triesFor = (ch, id) => mock.state.calls.filter((c) => c.channel === ch && c.orderId === id).length;
+  /** n orders whose inline notifications BOTH failed (created in this order: oldest first) */
+  const failedOrders = async (n, e = env()) => {
+    mock.state.failAlways.telegram = true;
+    mock.state.failAlways.email = true;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const o = checkoutOrder();
+      assert.equal((await createOrderReq(e, o)).status, 200);
+      out.push(o.id);
+      await sleep(5); // distinct due times
+    }
+    mock.state.failAlways.telegram = false;
+    mock.state.failAlways.email = false;
+    return out;
+  };
+
+  test('each run handles exactly ONE order, the oldest due first; nothing removed from the queue before it is done', async () => {
+    await fresh();
+    const [a, b, c] = await failedOrders(3);
+    for (const id of [a, b, c]) {
+      const l = await getDecoded(`orderLedger/${id}`);
+      assert.equal(l.notifyPending, true);
+      assert.ok(l.notifyNextAt instanceof Date, 'queued with a due time');
+    }
+    assert.equal((await runCron(env())).retried, 1);
+    assert.deepEqual([a, b, c].map((id) => sentFor('telegram', id) + sentFor('email', id)), [2, 0, 0], 'run 1: the oldest only');
+    await runCron(env());
+    assert.deepEqual([a, b, c].map((id) => sentFor('telegram', id) + sentFor('email', id)), [2, 2, 0], 'run 2: the next oldest');
+    await runCron(env());
+    assert.deepEqual([a, b, c].map((id) => sentFor('telegram', id) + sentFor('email', id)), [2, 2, 2]);
+    for (const id of [a, b, c]) {
+      const l = await getDecoded(`orderLedger/${id}`);
+      assert.equal(l.notifyPending, false);
+      assert.equal('notifyNextAt' in l, false, 'left the queue only when done');
+    }
+    // more runs: nothing is sent again
+    const before = mock.state.calls.length;
+    for (let i = 0; i < 4; i++) assert.equal((await runCron(env())).retried, 0);
+    assert.equal(mock.state.calls.length, before, 'no unintended duplicates');
+  });
+
+  test('a permanently failing (older) order never blocks the others; its working channel is sent once; it stops after NOTIFY_MAX_ATTEMPTS', async () => {
+    await fresh();
+    const e = env({ NOTIFY_MAX_ATTEMPTS: '3' });
+    const [bad, b, c] = await failedOrders(3, e);
+    mock.state.failOrder.telegram.add(bad);
+    await runCron(e); // bad: telegram fails again, email sent; moved behind the others
+    await runCron(e); // b
+    await runCron(e); // c
+    assert.equal(sentFor('telegram', b) + sentFor('email', b), 2, 'b not blocked');
+    assert.equal(sentFor('telegram', c) + sentFor('email', c), 2, 'c not blocked');
+    assert.equal(sentFor('email', bad), 1, "bad's e-mail sent once (channels independent)");
+    for (let i = 0; i < 4; i++) await runCron(e);
+    const l = await getDecoded(`orderLedger/${bad}`);
+    assert.equal(l.notifications.telegram.state, 'failed', 'never marked sent without a confirmed send');
+    assert.equal(l.notifications.telegram.attempts, 3);
+    assert.equal(triesFor('telegram', bad), 3);
+    assert.equal(sentFor('email', bad), 1, 'e-mail never resent');
+    assert.equal(l.notifyPending, false);
+  });
+
+  test('two cron runs AT THE SAME TIME: no message sent twice; every order completes', async () => {
+    await fresh();
+    const ids = await failedOrders(3);
+    for (let round = 0; round < 3; round++) await Promise.all([runCron(env()), runCron(env())]);
+    for (const id of ids) {
+      assert.equal(sentFor('telegram', id), 1, `${id}: one telegram`);
+      assert.equal(sentFor('email', id), 1, `${id}: one e-mail`);
+    }
+    await Promise.all([runCron(env()), runCron(env())]);
+    for (const id of ids) assert.equal(sentFor('telegram', id) + sentFor('email', id), 2);
+  });
+
+  test('Telegram-only failure: the e-mail is sent once and never again; Telegram retried by cron, sent once', async () => {
+    await fresh();
+    mock.state.failNext.telegram = 1;
+    const o = checkoutOrder();
+    await createOrderReq(env(), o);
+    let l = await getDecoded(`orderLedger/${o.id}`);
+    assert.deepEqual([l.notifications.telegram.state, l.notifications.email.state], ['failed', 'sent']);
+    await runCron(env());
+    await runCron(env());
+    l = await getDecoded(`orderLedger/${o.id}`);
+    assert.deepEqual([l.notifications.telegram.state, l.notifications.email.state], ['sent', 'sent']);
+    assert.equal(sentFor('telegram', o.id), 1);
+    assert.equal(triesFor('email', o.id), 1, 'e-mail not retried');
+  });
+
+  test('E-mail-only failure: Telegram sent once and never again; e-mail retried by cron, sent once', async () => {
+    await fresh();
+    mock.state.failNext.email = 1;
+    const o = checkoutOrder();
+    await createOrderReq(env(), o);
+    let l = await getDecoded(`orderLedger/${o.id}`);
+    assert.deepEqual([l.notifications.telegram.state, l.notifications.email.state], ['sent', 'failed']);
+    await runCron(env());
+    await runCron(env());
+    l = await getDecoded(`orderLedger/${o.id}`);
+    assert.deepEqual([l.notifications.telegram.state, l.notifications.email.state], ['sent', 'sent']);
+    assert.equal(triesFor('telegram', o.id), 1, 'telegram not retried');
+    assert.equal(sentFor('email', o.id), 1);
+  });
+
+  test('connection lost to the provider (no answer): NOT marked sent; retried by cron; sent once', async () => {
+    await fresh();
+    mock.state.drop.telegram = 1;
+    const o = checkoutOrder();
+    await createOrderReq(env(), o);
+    let l = await getDecoded(`orderLedger/${o.id}`);
+    assert.equal(l.notifications.telegram.state, 'failed');
+    assert.equal(l.notifications.telegram.lastStatus, 0);
+    await runCron(env());
+    l = await getDecoded(`orderLedger/${o.id}`);
+    assert.equal(l.notifications.telegram.state, 'sent');
+    assert.equal(sentFor('telegram', o.id), 1);
+    assert.equal(sentFor('email', o.id), 1);
+  });
+
+  test('provider TIMEOUT (request never answered): the send is aborted before the lease ends, NOT marked sent; retried; sent once', async () => {
+    await fresh();
+    const e = env({ NOTIFY_SEND_TIMEOUT_MS: '400', NOTIFY_LEASE_MS: '60000' });
+    mock.state.hang.telegram = 1;
+    const o = checkoutOrder();
+    const t0 = Date.now();
+    await createOrderReq(e, o);
+    assert.ok(Date.now() - t0 < 30_000, 'the hung send did not hold the request until the lease');
+    let l = await getDecoded(`orderLedger/${o.id}`);
+    assert.equal(l.notifications.telegram.state, 'failed', 'timed out -> failed, never sent');
+    assert.equal(l.notifyPending, true);
+    await runCron(e);
+    l = await getDecoded(`orderLedger/${o.id}`);
+    assert.equal(l.notifications.telegram.state, 'sent');
+    assert.equal(sentFor('telegram', o.id), 1);
+    assert.equal(triesFor('telegram', o.id), 2, 'one hung + one delivered');
+  });
+
+  // lease taken over by ANOTHER run while this run is still sending; this run's result arrives late
+  const waitCall = async (ch, kind) => {
+    for (let i = 0; i < 150 && !mock.state.calls.some((c) => c.channel === ch && (kind ? c.broken === kind : true)); i++) await sleep(20);
+  };
+  const putChannel = async (id, ch, st) => {
+    const fs = adminDb();
+    assert.ok((await fs.commit([{ update: { name: fs.name(`orderLedger/${id}`), fields: encodeFields({ notifications: { [ch]: st } }) }, updateMask: { fieldPaths: [`notifications.${ch}`] } }])).ok);
+  };
+  for (const ch of ['telegram', 'email']) {
+    const other = ch === 'telegram' ? 'email' : 'telegram';
+    test(`${ch}: lease taken over DURING the send, newer run delivered it -> the old run's late "failed" never overwrites "sent"`, async () => {
+      await fresh();
+      const e = env({ NOTIFY_SEND_TIMEOUT_MS: '1500' });
+      mock.state.hang[ch] = 1;
+      const o = checkoutOrder();
+      const pending = createOrderReq(e, o); // run 1: claims ${ch}; the send hangs
+      await waitCall(ch, 'hang');
+      const claimed = (await getDecoded(`orderLedger/${o.id}`)).notifications[ch];
+      assert.equal(claimed.state, 'sending');
+      assert.ok(claimed.claimId, 'the claim carries its own id');
+      await putChannel(o.id, ch, { state: 'sent', attempts: 2, sentAt: new Date(), claimId: 'run-2' }); // run 2 took over and delivered
+      assert.equal((await pending).status, 200); // run 1 times out -> tries to record "failed"
+      const l = await getDecoded(`orderLedger/${o.id}`);
+      assert.equal(l.notifications[ch].state, 'sent', 'the newer state is kept');
+      assert.equal(l.notifications[ch].attempts, 2);
+      assert.equal(l.notifications[other].state, 'sent', 'the other channel is unaffected');
+      assert.equal(l.notifyPending, false);
+      await runCron(e);
+      await runCron(e);
+      assert.equal(triesFor(ch, o.id), 1, 'nothing resent');
+      assert.equal(triesFor(other, o.id), 1);
+    });
+
+    test(`${ch}: newer run claimed the channel, old run's send succeeded LATE -> its late "sent" never overwrites the newer claim (documented at-least-once: a second message is possible)`, async () => {
+      await fresh();
+      const e = env({ NOTIFY_SEND_TIMEOUT_MS: '5000' });
+      mock.state.late[ch] = 1;
+      mock.state.lateMs = 1_500;
+      const o = checkoutOrder();
+      const pending = createOrderReq(e, o); // run 1: delivered, but the answer comes late
+      await waitCall(ch);
+      // run 2 claimed the channel (run 1's lease considered expired) and then crashed: its lease has expired too
+      await putChannel(o.id, ch, { state: 'sending', attempts: 2, leaseUntil: new Date(Date.now() - 1000), claimId: 'run-2' });
+      assert.equal((await pending).status, 200); // run 1's late success: its claim is gone -> nothing written
+      let l = await getDecoded(`orderLedger/${o.id}`);
+      assert.equal(l.notifications[ch].state, 'sending', 'run 2 still owns the channel');
+      assert.equal(l.notifications[ch].claimId, 'run-2');
+      assert.equal(l.notifyPending, true, 'still queued');
+      await runCron(e); // run 2's lease expired -> re-claimed and sent
+      l = await getDecoded(`orderLedger/${o.id}`);
+      assert.equal(l.notifications[ch].state, 'sent');
+      assert.equal(l.notifications[ch].attempts, 3);
+      assert.equal(l.notifyPending, false);
+      // the limit, made explicit: the provider got the message twice (no idempotency key at Telegram / SendGrid)
+      assert.equal(sentFor(ch, o.id), 2, 'at-least-once, not exactly-once');
+      assert.equal(sentFor(other, o.id), 1, 'the other channel was sent once');
+    });
+  }
+
+  test('a ledger queued BEFORE notifyNextAt existed (notifyPending only) is still processed', async () => {
+    await fresh();
+    mock.state.failNext.telegram = 1;
+    const o = checkoutOrder();
+    await createOrderReq(env(), o);
+    const fs = adminDb();
+    // drop the due time (as on a ledger written by an earlier version)
+    assert.ok((await fs.commit([{ update: { name: fs.name(`orderLedger/${o.id}`), fields: {} }, updateMask: { fieldPaths: ['notifyNextAt'] } }])).ok);
+    assert.equal('notifyNextAt' in (await getDecoded(`orderLedger/${o.id}`)), false);
+    assert.equal((await runCron(env())).retried, 1);
+    const l = await getDecoded(`orderLedger/${o.id}`);
+    assert.equal(l.notifications.telegram.state, 'sent');
+    assert.equal(l.notifyPending, false);
   });
 });

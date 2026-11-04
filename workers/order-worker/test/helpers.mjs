@@ -33,7 +33,20 @@ export async function startMockServices(port = 0) {
     unexpected: [],
     failNext: { telegram: 0, email: 0 },
     failAlways: { telegram: false, email: false },
+    // per-order failure (order ids), connection drop (socket destroyed, no answer) and hang (request received, never
+    // answered -> the Worker's send timeout) — counts per channel
+    failOrder: { telegram: new Set(), email: new Set() },
+    drop: { telegram: 0, email: 0 },
+    hang: { telegram: 0, email: 0 },
+    late: { telegram: 0, email: 0 },
+    lateMs: 1_500,
+    // TEST public keys for Firebase-style ID tokens (test/token-signer.mjs); never Google's keys
+    jwks: { keys: [] },
+    jwksFail: false,
+    jwksFetches: 0,
   };
+  const hung = new Set();
+  const late = new Set();
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
@@ -42,7 +55,33 @@ export async function startMockServices(port = 0) {
         res.writeHead(status, { 'content-type': 'application/json' });
         res.end(JSON.stringify(obj));
       };
+      const orderOf = (ch) => {
+        try {
+          const b = JSON.parse(body || '{}');
+          const s = ch === 'telegram' ? String(b.text || '') : String(b.personalizations?.[0]?.subject || '');
+          return (s.match(/ORD-[A-Z0-9]+-[A-Z0-9]+/) || [''])[0];
+        } catch {
+          return '';
+        }
+      };
+      // connection lost / no answer: the provider got the request, the Worker never gets a result
+      const broken = (ch) => {
+        if (state.drop[ch] > 0) {
+          state.drop[ch] -= 1;
+          state.calls.push({ channel: ch, ok: false, broken: 'drop', orderId: orderOf(ch) });
+          req.socket.destroy();
+          return true;
+        }
+        if (state.hang[ch] > 0) {
+          state.hang[ch] -= 1;
+          state.calls.push({ channel: ch, ok: false, broken: 'hang', orderId: orderOf(ch) });
+          hung.add(res);
+          return true;
+        }
+        return false;
+      };
       const channelFail = (ch) => {
+        if (state.failOrder[ch].has(orderOf(ch))) return true;
         if (state.failAlways[ch]) return true;
         if (state.failNext[ch] > 0) {
           state.failNext[ch] -= 1;
@@ -50,15 +89,38 @@ export async function startMockServices(port = 0) {
         }
         return false;
       };
+      // DELIVERED, but the success answer arrives only after state.lateMs (the sender may have lost its lease by then)
+      const lateReply = (ch, failed, reply) => {
+        if (!failed && state.late[ch] > 0) {
+          state.late[ch] -= 1;
+          const t = setTimeout(() => {
+            late.delete(t);
+            reply();
+          }, state.lateMs);
+          late.add(t);
+          return undefined;
+        }
+        return reply();
+      };
       if (req.method === 'POST' && /^\/telegram\/bot[^/]+\/sendMessage$/.test(req.url)) {
+        if (broken('telegram')) return;
         const failed = channelFail('telegram');
-        state.calls.push({ channel: 'telegram', ok: !failed, body: JSON.parse(body || '{}') });
-        return failed ? send(500, { ok: false }) : send(200, { ok: true, result: { message_id: state.calls.length } });
+        state.calls.push({ channel: 'telegram', ok: !failed, body: JSON.parse(body || '{}'), orderId: orderOf('telegram') });
+        const reply = () => (failed ? send(500, { ok: false }) : send(200, { ok: true, result: { message_id: state.calls.length } }));
+        return lateReply('telegram', failed, reply);
       }
       if (req.method === 'POST' && req.url === '/sendgrid/v3/mail/send') {
+        if (broken('email')) return;
         const failed = channelFail('email');
-        state.calls.push({ channel: 'email', ok: !failed, body: JSON.parse(body || '{}') });
-        return failed ? send(500, { errors: [{ message: 'mock failure' }] }) : (res.writeHead(202), res.end());
+        state.calls.push({ channel: 'email', ok: !failed, body: JSON.parse(body || '{}'), orderId: orderOf('email') });
+        const reply = () => (failed ? send(500, { errors: [{ message: 'mock failure' }] }) : (res.writeHead(202), res.end()));
+        return lateReply('email', failed, reply);
+      }
+      if (req.method === 'GET' && req.url === '/jwks') {
+        state.jwksFetches++;
+        if (state.jwksFail) return send(500, { error: 'mock key server down' });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60' });
+        return res.end(JSON.stringify(state.jwks));
       }
       if (req.method === 'POST' && req.url === '/turnstile/siteverify') {
         const p = new URLSearchParams(body);
@@ -81,8 +143,23 @@ export async function startMockServices(port = 0) {
       state.calls.length = 0;
       state.failNext = { telegram: 0, email: 0 };
       state.failAlways = { telegram: false, email: false };
+      state.failOrder = { telegram: new Set(), email: new Set() };
+      state.drop = { telegram: 0, email: 0 };
+      state.hang = { telegram: 0, email: 0 };
+      state.late = { telegram: 0, email: 0 };
+      state.lateMs = 1_500;
+      for (const r of hung) r.destroy();
+      hung.clear();
+      for (const x of late) clearTimeout(x);
+      late.clear();
     },
-    close: () => new Promise((r) => server.close(r)),
+    close: () => {
+      for (const r of hung) r.destroy();
+      hung.clear();
+      for (const x of late) clearTimeout(x);
+      late.clear();
+      return new Promise((r) => server.close(r));
+    },
   };
 }
 
@@ -99,6 +176,7 @@ export function makeEnv(mockUrl, overrides = {}) {
     TELEGRAM_API_BASE: `${mockUrl}/telegram`,
     SENDGRID_API_BASE: `${mockUrl}/sendgrid`,
     TURNSTILE_VERIFY_URL: `${mockUrl}/turnstile/siteverify`,
+    AUTH_JWKS_URL: `${mockUrl}/jwks`,
     TELEGRAM_BOT_TOKEN: 'test-bot-token',
     TELEGRAM_CHAT_ID: 'test-chat',
     SENDGRID_API_KEY: 'test-sendgrid-key',

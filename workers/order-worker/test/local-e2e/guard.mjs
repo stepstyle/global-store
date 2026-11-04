@@ -111,8 +111,10 @@ export function checkFirebaseJson(path, ports) {
   const e = j.emulators || {};
   if (e.firestore?.host !== '127.0.0.1' || e.firestore?.port !== ports.emulator) p.push('firebase.json: firestore emulator must be 127.0.0.1:<emulator port>');
   if (e.ui?.enabled !== false) p.push('firebase.json: emulator UI must be disabled');
+  // Auth emulator (UI suite: signed-in customers) only on 127.0.0.1 and the planned port
+  if (e.auth && (e.auth.host !== '127.0.0.1' || e.auth.port !== ports.authEmulator)) p.push('firebase.json: auth emulator must be 127.0.0.1:<authEmulator port>');
   for (const k of Object.keys(e)) {
-    if (!['firestore', 'ui', 'hub', 'logging', 'singleProjectMode'].includes(k)) p.push(`firebase.json: unexpected emulator "${k}"`);
+    if (!['firestore', 'auth', 'ui', 'hub', 'logging', 'singleProjectMode'].includes(k)) p.push(`firebase.json: unexpected emulator "${k}"`);
     if (e[k] && typeof e[k] === 'object' && 'host' in e[k] && e[k].host !== '127.0.0.1') p.push(`firebase.json: ${k} host must be 127.0.0.1`);
   }
   if (j.hosting || j.functions || j.database || j.storage) p.push('firebase.json: only the firestore emulator is allowed');

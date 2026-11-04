@@ -10,11 +10,12 @@ import { computeServerPricing, comparePricing } from './pricing.js';
 import { initialNotifications, processNotifications } from './notify.js';
 import { WORKER_VERSION } from './config.js';
 import { log } from './http.js';
+import { TRACKING_KEY_HASH_RE, normalizeTrackingKey, hashTrackingKey, sameHex, projectSummary } from './tracking.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const STATUS_ALLOWLIST = new Set(['new', 'processing', 'shipped', 'delivered', 'cancelled']);
 
-async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields, userIdWarning }) {
+async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields, userIdWarning, verifiedUid = null, trackingKeyHash = null }) {
   const v = input;
   const lines = v.items.map((it, index) => ({ index, productId: it.productId, variantId: it.variantId, quantity: it.quantity }));
   const productIds = [...new Set(lines.map((l) => l.productId))];
@@ -55,12 +56,19 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     warnings,
     stockDeductions: inv.deductions,
     strippedFields,
-    userIdVerified: false,
-    // created: guest, or claimed uid dropped to 'guest'; adopted/reconciled: taken from the browser-written
-    // document (validated by Firestore rules only once the compat rules are deployed).
-    userIdSource: mode === 'created' ? (userIdWarning ? 'claimed-unverified-dropped' : 'guest') : 'browser-document',
+    userIdVerified: !!verifiedUid,
+    // the VERIFIED owner (Firebase ID token uid), written once with the ledger (exists:false precondition); later
+    // ledger updates only touch notifications/notifyPending, and the browser can never write orderLedger.
+    ...(verifiedUid ? { ownerUid: verifiedUid } : {}),
+    // sha256 of the customer's tracking key (src/tracking.js); written once with the ledger, never returned
+    ...(trackingKeyHash ? { trackingKeyHash } : {}),
+    // created: verified Firebase ID token, guest, or claimed uid dropped to 'guest'; adopted/reconciled: taken from
+    // the browser-written document (validated by Firestore rules only once the compat rules are deployed).
+    userIdSource: mode === 'created' ? (verifiedUid ? 'firebase-id-token' : userIdWarning ? 'claimed-unverified-dropped' : 'guest') : 'browser-document',
     notifications: initialNotifications(cfg),
     notifyPending: true,
+    // cron queue position: due now (oldest orders first); moved back after each run, removed when all channels are done
+    notifyNextAt: new Date(),
   };
 
   const writes = [
@@ -72,11 +80,12 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
   ];
 
   if (mode === 'created') {
-    const resolvedUserId = v.userId === 'guest' || !userIdWarning ? v.userId : 'guest';
+    const resolvedUserId = verifiedUid || (v.userId === 'guest' || !userIdWarning ? v.userId : 'guest');
     const order = {
       id,
       userId: resolvedUserId,
-      ...(resolvedUserId !== v.userId ? { claimedUserId: v.userId } : {}),
+      ...(verifiedUid ? { userIdVerified: true } : {}),
+      ...(!verifiedUid && resolvedUserId !== v.userId ? { claimedUserId: v.userId } : {}),
       status: 'new',
       seenByAdmin: false,
       date: new Date().toISOString().slice(0, 10),
@@ -141,9 +150,32 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
 }
 
 /**
+ * The verified owner of an already processed order, from the ledger (never from the request body):
+ *  - ledger.ownerUid                       -> that uid
+ *  - ledger.userIdVerified true, no ownerUid (ledger written before ownerUid existed) -> the order's userId, or
+ *    '\u0000unknown' when the order document is gone (owner cannot be proven -> nobody gets a confirmation)
+ *  - otherwise (guest, unverified claim, adopted/reconciled browser order) -> null: replay works as before
+ */
+function verifiedOwner(ledgerDoc, orderDoc) {
+  const f = ledgerDoc.fields || {};
+  const ownerUid = f.ownerUid?.stringValue;
+  if (typeof ownerUid === 'string' && ownerUid) return ownerUid;
+  if (f.userIdVerified?.booleanValue === true) {
+    const uid = orderDoc?.exists ? orderDoc.fields?.userId?.stringValue : null;
+    return typeof uid === 'string' && uid && uid !== 'guest' ? uid : '\u0000unknown';
+  }
+  return null;
+}
+
+export const CREATE_ATTEMPTS = 6;
+
+/**
  * Handles POST /create-order. Returns { status, body }.
  */
-export async function createOrder(fs, cfg, rawOrder, ctx) {
+export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {}) {
+  const trackingKeyHash = TRACKING_KEY_HASH_RE.test(String(extra?.trackingKeyHash || '')) ? extra.trackingKeyHash : null;
+  // auth = { uid } from a VERIFIED Firebase ID token (index.js), or null. The body's userId is never proof.
+  const verifiedUid = auth && typeof auth.uid === 'string' && auth.uid ? auth.uid : null;
   const parsed = validateOrderInput(rawOrder);
   if (!parsed.ok) return { status: 400, body: { ok: false, code: 'INVALID_ORDER', field: parsed.field } };
   const input = parsed.value;
@@ -151,14 +183,24 @@ export async function createOrder(fs, cfg, rawOrder, ctx) {
   const id = input.id;
 
   let waited = false;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  // stock contention (several orders on one product at once) is resolved by retrying the precondition commit; each
+  // try costs ~3 subrequests, so 6 tries stay well inside one invocation's budget (only spent when a conflict occurs)
+  for (let attempt = 0; attempt < CREATE_ATTEMPTS; attempt++) {
     const [orderDoc, ledgerDoc] = await fs.batchGet([`orders/${id}`, `orderLedger/${id}`]);
 
     if (ledgerDoc.exists) {
+      // An order owned by a VERIFIED account is only ever confirmed again to that same account. Anyone else
+      // (other uid, or no token) gets the SAME answer whether or not the payload matches — no confirmation oracle.
+      // Nothing is written either way, and the owner never changes.
+      const owner = verifiedOwner(ledgerDoc, orderDoc);
+      if (owner !== null && owner !== verifiedUid) {
+        log('order.replay_refused', { orderId: id, reason: verifiedUid ? 'other_account' : 'no_token' });
+        return { status: 409, body: { ok: false, code: 'ORDER_EXISTS' } };
+      }
       const stored = ledgerDoc.fields?.payloadHash?.stringValue;
       if (stored === hash) return { status: 200, body: { ok: true, orderId: id, replay: true } };
       log('order.id_conflict', { orderId: id, reason: 'ledger_hash_mismatch' });
-      return { status: 409, body: { ok: false, code: 'ORDER_ID_CONFLICT' } };
+      return { status: 409, body: { ok: false, code: 'ORDER_EXISTS' } }; // one 409 code for every case
     }
 
     let mode;
@@ -174,7 +216,7 @@ export async function createOrder(fs, cfg, rawOrder, ctx) {
       const stored = validateOrderInput(decodeFields(orderDoc.fields));
       if (!stored.ok || (await orderHash(stored.value)) !== hash) {
         log('order.id_conflict', { orderId: id, reason: 'stored_order_differs' });
-        return { status: 409, body: { ok: false, code: 'ORDER_ID_CONFLICT' } };
+        return { status: 409, body: { ok: false, code: 'ORDER_EXISTS' } }; // one 409 code for every case
       }
       mode = 'adopted';
       existingOrder = orderDoc;
@@ -188,13 +230,20 @@ export async function createOrder(fs, cfg, rawOrder, ctx) {
         continue;
       }
       mode = 'created';
-      if (input.userId !== 'guest') {
-        // No verifiable identity in Phase 1 => never attach an order to an account on our own.
+      if (verifiedUid) {
+        // signed-in customer: the body may say 'guest' (profile not loaded yet) or the SAME uid — never another one
+        if (input.userId !== 'guest' && input.userId !== verifiedUid) {
+          log('order.userid_mismatch', { orderId: id });
+          return { status: 403, body: { ok: false, code: 'USERID_MISMATCH' } };
+        }
+      } else if (input.userId !== 'guest') {
+        // No verified identity (old site / no token) => never attach an order to an account on our own.
         userIdWarning = { code: 'USERID_UNVERIFIED' };
       }
     }
 
-    const r = await buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields: parsed.strippedFields, userIdWarning });
+    // Owner is decided ONCE, here, at creation. A replay (ledger exists, above) or an adoption never changes it.
+    const r = await buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields: parsed.strippedFields, userIdWarning, verifiedUid: mode === 'created' ? verifiedUid : null, trackingKeyHash });
     if (r.ok) {
       const p = processNotifications(fs, cfg, id).catch((e) => log('notify.error', { orderId: id, message: String(e?.message || e) }));
       if (ctx?.waitUntil) ctx.waitUntil(p);
@@ -216,6 +265,28 @@ export async function orderStatus(fs, id) {
   const raw = doc.fields?.status?.stringValue || '';
   const status = STATUS_ALLOWLIST.has(raw) ? raw : 'unknown';
   return { status: 200, body: { ok: true, exists: true, status } };
+}
+
+/**
+ * GET /orders/:id/summary — NON-personal order summary (src/tracking.js projectSummary), only for:
+ *  - the holder of the order's tracking key (x-tracking-key; compared by hash with orderLedger/{id}.trackingKeyHash), or
+ *  - the VERIFIED owner (Firebase ID token uid == the ledger's owner).
+ * Every refusal — no key, wrong key, another order's key, unknown order, order without a key (old orders) — is the
+ * SAME 404, so the endpoint never says more than the public status endpoint does.
+ */
+export async function orderSummary(fs, id, { key = null, authUid = null } = {}) {
+  const denied = { status: 404, body: { ok: false, code: 'NOT_FOUND' } };
+  if (!ORDER_ID_RE.test(id)) return denied;
+  const normalized = normalizeTrackingKey(key);
+  const keyHash = normalized ? await hashTrackingKey(normalized) : null; // computed even if the order is unknown
+  const [orderDoc, ledgerDoc] = await fs.batchGet([`orders/${id}`, `orderLedger/${id}`]);
+  if (!orderDoc.exists || !ledgerDoc.exists) return denied;
+  const stored = ledgerDoc.fields?.trackingKeyHash?.stringValue || '';
+  const byKey = keyHash !== null && TRACKING_KEY_HASH_RE.test(stored) && sameHex(keyHash, stored);
+  const owner = verifiedOwner(ledgerDoc, orderDoc);
+  const byOwner = !!authUid && owner !== null && owner === authUid;
+  if (!byKey && !byOwner) return denied;
+  return { status: 200, body: { ok: true, order: projectSummary(id, decodeFields(orderDoc.fields)) } };
 }
 
 /**

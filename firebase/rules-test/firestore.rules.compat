@@ -107,7 +107,10 @@ service cloud.firestore {
     }
 
     // ---------- orders ----------
-    // Exact key set written by Checkout.tsx -> storage.ts db.orders.create()
+    // Exact key set written by the DEPLOYED Checkout.tsx -> storage.ts db.orders.create()
+    // (checked against origin/main 3fd9dac; undefined values are removed by cleanForFirestore()).
+    // Length limits are deliberately generous: the deployed form has NO maxLength on name, street,
+    // CliQ reference or the note in Checkout/Cart, so a tight limit would reject real orders.
     function orderKeys() {
       return ['id', 'userId', 'status', 'seenByAdmin', 'date', 'createdAt', 'createdAtMs',
               'updatedAt', 'items', 'subtotal', 'discountAmount', 'shippingCost', 'total',
@@ -126,27 +129,34 @@ service cloud.firestore {
         && (!('updatedAt' in d) || d.updatedAt == request.time)
         // a signed-in user may only attach their own uid; anyone may use 'guest'
         && (d.userId == 'guest' || (signedIn() && d.userId == request.auth.uid))
-        && d.items is list && d.items.size() >= 1 && d.items.size() <= 50
+        && d.items is list && d.items.size() >= 1 && d.items.size() <= 200
         && isNum(d.total, 0, 100000)
         && optNum(d, 'subtotal', 0, 100000)
         && optNum(d, 'discountAmount', 0, 100000)
         && optNum(d, 'shippingCost', 0, 1000)
+        && optNum(d, 'createdAtMs', 0, 100000000000000)
+        && optStr(d, 'date', 40)
         && d.paymentMethod in ['cod', 'cliq']
         && d.address is map
         && d.address.keys().hasOnly(['fullName', 'city', 'street', 'phone'])
-        && optStr(d.address, 'fullName', 120)
-        && optStr(d.address, 'city', 200)
-        && optStr(d.address, 'street', 500)
-        && optStr(d.address, 'phone', 20)
-        && optStr(d, 'note', 600)
-        && optStr(d, 'customerEmail', 254)
+        && optStr(d.address, 'fullName', 300)
+        && optStr(d.address, 'city', 300)
+        && optStr(d.address, 'street', 1500)
+        && optStr(d.address, 'phone', 30)
+        && optStr(d, 'note', 3000)
+        && optStr(d, 'customerEmail', 320)
         && optStr(d, 'shippingMethod', 200)
-        && optStr(d, 'shippingMethodId', 40)
+        && optStr(d, 'shippingMethodId', 60)
+        // nested maps: only the keys the deployed Checkout writes (no smuggled fields)
+        && (!('consents' in d) || (d.consents is map
+              && d.consents.keys().hasOnly(['acceptedStorePolicies', 'acceptedDeliveryPolicy', 'saveInfo', 'billingSameAsShipping'])))
+        && (!('addressMeta' in d) || (d.addressMeta is map
+              && d.addressMeta.keys().hasOnly(['country', 'countryCode', 'citySlug', 'ammanAreaId', 'saveInfo', 'phoneDial', 'phoneLocal'])))
         && (!('paymentDetails' in d) || (
               d.paymentDetails is map
               && d.paymentDetails.keys().hasOnly(['cliqReference', 'isPaid'])
               && d.paymentDetails.get('isPaid', false) == false
-              && optStr(d.paymentDetails, 'cliqReference', 100)));
+              && optStr(d.paymentDetails, 'cliqReference', 300)));
     }
 
     function canReadOrder() {
@@ -228,9 +238,11 @@ service cloud.firestore {
       allow delete: if isOwner();
     }
 
-    // ---------- config (unchanged in compat) ----------
+    // ---------- config ----------
+    // The storefront reads only config/roles (AdminGuard.tsx). Other config docs (config/sendgrid holds an
+    // API key) are read by Cloud Functions with the Admin SDK, which bypasses rules -> owner only.
     match /config/{doc} {
-      allow read: if isAdmin();
+      allow read: if isOwner() || (isAdmin() && doc == 'roles');
       allow write: if isOwner();
     }
   }

@@ -1,0 +1,158 @@
+rules_version = '2';
+// =====================================================================
+// ⚠️ TEST-ONLY — NOT DEPLOYED. Do not copy into Firebase Console.
+// "final" ruleset (proposal): target + NO e-mail based order reads (owner decision A, 2026-11-04).
+//
+// ⛔ DEPLOYING THIS BEFORE THE PREREQUISITES WILL STOP GUEST ORDERS:
+//   1. Worker v2 is the ONLY order writer (Checkout no longer calls setDoc)
+//   2. OrderSuccess / OrderTracking use the Worker status endpoint for guests
+//   3. Product rating aggregates are recomputed by the Worker (not reviews.ts)
+// =====================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- identity helpers ----------
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function rolesDoc() {
+      return /databases/$(database)/documents/config/roles;
+    }
+
+    function ownerUid() {
+      return exists(rolesDoc()) ? get(rolesDoc()).data.get('ownerUid', null) : null;
+    }
+
+    function isOwner() {
+      return signedIn() && ownerUid() != null && request.auth.uid == ownerUid();
+    }
+
+    function isAdmin() {
+      return signedIn() && (
+        (ownerUid() != null && request.auth.uid == ownerUid()) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isSelf(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function verifiedEmail() {
+      return signedIn()
+        && request.auth.token.get('email_verified', false) == true
+        && request.auth.token.get('email', '') is string
+        && request.auth.token.get('email', '') != '';
+    }
+
+    function changed() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function isStr(v, max) {
+      return v is string && v.size() <= max;
+    }
+
+    // ---------- admins ----------
+    match /admins/{uid} {
+      allow read: if isOwner() || isSelf(uid);
+      allow create, update, delete: if isOwner();
+    }
+
+    // ---------- products ----------
+    // Rating aggregates are written by the Worker (service account) only.
+    match /products/{id} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ---------- categories ----------
+    match /categories/{id} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ---------- orders ----------
+    // Only the store admins and the VERIFIED owner (orders created by the Worker from a verified ID token, or
+    // signed-in orders of the old site). Never by e-mail: a guest can type anyone's e-mail address.
+    // Guests follow their order through the Worker (status by number; details only with the tracking key).
+    function canReadOrder() {
+      return isAdmin()
+        || (signedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    match /orders/{id} {
+      // Only the Worker (service account) creates orders.
+      allow create: if false;
+
+      // Guests no longer read by id — they use the Worker status endpoint
+      // (returns status only, no personal data).
+      allow get, list: if canReadOrder();
+
+      // Admin dashboard only changes status (storage.ts updateStatus).
+      allow update: if isAdmin()
+        && changed().hasOnly(['status', 'seenByAdmin', 'updatedAt'])
+        && request.resource.data.status in ['new', 'processing', 'shipped', 'delivered', 'cancelled', 'fraud'];
+
+      allow delete: if isOwner();
+    }
+
+    // orderLedger, worker_test, …: no match => denied to all clients.
+
+    // ---------- reviews (same as compat) ----------
+    function reviewKeys() {
+      return ['productId', 'userId', 'userName', 'userEmail', 'rating', 'comment', 'status',
+              'likesCount', 'likesBy', 'adminReply', 'createdAt', 'updatedAt'];
+    }
+
+    function validRating(v) {
+      return v is int && v >= 1 && v <= 5;
+    }
+
+    match /reviews/{id} {
+      allow read: if true;
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(reviewKeys())
+        && request.resource.data.userId == request.auth.uid
+        && validRating(request.resource.data.rating)
+        && request.resource.data.get('status', 'published') == 'published'
+        && request.resource.data.get('likesCount', 0) == 0
+        && request.resource.data.get('adminReply', null) == null
+        && isStr(request.resource.data.get('comment', ''), 2000);
+
+      allow delete: if isAdmin();
+
+      allow update: if isAdmin()
+        || (signedIn()
+            && resource.data.userId == request.auth.uid
+            && changed().hasOnly(['rating', 'comment', 'userName', 'userEmail', 'updatedAt'])
+            && validRating(request.resource.data.rating)
+            && isStr(request.resource.data.get('comment', ''), 2000))
+        || (signedIn()
+            && changed().hasOnly(['likesBy', 'likesCount', 'updatedAt'])
+            && request.resource.data.likesBy is map
+            && request.resource.data.likesBy.diff(resource.data.get('likesBy', {})).affectedKeys().hasOnly([request.auth.uid])
+            && request.resource.data.likesCount == request.resource.data.likesBy.size());
+    }
+
+    // ---------- users ----------
+    match /users/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+      allow create: if isAdmin() || (
+        isSelf(uid)
+        && request.resource.data.get('role', 'customer') == 'customer'
+        && request.resource.data.get('id', uid) == uid);
+      allow update: if isAdmin() || (isSelf(uid) && !changed().hasAny(['role', 'id']));
+      allow delete: if isOwner();
+    }
+
+    // ---------- config ----------
+    // config/sendgrid holds an API key: owner only. Other config (roles) readable by admins.
+    match /config/{doc} {
+      allow read: if isOwner() || (isAdmin() && doc != 'sendgrid');
+      allow write: if isOwner();
+    }
+  }
+}

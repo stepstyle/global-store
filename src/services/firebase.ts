@@ -1,25 +1,16 @@
 // src/services/firebase.ts
 import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
-import { initializeFirestore, type Firestore } from 'firebase/firestore';
-import { getAuth, type Auth } from 'firebase/auth';
-
-type FirebaseWebConfig = {
-  apiKey: string;
-  authDomain: string;
-  projectId: string;
-  storageBucket: string;
-  messagingSenderId: string;
-  appId: string;
-  measurementId?: string;
-  // optional legacy keys (ignored safely)
-  databaseURL?: string;
-};
+import { initializeFirestore, connectFirestoreEmulator, type Firestore } from 'firebase/firestore';
+import { getAuth, connectAuthEmulator, type Auth } from 'firebase/auth';
+import { resolveFirebaseTarget, FirebaseTargetError, type FirebaseWebConfig, type FirebaseTarget } from './firebaseTarget';
 
 let app: FirebaseApp | undefined;
 let db: Firestore | null = null;
 let auth: Auth | null = null;
 
 export let isFirebaseInitialized = false;
+/** a valid config was found but initialising Firebase FAILED: a signed-in customer cannot be recognised -> identity unknown */
+let initFailed = false;
 
 const STORAGE_KEY = 'anta_firebase_config';
 
@@ -114,10 +105,10 @@ const getLocalConfig = (): FirebaseWebConfig | null => {
   return normalizeConfig(stored);
 };
 
-const initWithConfig = (config: FirebaseWebConfig) => {
+const initWithTarget = (target: FirebaseTarget) => {
   if (isFirebaseInitialized && db && auth) return;
 
-  app = getApps().length ? getApp() : initializeApp(config);
+  app = getApps().length ? getApp() : initializeApp(target.config);
 
   db = initializeFirestore(app, {
     ignoreUndefinedProperties: true,
@@ -125,8 +116,28 @@ const initWithConfig = (config: FirebaseWebConfig) => {
 
   auth = getAuth(app);
 
+  if (target.kind === 'emulator') {
+    // Must run before any read/write: every request then goes to 127.0.0.1 only.
+    connectFirestoreEmulator(db, target.firestore.host, target.firestore.port);
+    connectAuthEmulator(auth, `http://${target.auth.host}:${target.auth.port}`, { disableWarnings: true });
+  }
+
   isFirebaseInitialized = true;
-  if (import.meta.env.DEV) console.log('🔥 Firebase initialized');
+  if (import.meta.env.DEV) console.log(`🔥 Firebase initialized (${target.kind}: ${target.config.projectId})`);
+};
+
+/** Local development refused: stop here and say why (nothing is initialised, nothing is contacted). */
+const refuseLocal = (e: FirebaseTargetError): never => {
+  isFirebaseInitialized = false;
+  db = null;
+  auth = null;
+  try {
+    const box = document.createElement('pre');
+    box.setAttribute('style', 'position:fixed;inset:0;z-index:2147483647;margin:0;padding:24px;background:#7f1d1d;color:#fff;font:14px/1.5 monospace;white-space:pre-wrap;overflow:auto');
+    box.textContent = `${e.message}\n\nSee .env.example — local development runs against the Firebase Emulator only.`;
+    document.body.appendChild(box);
+  } catch {}
+  throw e;
 };
 
 const resetToMock = (reason?: string) => {
@@ -144,10 +155,8 @@ const resetToMock = (reason?: string) => {
 
 /**
  * ✅ Initialize Firebase safely
- * Priority:
- * 1) LocalStorage config (Admin override)
- * 2) Env config (recommended)
- * 3) Mock mode
+ * Production build (unchanged): 1) LocalStorage config (Admin override) 2) inline config 3) Mock mode
+ * Local development: Firebase Emulator + demo- project ONLY (see firebaseTarget.ts) — otherwise refused.
  */
 export const initFirebase = () => {
   if (!isBrowser()) {
@@ -155,24 +164,26 @@ export const initFirebase = () => {
     return;
   }
 
+  let target: FirebaseTarget;
   try {
-    const localCfg = getLocalConfig();
-    if (localCfg) {
-      initWithConfig(localCfg);
-      if (import.meta.env.DEV) console.log('🔥 Firebase initialized from localStorage config');
-      return;
-    }
-
-    const envCfg = getEnvConfig();
-    if (envCfg) {
-      initWithConfig(envCfg);
-      if (import.meta.env.DEV) console.log('🔥 Firebase initialized from env config');
-      return;
-    }
-
+    target = resolveFirebaseTarget({
+      isDev: import.meta.env.DEV,
+      env: import.meta.env,
+      productionConfig: getEnvConfig(),
+      localOverride: getLocalConfig(),
+    });
+  } catch (e) {
+    if (e instanceof FirebaseTargetError && import.meta.env.DEV) refuseLocal(e);
     resetToMock('missing/invalid config');
+    return;
+  }
+
+  try {
+    initWithTarget(target);
+    if (import.meta.env.DEV) console.log(`🔥 Firebase config source: ${target.kind === 'production' ? target.source : 'emulator'}`);
   } catch (e) {
     if (import.meta.env.DEV) console.error('Failed to init Firebase', e);
+    initFailed = true;
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {}
@@ -186,6 +197,31 @@ initFirebase();
 /** ✅ Safe getters */
 export const getFirestoreDb = (): Firestore | null => db;
 export const getFirebaseAuth = (): Auth | null => auth;
+/** Who uses this browser now ('guest' or the Firebase uid) — AFTER Firebase restored any saved session (a check made
+ * too early would take a signed-in customer for a guest). */
+export const IDENTITY_TIMEOUT_MS = 5_000;
+/**
+ * 'guest' | the Firebase uid | null = UNKNOWN (the saved session could not be restored in time, or restoring failed).
+ * Callers must treat null as "do not show or restore anything bound to an identity" (never as a guest).
+ * Not a security barrier: it only keeps one account's order data out of another account's pages on a shared browser.
+ */
+export async function currentIdentity(timeoutMs: number = IDENTITY_TIMEOUT_MS): Promise<string | null> {
+  // not configured on this site: nobody can be signed in (a guest for sure). Configured but FAILED: unknown.
+  if (!auth) return initFailed ? null : 'guest';
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const ready = typeof auth.authStateReady === 'function' ? auth.authStateReady().then(() => true) : Promise.resolve(true);
+    const timedOut = new Promise<boolean>((r) => {
+      timer = setTimeout(() => r(false), timeoutMs);
+    });
+    if (!(await Promise.race([ready, timedOut]))) return null;
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  return auth.currentUser?.uid || 'guest';
+}
 export const firebaseReady = () => isFirebaseInitialized && !!db && !!auth;
 
 /**
@@ -194,6 +230,7 @@ export const firebaseReady = () => isFirebaseInitialized && !!db && !!auth;
  */
 export const setFirebaseConfig = (config: unknown) => {
   if (!isBrowser()) throw new Error('Cannot set Firebase config outside browser');
+  if (import.meta.env.DEV) throw new Error('Saving a Firebase config is disabled in local development (emulator only)');
 
   const normalized = normalizeConfig((config ?? {}) as Partial<FirebaseWebConfig>);
   if (!normalized) throw new Error('Invalid Firebase config');

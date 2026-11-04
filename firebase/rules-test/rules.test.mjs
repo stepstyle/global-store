@@ -33,7 +33,9 @@ import {
   query,
   where,
   serverTimestamp,
+  deleteField,
 } from 'firebase/firestore';
+import assert from 'node:assert/strict';
 
 // ---------------------------------------------------------------------------
 // Safety guards: never touch a real project
@@ -58,8 +60,11 @@ const RULESETS = {
   prod: resolve(here, '../firestore.rules.prod-snapshot'),
   compat: resolve(here, './firestore.rules.compat'),
   target: resolve(here, './firestore.rules.target'),
+  // proposals (test-only): final = target without e-mail based reads; transition = compat with order reads closed
+  final: resolve(here, './firestore.rules.final'),
+  transition: resolve(here, './firestore.rules.transition'),
 };
-const selected = (process.env.RULES || 'prod,compat,target')
+const selected = (process.env.RULES || 'prod,compat,target,final,transition')
   .split(',')
   .map((s) => s.trim())
   .filter((s) => s in RULESETS);
@@ -72,6 +77,9 @@ const ADMIN = 'admin-uid'; // listed in admins/, not the owner
 const ALICE = 'alice-uid'; // regular customer (victim in some cases)
 const MALLORY = 'mallory-uid'; // regular customer (attacker)
 const NEWBIE = 'newbie-uid'; // just signed up, no users/ doc yet
+const ADMIN2 = 'admin2-uid'; // a second non-owner admin
+const LEGACY = 'legacy-uid'; // customer whose doc already says role:'admin' (written under the old rules)
+const V2_ORDER = 'ORD-V2ALICE1-CCCC'; // order saved by Worker v2 for signed-in Alice (userId 'guest' + claimedUserId)
 
 const ctx = (env) => ({
   guest: () => env.unauthenticatedContext().firestore(),
@@ -80,6 +88,7 @@ const ctx = (env) => ({
   alice: () => env.authenticatedContext(ALICE, { email: 'alice@example.com', email_verified: true }).firestore(),
   aliceUnverified: () => env.authenticatedContext(ALICE, { email: 'alice@example.com', email_verified: false }).firestore(),
   mallory: () => env.authenticatedContext(MALLORY, { email: 'mallory@example.com', email_verified: true }).firestore(),
+  legacy: () => env.authenticatedContext(LEGACY, { email: 'legacy@example.com', email_verified: true }).firestore(),
   newbie: () => env.authenticatedContext(NEWBIE, { email: 'newbie@example.com', email_verified: false }).firestore(),
 });
 
@@ -126,6 +135,32 @@ function checkoutOrder({ id, userId, payment = 'cod', overrides = {} }) {
   return { ...order, ...overrides };
 }
 
+const without = (obj, ...keys) => {
+  const o = { ...obj };
+  for (const k of keys) delete o[k];
+  return o;
+};
+// deployed Checkout, guest COD, with every optional value empty -> cleanForFirestore() drops undefined:
+// no note, no paymentDetails, empty customerEmail, no ammanAreaId, name/street fallbacks
+const minimalDeployedOrder = (id) => {
+  const o = without(checkoutOrder({ id, userId: 'guest' }), 'note', 'paymentDetails');
+  o.customerEmail = '';
+  o.address = { fullName: 'Guest', city: 'الزرقاء', street: 'لم يتم إدخال عنوان تفصيلي', phone: '+962791234567' };
+  o.addressMeta = { country: 'Jordan', countryCode: 'JO', citySlug: 'zarqa', saveInfo: false, phoneDial: '+962', phoneLocal: '0791234567' };
+  o.consents = { acceptedStorePolicies: true, acceptedDeliveryPolicy: true, saveInfo: false, billingSameAsShipping: true };
+  return o;
+};
+const manyItems = (n) => Array.from({ length: n }, (_, i) => ({ productId: `p-${i}`, name: `منتج ${i}`, price: 1, quantity: 1, image: '', selectedVariant: null }));
+
+// what Worker v2 (workers/order-worker/src/orders.js) stores for a signed-in customer whose uid it cannot verify
+const v2Order = (overrides = {}) => ({
+  id: V2_ORDER, userId: 'guest', claimedUserId: ALICE, userIdVerified: false, userIdSource: 'claimed-unverified-dropped',
+  status: 'delivered', total: 8, customerEmail: 'alice@example.com', paymentMethod: 'cod',
+  items: [{ productId: 'p-simple', name: 'دفتر', price: 2.5, quantity: 2 }],
+  address: { fullName: 'Alice Victim', phone: '+962790000001', city: 'Amman', street: 'Secret St 5' },
+  ...overrides,
+});
+
 // storage.ts db.users.register()
 const registerPayload = (uid, role = 'customer') => ({
   id: uid,
@@ -169,6 +204,14 @@ async function seed(env) {
     await setDoc(doc(db, 'config/roles'), { ownerUid: OWNER });
     await setDoc(doc(db, 'config/sendgrid'), { apikey: 'TEST-NOT-A-REAL-KEY', fromEmail: 'test@example.invalid' });
     await setDoc(doc(db, `admins/${ADMIN}`), { addedBy: OWNER });
+    await setDoc(doc(db, `admins/${ADMIN2}`), { addedBy: OWNER });
+    await setDoc(doc(db, 'config/other'), { note: 'some other config doc' });
+    await setDoc(doc(db, `users/${LEGACY}`), registerPayload(LEGACY, 'admin'));
+    await setDoc(doc(db, `orders/${V2_ORDER}`), v2Order());
+    await setDoc(doc(db, 'orders/ORD-MALLORY1-DDDD'), {
+      id: 'ORD-MALLORY1-DDDD', userId: MALLORY, status: 'new', total: 3, customerEmail: 'mallory@example.com',
+      address: { fullName: 'Mallory', phone: '+962790000003', city: 'Irbid', street: 'y' },
+    });
     await setDoc(doc(db, `users/${ALICE}`), registerPayload(ALICE));
     await setDoc(doc(db, `users/${MALLORY}`), registerPayload(MALLORY));
     await setDoc(doc(db, 'products/p-simple'), {
@@ -212,7 +255,8 @@ async function seed(env) {
 //   [FUNC] existing app feature that must keep working
 //   [INFO] documents a trade-off of the new rules
 // ---------------------------------------------------------------------------
-const x = (prod, compat, target) => ({ prod, compat, target });
+// final defaults to target, transition to compat; the cases where they differ are listed in FINAL_TRANSITION below
+const x = (prod, compat, target) => ({ prod, compat, target, final: target, transition: compat });
 
 const CASES = [
   // ---------------- orders: create ----------------
@@ -322,7 +366,7 @@ const CASES = [
     (c) => getDoc(doc(c.alice(), 'config/roles'))],
   ['[FUNC] admin reads config/roles (AdminGuard)', x('A', 'A', 'A'),
     (c) => getDoc(doc(c.admin(), 'config/roles'))],
-  ['[SEC] non-owner admin reads config/sendgrid (API key)', x('A', 'A', 'D'),
+  ['[SEC] non-owner admin reads config/sendgrid (API key)', x('A', 'D', 'D'),
     (c) => getDoc(doc(c.admin(), 'config/sendgrid'))],
   ['[FUNC] owner reads config/sendgrid', x('A', 'A', 'A'),
     (c) => getDoc(doc(c.owner(), 'config/sendgrid'))],
@@ -382,7 +426,195 @@ const CASES = [
     (c) => updateDoc(doc(c.admin(), 'reviews/r-alice'), { status: 'hidden', updatedAt: serverTimestamp() })],
   ['[FUNC] admin deletes review', x('A', 'A', 'A'),
     (c) => deleteDoc(doc(c.admin(), 'reviews/r-alice'))],
+
+  // =====================================================================
+  // Added 2026-11-04: deployed-checkout compatibility, owner vs admin, v2 orders, config, extra abuse cases
+  // =====================================================================
+
+  // ---------------- orders: deployed Checkout (origin/main) shapes that compat must accept ----------------
+  ['[FUNC] deployed payload: guest COD, all optional values empty (no note/paymentDetails/email/ammanAreaId, fallbacks)', x('A', 'A', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00020-MINI'), minimalDeployedOrder('ORD-NEW00020-MINI'))],
+  ['[FUNC] deployed payload: long free text the form does not limit (name 250, street 1200, note 2500, CliQ ref 250)', x('A', 'A', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00021-LONG'), checkoutOrder({
+      id: 'ORD-NEW00021-LONG', userId: 'guest', payment: 'cliq',
+      overrides: {
+        note: 'ن'.repeat(2500),
+        paymentDetails: { cliqReference: 'R'.repeat(250), isPaid: false },
+        address: { fullName: 'ا'.repeat(250), city: 'عمّان (العاصمة) - '.repeat(5), street: 'ش'.repeat(1200), phone: '+962791234567' },
+      },
+    }))],
+  ['[FUNC] deployed payload: 150 cart lines', x('A', 'A', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00022-MANY'), checkoutOrder({ id: 'ORD-NEW00022-MANY', userId: 'guest', overrides: { items: manyItems(150) } }))],
+  ['[FUNC] deployed payload: free shipping (0) + discount, express method', x('A', 'A', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00023-FREE'), checkoutOrder({ id: 'ORD-NEW00023-FREE', userId: 'guest', overrides: { shippingCost: 0, discountAmount: 2, total: 6, shippingMethodId: 'express', shippingMethod: 'توصيل سريع' } }))],
+  ['[FUNC] signed-in customer places own CliQ order', x('A', 'A', 'D'),
+    (c) => setDoc(doc(c.mallory(), 'orders/ORD-NEW00024-MCLQ'), checkoutOrder({ id: 'ORD-NEW00024-MCLQ', userId: MALLORY, payment: 'cliq' }))],
+
+  // ---------------- orders: create abuse ----------------
+  ['[SEC] signed-out guest creates order under a real customer uid', x('A', 'D', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00025-GSPF'), checkoutOrder({ id: 'ORD-NEW00025-GSPF', userId: ALICE }))],
+  ['[SEC] extra key smuggled inside consents', x('A', 'D', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00026-CONS'), checkoutOrder({ id: 'ORD-NEW00026-CONS', userId: 'guest', overrides: { consents: { acceptedStorePolicies: true, isPaid: true } } }))],
+  ['[SEC] extra key smuggled inside addressMeta', x('A', 'D', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00027-AMET'), checkoutOrder({ id: 'ORD-NEW00027-AMET', userId: 'guest', overrides: { addressMeta: { country: 'Jordan', verifiedByAdmin: true } } }))],
+  ['[SEC] addressMeta is not a map', x('A', 'D', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00028-AMST'), checkoutOrder({ id: 'ORD-NEW00028-AMST', userId: 'guest', overrides: { addressMeta: 'x'.repeat(1000) } }))],
+  ['[SEC] empty items list', x('A', 'D', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00029-EMPT'), checkoutOrder({ id: 'ORD-NEW00029-EMPT', userId: 'guest', overrides: { items: [] } }))],
+  ['[SEC] 201 items', x('A', 'D', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00030-201I'), checkoutOrder({ id: 'ORD-NEW00030-201I', userId: 'guest', overrides: { items: manyItems(201) } }))],
+  ['[SEC] seenByAdmin true on create', x('A', 'D', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00031-SEEN'), checkoutOrder({ id: 'ORD-NEW00031-SEEN', userId: 'guest', overrides: { seenByAdmin: true } }))],
+  ['[SEC] unknown payment method', x('A', 'D', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00032-CARD'), checkoutOrder({ id: 'ORD-NEW00032-CARD', userId: 'guest', payment: 'card' }))],
+  ['[SEC] negative total', x('A', 'D', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00033-NEGT'), checkoutOrder({ id: 'ORD-NEW00033-NEGT', userId: 'guest', overrides: { total: -5 } }))],
+  ['[SEC] createdAtMs as a string', x('A', 'D', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00034-MSST'), checkoutOrder({ id: 'ORD-NEW00034-MSST', userId: 'guest', overrides: { createdAtMs: 'yesterday' } }))],
+  ['[SEC] note longer than 3000 chars', x('A', 'D', 'D'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00035-N301'), checkoutOrder({ id: 'ORD-NEW00035-N301', userId: 'guest', overrides: { note: 'x'.repeat(3001) } }))],
+
+  // ---------------- orders: cross-account reads ----------------
+  ['[SEC] customer lists where userId == another customer', x('D', 'D', 'D'),
+    (c) => getDocs(query(collection(c.alice(), 'orders'), where('userId', '==', MALLORY)))],
+  ['[SEC] customer reads another customer order by id (Alice -> Mallory)', x('A', 'A', 'D'),
+    (c) => getDoc(doc(c.alice(), 'orders/ORD-MALLORY1-DDDD'))],
+  ['[SEC] attacker reads victim Worker-v2 order by id', x('A', 'A', 'D'),
+    (c) => getDoc(doc(c.mallory(), `orders/${V2_ORDER}`))],
+  ['[FUNC] customer reads own Worker-v2 order by id (verified email match)', x('A', 'A', 'A'),
+    (c) => getDoc(doc(c.alice(), `orders/${V2_ORDER}`))],
+  ['[INFO] customer queries where claimedUserId == own uid (unverified claim) -> denied', x('D', 'D', 'D'),
+    (c) => getDocs(query(collection(c.alice(), 'orders'), where('claimedUserId', '==', ALICE)))],
+  ['[SEC] attacker queries where claimedUserId == victim uid', x('D', 'D', 'D'),
+    (c) => getDocs(query(collection(c.mallory(), 'orders'), where('claimedUserId', '==', ALICE)))],
+  ['[SEC] customer updates own Worker-v2 order', x('D', 'D', 'D'),
+    (c) => updateDoc(doc(c.alice(), `orders/${V2_ORDER}`), { status: 'cancelled' })],
+  ['[FUNC] admin updates status of a Worker-v2 order', x('A', 'A', 'A'),
+    (c) => updateDoc(doc(c.admin(), `orders/${V2_ORDER}`), { status: 'shipped', seenByAdmin: true, updatedAt: serverTimestamp() })],
+
+  // ---------------- owner (config/roles.ownerUid) ----------------
+  ['[FUNC] owner lists all orders', x('A', 'A', 'A'),
+    (c) => getDocs(collection(c.owner(), 'orders'))],
+  ['[FUNC] owner updates order status', x('A', 'A', 'A'),
+    (c) => updateDoc(doc(c.owner(), 'orders/ORD-ALICE001-AAAA'), { status: 'shipped', seenByAdmin: true, updatedAt: serverTimestamp() })],
+  ['[FUNC] owner adds an admin', x('A', 'A', 'A'),
+    (c) => setDoc(doc(c.owner(), 'admins/new-admin-uid'), { addedBy: OWNER })],
+  ['[FUNC] owner removes an admin', x('A', 'A', 'A'),
+    (c) => deleteDoc(doc(c.owner(), `admins/${ADMIN2}`))],
+  ['[FUNC] owner reads any admins doc', x('A', 'A', 'A'),
+    (c) => getDoc(doc(c.owner(), `admins/${ADMIN2}`))],
+  ['[FUNC] owner reads config/roles', x('A', 'A', 'A'),
+    (c) => getDoc(doc(c.owner(), 'config/roles'))],
+  ['[FUNC] owner writes config/roles', x('A', 'A', 'A'),
+    (c) => setDoc(doc(c.owner(), 'config/roles'), { ownerUid: OWNER })],
+  ['[FUNC] owner reads other config docs', x('A', 'A', 'A'),
+    (c) => getDoc(doc(c.owner(), 'config/other'))],
+  ['[FUNC] owner creates product', x('A', 'A', 'A'),
+    (c) => setDoc(doc(c.owner(), 'products/p-owner'), { name: 'منتج', price: 2, stock: 4, category: 'Toys' })],
+  ['[FUNC] owner changes price and stock', x('A', 'A', 'A'),
+    (c) => updateDoc(doc(c.owner(), 'products/p-simple'), { price: 3, stock: 20 })],
+  ['[FUNC] owner reads a user and changes a role', x('A', 'A', 'A'),
+    (c) => updateDoc(doc(c.owner(), `users/${ALICE}`), { role: 'customer' })],
+  ['[FUNC] owner deletes a user doc', x('A', 'A', 'A'),
+    (c) => deleteDoc(doc(c.owner(), `users/${MALLORY}`))],
+  ['[FUNC] owner hides a review', x('A', 'A', 'A'),
+    (c) => updateDoc(doc(c.owner(), 'reviews/r-alice'), { status: 'hidden', updatedAt: serverTimestamp() })],
+
+  // ---------------- non-owner admin (admins/{uid}) ----------------
+  ['[FUNC] admin changes price and stock', x('A', 'A', 'A'),
+    (c) => updateDoc(doc(c.admin(), 'products/p-simple'), { price: 3, stock: 20 })],
+  ['[FUNC] admin replies to a review', x('A', 'A', 'A'),
+    (c) => updateDoc(doc(c.admin(), 'reviews/r-alice'), { adminReply: { text: 'شكرًا', adminId: ADMIN }, updatedAt: serverTimestamp() })],
+  ['[SEC] admin adds another admin (owner only)', x('D', 'D', 'D'),
+    (c) => setDoc(doc(c.admin(), 'admins/someone'), { addedBy: ADMIN })],
+  ['[SEC] admin removes another admin', x('D', 'D', 'D'),
+    (c) => deleteDoc(doc(c.admin(), `admins/${ADMIN2}`))],
+  ['[SEC] admin reads another admin doc', x('D', 'D', 'D'),
+    (c) => getDoc(doc(c.admin(), `admins/${ADMIN2}`))],
+  ['[SEC] admin reads config docs other than roles', x('A', 'D', 'A'),
+    (c) => getDoc(doc(c.admin(), 'config/other'))],
+  ['[SEC] admin deletes a user doc (owner only)', x('D', 'D', 'D'),
+    (c) => deleteDoc(doc(c.admin(), `users/${ALICE}`))],
+
+  // ---------------- config/sendgrid for everyone else ----------------
+  ['[SEC] customer reads config/sendgrid', x('D', 'D', 'D'),
+    (c) => getDoc(doc(c.alice(), 'config/sendgrid'))],
+  ['[SEC] guest reads config/sendgrid', x('D', 'D', 'D'),
+    (c) => getDoc(doc(c.guest(), 'config/sendgrid'))],
+  ['[SEC] admin writes config/sendgrid', x('D', 'D', 'D'),
+    (c) => setDoc(doc(c.admin(), 'config/sendgrid'), { apikey: 'x' })],
+
+  // ---------------- users / role ----------------
+  ['[SEC] customer removes the role field from own doc', x('A', 'D', 'D'),
+    (c) => updateDoc(doc(c.alice(), `users/${ALICE}`), { role: deleteField() })],
+  ['[SEC] customer setDoc(merge) role=admin on own existing doc', x('A', 'D', 'D'),
+    (c) => setDoc(doc(c.alice(), `users/${ALICE}`), { role: 'admin' }, { merge: true })],
+  ['[INFO] doc that already says role=admin (old rules) keeps it: self-update of name still allowed -> needs data cleanup', x('A', 'A', 'A'),
+    (c) => updateDoc(doc(c.legacy(), `users/${LEGACY}`), { name: 'Legacy' })],
+  ['[SEC] role=admin in users doc grants NO data access (admin list of all orders)', x('D', 'D', 'D'),
+    (c) => getDocs(collection(c.legacy(), 'orders'))],
+  ['[SEC] role=admin in users doc grants NO product writes', x('D', 'D', 'D'),
+    (c) => updateDoc(doc(c.legacy(), 'products/p-simple'), { price: 0.01 })],
+
+  // ---------------- products: price / stock / ratings ----------------
+  ['[SEC] guest updates product', x('D', 'D', 'D'),
+    (c) => updateDoc(doc(c.guest(), 'products/p-simple'), { stock: 0 })],
+  ['[SEC] customer setDoc(merge) price', x('D', 'D', 'D'),
+    (c) => setDoc(doc(c.mallory(), 'products/p-simple'), { price: 0.01 }, { merge: true })],
+  ['[SEC] customer deletes product', x('D', 'D', 'D'),
+    (c) => deleteDoc(doc(c.mallory(), 'products/p-simple'))],
+  ['[SEC] customer creates product', x('D', 'D', 'D'),
+    (c) => setDoc(doc(c.mallory(), 'products/p-fake'), { name: 'x', price: 0, stock: 1 })],
+  ['[SEC] customer sets ratingCount -1', x('A', 'D', 'D'),
+    (c) => updateDoc(doc(c.mallory(), 'products/p-simple'), aggregate(4, -1))],
+  ['[INFO] customer pushes ratingAvg to 0 with count +1 (residual in compat; Worker in target)', x('A', 'A', 'D'),
+    (c) => updateDoc(doc(c.mallory(), 'products/p-simple'), aggregate(0, 3))],
+
+  // ---------------- reviews ----------------
+  ['[SEC] customer deletes own review (admin only)', x('D', 'D', 'D'),
+    (c) => deleteDoc(doc(c.alice(), 'reviews/r-alice'))],
+  ['[SEC] customer hides another customer review', x('D', 'D', 'D'),
+    (c) => updateDoc(doc(c.mallory(), 'reviews/r-alice'), { status: 'hidden' })],
+  ['[SEC] review with rating 0', x('A', 'D', 'D'),
+    (c) => setDoc(doc(c.mallory(), 'reviews/r-zero'), reviewPayload(MALLORY, { rating: 0 }))],
+  ['[SEC] guest creates review', x('D', 'D', 'D'),
+    (c) => setDoc(doc(c.guest(), 'reviews/r-guest'), reviewPayload('guest'))],
 ];
+
+// Order READS in final/transition: only admins and the verified owner (userId == uid). No public get, no e-mail match.
+const FINAL_TRANSITION = {
+  '[SEC] guest reads any order by id (name/phone/address)': { final: 'D', transition: 'D' },
+  '[SEC] signed-in attacker reads victim order by id': { final: 'D', transition: 'D' },
+  '[FUNC] customer reads guest order placed with her verified email': { final: 'D', transition: 'D' },
+  '[SEC] unverified email cannot read guest order by email match (target)': { final: 'D', transition: 'D' },
+  '[FUNC] Account.tsx: list where customerEmail == own verified email (broken in prod)': { final: 'D', transition: 'D' },
+  '[SEC] customer reads another customer order by id (Alice -> Mallory)': { final: 'D', transition: 'D' },
+  '[SEC] attacker reads victim Worker-v2 order by id': { final: 'D', transition: 'D' },
+  '[FUNC] customer reads own Worker-v2 order by id (verified email match)': { final: 'D', transition: 'D' },
+};
+for (const [title, exp] of CASES) if (FINAL_TRANSITION[title]) Object.assign(exp, FINAL_TRANSITION[title]);
+const missingNames = Object.keys(FINAL_TRANSITION).filter((k) => !CASES.some(([title]) => title === k));
+if (missingNames.length) throw new Error('FINAL_TRANSITION names unknown cases: ' + missingNames.join(' | '));
+
+const y = (prod, compat, target, final, transition) => ({ prod, compat, target, final, transition });
+CASES.push(
+  ['[FUNC] Account.tsx (new): list where userId == own uid', y('A', 'A', 'A', 'A', 'A'),
+    (c) => getDocs(query(collection(c.alice(), 'orders'), where('userId', '==', ALICE)))],
+  ['[SEC] guest lists orders where userId == guest', y('D', 'D', 'D', 'D', 'D'),
+    (c) => getDocs(query(collection(c.guest(), 'orders'), where('userId', '==', 'guest')))],
+  ['[SEC] signed-in customer reads a GUEST order by id (no e-mail rights any more)', y('A', 'A', 'A', 'D', 'D'),
+    (c) => getDoc(doc(c.alice(), 'orders/ORD-GUEST001-BBBB'))],
+  ['[FUNC] owner reads any order by id', y('A', 'A', 'A', 'A', 'A'),
+    (c) => getDoc(doc(c.owner(), 'orders/ORD-GUEST001-BBBB'))],
+  ['[FUNC] non-owner admin reads any order by id', y('A', 'A', 'A', 'A', 'A'),
+    (c) => getDoc(doc(c.admin(), 'orders/ORD-GUEST001-BBBB'))],
+  ['[FUNC] non-owner admin marks an order fraud (status-only update)', y('A', 'A', 'A', 'A', 'A'),
+    (c) => updateDoc(doc(c.admin(), 'orders/ORD-GUEST001-BBBB'), { status: 'fraud', seenByAdmin: true, updatedAt: serverTimestamp() })],
+  ['[SEC] browser writes an order directly (deployed Checkout payload)', y('A', 'A', 'D', 'D', 'A'),
+    (c) => setDoc(doc(c.guest(), 'orders/ORD-NEW00040-DIRC'), checkoutOrder({ id: 'ORD-NEW00040-DIRC', userId: 'guest' }))],
+  ['[SEC] client reads orderLedger (tracking-key hashes live there)', y('D', 'D', 'D', 'D', 'D'),
+    (c) => getDoc(doc(c.alice(), 'orderLedger/ORD-ALICE001-AAAA'))],
+);
 
 // ---------------------------------------------------------------------------
 // Runner
@@ -419,5 +651,30 @@ for (const name of selected) {
         else await assertFails(op);
       });
     }
+
+    // ---- Impact of Worker v2 orders (userId 'guest' + unverified claimedUserId) on what Alice's pages SEE.
+    //      Same queries as the app: MyOrders.tsx / storage.ts getByUserId + hasPurchasedProduct, Account.tsx.
+    const ids = (snap) => snap.docs.map((d) => d.id).sort();
+    test(`[${name}] IMPACT MyOrders (userId == uid) does NOT show Alice's Worker-v2 order`, async () => {
+      const snap = await assertSucceeds(getDocs(query(collection(ctx(env).alice(), 'orders'), where('userId', '==', ALICE))));
+      assert.deepEqual(ids(snap), ['ORD-ALICE001-AAAA']);
+    });
+    test(`[${name}] IMPACT review purchase check (userId == uid) finds no purchase from the DELIVERED v2 order`, async () => {
+      const snap = await assertSucceeds(getDocs(query(collection(ctx(env).alice(), 'orders'), where('userId', '==', ALICE))));
+      const bought = snap.docs.some((d) => ['processing', 'shipped', 'delivered'].includes(d.data().status) && (d.data().items || []).some((i) => i.productId === 'p-simple'));
+      assert.equal(bought, false);
+    });
+    const emailReads = name === 'compat' || name === 'target';
+    test(`[${name}] IMPACT Account.tsx (customerEmail == verified email) ${emailReads ? 'shows the v2 order' : 'is denied (no e-mail based reads)'}`, async () => {
+      const q = query(collection(ctx(env).alice(), 'orders'), where('customerEmail', '==', 'alice@example.com'));
+      if (!emailReads) return void (await assertFails(getDocs(q)));
+      const snap = await assertSucceeds(getDocs(q));
+      assert.ok(ids(snap).includes(V2_ORDER));
+      assert.ok(!ids(snap).includes('ORD-MALLORY1-DDDD'));
+    });
+    test(`[${name}] IMPACT Account.tsx with an UNVERIFIED email is denied (no reading by typed email)`, async () => {
+      const q = query(collection(ctx(env).aliceUnverified(), 'orders'), where('customerEmail', '==', 'alice@example.com'));
+      await assertFails(getDocs(q));
+    });
   });
 }

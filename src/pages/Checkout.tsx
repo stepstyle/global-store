@@ -16,11 +16,24 @@ import {
   Copy,
   Search,
   Zap,
-  Clock
+  Clock,
+  AlertTriangle,
+  RefreshCw
 } from 'lucide-react';
 import * as ReactRouterDOM from 'react-router-dom';
-import { db } from '../services/storage';
 import { Order, Product } from '../types';
+import { localAttemptStore, openAttempts, type OrderPayload, type SubmitDeps, type SubmitOptions, type PendingRecovery } from '../services/orderSubmit';
+import {
+  createSubmitLock, placeOrder, retrySameOrder, shouldClearCart, messageFor, whatsappUrl, whatsappNewOrderUrl, confirmedOrders,
+  recoverPendingAttempts, restorablePayload, takeOwnerNotices,
+  type CheckoutResult,
+} from '../services/checkoutFlow';
+import { previewServerPricing } from '../services/pricePreview';
+import { getFirebaseAuth, currentIdentity } from '../services/firebase';
+import { ORDER_LIMITS, ORDER_EMAIL_RE, checkOrderLimits, sanitizeOrderLine } from '../services/orderLimits';
+
+/** uid of the customer signed in with Firebase Auth right now, or null (guest / not signed in / local mock user). */
+const firebaseUid = (): string | null => getFirebaseAuth()?.currentUser?.uid || null;
 import SEO from '../components/SEO';
 import LazyImage from '../components/LazyImage';
 
@@ -120,14 +133,6 @@ const normalizePhoneGlobal = (dial: string, local: string) => {
   return `${d}${cleanLocal}`;
 };
 
-const makeOrderId = () => {
-  const rnd = Math.random().toString(36).slice(2, 8).toUpperCase();
-  const ts = Date.now().toString(36).toUpperCase();
-  const uuid = (globalThis as any)?.crypto?.randomUUID?.();
-  if (uuid) return `ORD-${uuid.split('-')[0].toUpperCase()}-${ts}`;
-  return `ORD-${ts}-${rnd}`;
-};
-
 const Checkout: React.FC = () => {
   const {
     cart,
@@ -164,6 +169,85 @@ const Checkout: React.FC = () => {
   const [shippingMethodId, setShippingMethodId] = useState<string>('standard');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cod');
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // ---- order submission (Worker v2 is the only writer of the order) ----
+  const submittingRef = useRef(false); // synchronous guard against double clicks / double taps
+  const lockRef = useRef(createSubmitLock()); // second lock inside placeOrder()
+  // order number + content hash + tracking key of each attempt, shared by ALL tabs and kept after closing the browser
+  // (localStorage; no personal data). An unresolved attempt blocks a new number until it is settled.
+  const attemptStoreRef = useRef(localAttemptStore());
+  // the same content confirmed AFTER this page was opened (another tab / recovery) is never ordered twice
+  const openedAtRef = useRef(Date.now());
+  // earlier attempts of this browser found when the page opened: recovered (saved and ours) or still unresolved
+  const [pendingAttempts, setPendingAttempts] = useState<PendingRecovery[]>([]);
+  const [pendingChecked, setPendingChecked] = useState(false);
+  // the signed-in account could not be confirmed in time (Firebase session restore slow/failed): nothing bound to an
+  // account is restored or shown; the customer can check again
+  const [identityUnknown, setIdentityUnknown] = useState(false);
+  const [identityCheck, setIdentityCheck] = useState(0);
+  // the account this page was opened (and filled in) for; a different account at the moment of sending -> not sent
+  const identityAtOpenRef = useRef<string | null>(null);
+  const lastPayloadRef = useRef<OrderPayload | null>(null); // exact payload of the last send (same-number retry)
+  const resultPanelRef = useRef<HTMLDivElement | null>(null);
+  const [submitResult, setSubmitResult] = useState<CheckoutResult | null>(null);
+  // why the order was NOT sent (checked locally before sending); shown inline — App's toasts are not rendered
+  const [submitBlocked, setSubmitBlocked] = useState('');
+  const workerOpts = useMemo<SubmitOptions>(
+    () => ({
+      workerUrl: String(import.meta.env.VITE_WORKER_URL || ''),
+      // Firebase ID token of the signed-in customer (refreshed on request after a 401); null for guests
+      getAuthToken: async (forceRefresh: boolean) => {
+        const current = getFirebaseAuth()?.currentUser;
+        return current ? current.getIdToken(forceRefresh) : null;
+      },
+    }),
+    []
+  );
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const store = attemptStoreRef.current;
+      // who uses this browser now — only after Firebase restored a saved session (else a customer looks like a guest).
+      // null = could not be decided in time: restore/show NOTHING bound to an identity, offer to check again.
+      const who = await currentIdentity();
+      if (!alive) return;
+      if (who === null) {
+        setIdentityUnknown(true);
+        setPendingAttempts(openAttempts(store).map((r) => ({ orderId: r.orderId, state: 'unknown' as const })));
+        setPendingChecked(true);
+        return;
+      }
+      setIdentityUnknown(false);
+      if (identityAtOpenRef.current === null) identityAtOpenRef.current = who;
+      // the owner is back: their orders recovered while another account used this device
+      const notices = takeOwnerNotices(store, who);
+      if (!openAttempts(store).length) {
+        setPendingAttempts(notices);
+        setPendingChecked(true);
+        return;
+      }
+      // the exact payload of the newest open attempt, if THIS tab still has it (refresh) AND it matches its content hash
+      const kept = await restorablePayload(store, undefined, who);
+      if (kept && alive) lastPayloadRef.current = kept;
+      const res = await recoverPendingAttempts(store, workerOpts, { fetch: (url, init) => window.fetch(url, init as RequestInit) as any }, undefined, undefined, who);
+      if (alive) {
+        setPendingAttempts([...notices, ...res]);
+        setPendingChecked(true);
+      }
+    })().catch(() => alive && setPendingChecked(true));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identityCheck]);
+
+  const workerDeps = useMemo<SubmitDeps>(
+    () => ({
+      fetch: (url, init) => window.fetch(url, init as RequestInit) as any,
+      isOnline: () => (typeof navigator === 'undefined' ? true : navigator.onLine !== false),
+    }),
+    []
+  );
 
   const [email, setEmail] = useState<string>(() => safeTrim(user?.email || ''));
   useEffect(() => {
@@ -339,13 +423,19 @@ const Checkout: React.FC = () => {
 
     if (!isLoggedIn && !currentEmail) {
       nextErr.email = tr('البريد الإلكتروني مطلوب للضيوف', 'Email is required for guests');
-    } else if (currentEmail && !emailRegex.test(currentEmail)) {
+    } else if (currentEmail && (!emailRegex.test(currentEmail) || currentEmail.length > ORDER_LIMITS.emailMax || !ORDER_EMAIL_RE.test(currentEmail))) {
       nextErr.email = tr('البريد الإلكتروني غير صحيح', 'Invalid email');
     }
 
     const name = normalizeName(formData.fullName);
     if (name.length < 5) {
       nextErr.fullName = tt('nameMin5', 'الاسم يجب أن يكون 5 أحرف على الأقل', 'Name must be at least 5 characters.');
+    } else if (name.length > ORDER_LIMITS.nameMax) {
+      nextErr.fullName = tr(`الاسم طويل جدًا: الحد الأقصى ${ORDER_LIMITS.nameMax} حرفًا.`, `Name is too long (max ${ORDER_LIMITS.nameMax} characters).`);
+    }
+
+    if (normalizeAddress(formData.streetAddress).length > ORDER_LIMITS.streetMax) {
+      nextErr.streetAddress = tr(`العنوان التفصيلي طويل جدًا: الحد الأقصى ${ORDER_LIMITS.streetMax} حرف.`, `Address is too long (max ${ORDER_LIMITS.streetMax} characters).`);
     }
 
     if (!safeTrim(formData.citySlug)) {
@@ -376,8 +466,124 @@ const Checkout: React.FC = () => {
     changeStep(2);
   };
 
+  /** The order exactly as before (same fields, same prices) — WITHOUT a number: the attempt store assigns it. */
+  const buildDraft = (): Record<string, any> => {
+      const shippingPhoneE164 = normalizePhoneGlobal(dialCode, formData.phoneLocal) || safeTrim(formData.phoneLocal);
+
+      let shippingCityName = '';
+      REGIONS.forEach(r => {
+        const gov = r.govs.find(g => g.slug === formData.citySlug);
+        if (gov) shippingCityName = isAR ? gov.ar : gov.en;
+      });
+
+      if (formData.citySlug === 'amman' && selectedAmmanArea) {
+        shippingCityName = `${shippingCityName} - ${isAR ? selectedAmmanArea.nameAr : selectedAmmanArea.nameEn}`;
+      }
+
+      const shippingStreet = normalizeAddress(formData.streetAddress) || 'لم يتم إدخال عنوان تفصيلي';
+
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const nowDate = nowIso.split('T')[0];
+
+      // 🚀 تجهيز الطلب مع دمج الخيارات (الألوان والأحجام)
+      const newOrder: Omit<Order, 'id'> & any = {
+        // identity comes from Firebase Auth (proven to the Worker by the ID token), not from a locally stored user
+        userId: firebaseUid() || 'guest',
+        status: 'new',
+        seenByAdmin: false,
+        date: nowDate,
+        createdAt: nowIso,
+        createdAtMs: now.getTime(),
+        updatedAt: nowIso,
+        
+        items: validatedCart.map((item: any) => {
+          const variantSuffix = item.selectedVariant?.label && item.selectedVariant.label !== '.' 
+            ? ` - ${item.selectedVariant.label}` 
+            : '';
+            
+          return sanitizeOrderLine({
+            productId: item.id,
+            name: `${item.name}${variantSuffix}`,
+            price: Number(item.price || 0),
+            quantity: clampQty(item.quantity),
+            image: item.image,
+            selectedVariant: item.selectedVariant || null,
+          });
+        }),
+        
+        subtotal,
+        discountAmount,
+        shippingCost,
+        total,
+        shippingMethodId,
+        shippingMethod: isAR ? selectedShipping.nameAr : selectedShipping.nameEn,
+        paymentMethod,
+        customerEmail: safeTrim(email) || safeTrim(user?.email || ''),
+        consents: {
+          acceptedStorePolicies: !!acceptPolicies,
+          acceptedDeliveryPolicy: !!acceptDeliveryPolicy,
+          saveInfo: !!formData.saveInfo,
+          billingSameAsShipping: !!formData.billingSameAsShipping,
+        },
+        note: safeTrim(orderNote) || undefined,
+        paymentDetails: paymentMethod === 'cliq' ? { cliqReference: safeTrim(cliqRef), isPaid: false } : undefined,
+        address: { fullName: normalizeName(formData.fullName) || 'Guest', city: shippingCityName, street: shippingStreet, phone: shippingPhoneE164 },
+        addressMeta: { country: JO_COUNTRY.nameEn, countryCode: JO_COUNTRY.code, citySlug: formData.citySlug, ammanAreaId: formData.ammanAreaId, saveInfo: !!formData.saveInfo, phoneDial: dialCode, phoneLocal: safeTrim(formData.phoneLocal) },
+      };
+      return newOrder;
+  };
+
+  /** Apply a submission result. ONLY a Worker-verified confirmation clears the cart and opens the success page. */
+  const applyResult = (r: CheckoutResult) => {
+    if (r.status === 'busy') return;
+    if (shouldClearCart(r) && r.status === 'confirmed') {
+      try {
+        // display details for the success page on THIS device (the page still verifies with the Worker)
+        sessionStorage.setItem(`order_success_${r.orderId}`, JSON.stringify(r.payload));
+      } catch {}
+      confirmedOrders().add(r.orderId);
+      lastPayloadRef.current = null;
+      setSubmitResult(null);
+      clearCart();
+      if (typeof clearOrderNote === 'function') clearOrderNote();
+      // not tt('alertSet', …): that translation key means 'alert registered' and would show the wrong text
+      showToast(tr('تم تأكيد طلبك بنجاح', 'Your order is confirmed.'), 'success');
+      navigate(`/order-success/${r.orderId}`, { replace: true });
+      return;
+    }
+    if (r.status === 'account_changed') {
+      // the earlier account's payload is never resent under this one; the page now belongs to the current account
+      lastPayloadRef.current = null;
+      identityAtOpenRef.current = r.current;
+      setSubmitResult(r);
+      setTimeout(() => resultPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+      return;
+    }
+    // not confirmed: keep the cart, keep the exact payload for a same-number retry
+    lastPayloadRef.current = 'payload' in r ? r.payload : r.status === 'rejected' ? null : lastPayloadRef.current;
+    setSubmitResult(r);
+    setTimeout(() => resultPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+  };
+
+  const runSubmission = async (fn: () => Promise<CheckoutResult>) => {
+    if (submittingRef.current) return; // synchronous: a second click/tap is ignored
+    submittingRef.current = true;
+    setIsProcessing(true);
+    try {
+      applyResult(await fn());
+    } catch (error: any) {
+      console.error('Checkout submit failed:', error);
+      applyResult({ status: 'misconfigured', orderId: '', reason: String(error?.message || error) });
+    } finally {
+      submittingRef.current = false;
+      setIsProcessing(false);
+    }
+  };
+
   const handlePlaceOrder = async () => {
-    if (isProcessing) return;
+    if (submittingRef.current) return;
+    setSubmitBlocked('');
 
     if (!Array.isArray(validatedCart) || validatedCart.length === 0) {
       showToast(tt('cartEmpty', 'سلتك فارغة', 'Your cart is empty'), 'error');
@@ -400,115 +606,67 @@ const Checkout: React.FC = () => {
     if (paymentMethod === 'cliq') {
       const ref = safeTrim(cliqRef);
       if (!ref) {
-        showToast(tt('enterCliqRef', 'يرجى إدخال الرقم المرجعي لحوالة CliQ', 'Please enter the CliQ reference number.'), 'error');
+        // shown inline only (one display per error)
+        setSubmitBlocked(tt('enterCliqRef', 'يرجى إدخال الرقم المرجعي لحوالة CliQ', 'Please enter the CliQ reference number.'));
         return;
       }
     }
 
-    setIsProcessing(true);
-
-    try {
-      const shippingPhoneE164 = normalizePhoneGlobal(dialCode, formData.phoneLocal) || safeTrim(formData.phoneLocal);
-      
-      let shippingCityName = '';
-      REGIONS.forEach(r => {
-        const gov = r.govs.find(g => g.slug === formData.citySlug);
-        if (gov) shippingCityName = isAR ? gov.ar : gov.en;
-      });
-
-      if (formData.citySlug === 'amman' && selectedAmmanArea) {
-        shippingCityName = `${shippingCityName} - ${isAR ? selectedAmmanArea.nameAr : selectedAmmanArea.nameEn}`;
-      }
-
-      const shippingStreet = normalizeAddress(formData.streetAddress) || 'لم يتم إدخال عنوان تفصيلي';
-      
-      const now = new Date();
-      const nowIso = now.toISOString();
-      const nowDate = nowIso.split('T')[0];
-      const orderId = makeOrderId();
-
-      // 🚀 تجهيز الطلب مع دمج الخيارات (الألوان والأحجام)
-      const newOrder: Order & any = {
-        id: orderId,
-        userId: user ? user.id : 'guest',
-        status: 'new',
-        seenByAdmin: false,
-        date: nowDate,
-        createdAt: nowIso,
-        createdAtMs: now.getTime(),
-        updatedAt: nowIso,
-        
-        items: validatedCart.map((item: any) => {
-          const variantSuffix = item.selectedVariant?.label && item.selectedVariant.label !== '.' 
-            ? ` - ${item.selectedVariant.label}` 
-            : '';
-            
-          return {
-            productId: item.id,
-            name: `${item.name}${variantSuffix}`,
-            price: Number(item.price || 0),
-            quantity: clampQty(item.quantity),
-            image: item.image,
-            selectedVariant: item.selectedVariant || null,
-          };
-        }),
-        
-        subtotal,
-        discountAmount,
-        shippingCost,
-        total,
-        shippingMethodId,
-        shippingMethod: isAR ? selectedShipping.nameAr : selectedShipping.nameEn,
-        paymentMethod,
-        customerEmail: safeTrim(email) || safeTrim(user?.email || ''),
-        consents: {
-          acceptedStorePolicies: !!acceptPolicies,
-          acceptedDeliveryPolicy: !!acceptDeliveryPolicy,
-          saveInfo: !!formData.saveInfo,
-          billingSameAsShipping: !!formData.billingSameAsShipping,
-        },
-        note: safeTrim(orderNote) || undefined,
-        paymentDetails: paymentMethod === 'cliq' ? { cliqReference: safeTrim(cliqRef), isPaid: false } : undefined,
-        address: { fullName: normalizeName(formData.fullName) || 'Guest', city: shippingCityName, street: shippingStreet, phone: shippingPhoneE164 },
-        addressMeta: { country: JO_COUNTRY.nameEn, countryCode: JO_COUNTRY.code, citySlug: formData.citySlug, ammanAreaId: formData.ammanAreaId, saveInfo: !!formData.saveInfo, phoneDial: dialCode, phoneLocal: safeTrim(formData.phoneLocal) },
-      };
-
-      // 🚨 الرجوع للكود الأصلي للـ Worker (عشان المتصفح ما يعمل بلوك CORS)
-      const workerUrl = import.meta.env.VITE_WORKER_URL;
-      if (workerUrl && workerUrl.trim() !== '') {
-        fetch(`${workerUrl}/create-order`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order: newOrder }),
-        }).catch(e => console.warn('Background sync error', e));
-      }
-
-      try {
-        if (db?.orders?.create) await db.orders.create(newOrder);
-      } catch (dbError) {}
-
-      try {
-        sessionStorage.setItem(`order_success_${newOrder.id}`, JSON.stringify(newOrder));
-      } catch (storageError) {}
-
-      clearCart();
-      if (typeof clearOrderNote === 'function') clearOrderNote();
-      
-      showToast(tt('alertSet', 'تم استلام طلبك بنجاح', 'Order placed successfully.'), 'success');
-
-      if (paymentMethod === 'cliq') {
-        const waMsg = `مرحباً متجر دير شرف 👋\nتم الدفع عبر CliQ، وهذا طلبي الجديد.\n\n*الاسم:* ${normalizeName(formData.fullName)}\n*رقم الطلب:* #${orderId}\n*الرقم المرجعي للتحويل:* ${safeTrim(cliqRef)}\n\n(يرجى إرفاق صورة إيصال التحويل مع هذه الرسالة لتأكيد طلبك ✅)`;
-        const waUrl = `https://wa.me/${STORE_WHATSAPP}?text=${encodeURIComponent(waMsg)}`;
-        window.open(waUrl, '_blank');
-      }
-
-      navigate(`/order-success/${newOrder.id}`, { state: { order: newOrder }, replace: true });
-    } catch (error: any) {
-      console.error('Checkout submit failed:', error);
-      showToast(tt('placeOrderFailed', 'فشل إنشاء الطلب، يرجى المحاولة مرة أخرى', 'Failed to place order. Please try again.'), 'error');
-      setIsProcessing(false);
+    // the Worker's input limits: refuse HERE with a clear message (nothing is sent; cart and pending attempt untouched)
+    const limitProblems = checkOrderLimits({
+      fullName: normalizeName(formData.fullName),
+      street: normalizeAddress(formData.streetAddress),
+      email: safeTrim(email) || safeTrim(user?.email || ''),
+      note: safeTrim(orderNote),
+      paymentMethod,
+      cliqRef: safeTrim(cliqRef),
+      quantities: validatedCart.map((item: any) => clampQty(item.quantity)),
+      total: Number(total),
+    });
+    if (limitProblems.length) {
+      const first = limitProblems[0];
+      // shown inline only (one display per error)
+      setSubmitBlocked(isAR ? first.ar : first.en);
+      if (first.field === 'fullName' || first.field === 'streetAddress' || first.field === 'email') changeStep(1);
+      return;
     }
+
+    await runSubmission(() =>
+      placeOrder({
+        draft: buildDraft(),
+        store: attemptStoreRef.current,
+        opts: workerOpts,
+        deps: workerDeps,
+        lock: lockRef.current,
+        lastPayload: lastPayloadRef.current,
+        openedAt: openedAtRef.current,
+        // decided at the moment of sending (after the saved session was restored) — never a customer turned guest
+        identity: () => currentIdentity(),
+        expectedIdentity: identityAtOpenRef.current,
+      })
+    );
   };
+
+  /** "Retry with the same number": resends the exact last payload (never a new number). */
+  const handleRetrySame = async () => {
+    const last = lastPayloadRef.current;
+    if (!last) return handlePlaceOrder();
+    await runSubmission(() =>
+      retrySameOrder({ store: attemptStoreRef.current, opts: workerOpts, deps: workerDeps, lock: lockRef.current, lastPayload: last, openedAt: openedAtRef.current, identity: () => currentIdentity(), expectedIdentity: identityAtOpenRef.current })
+    );
+  };
+
+  /** What the Worker's own pricing code computes for this cart (preview, step 3 only). */
+  const pricePreview = useMemo(() => {
+    if (step !== 3) return null;
+    try {
+      const p = previewServerPricing(buildDraft(), Array.isArray(products) ? products : []);
+      return p.ok ? p : null;
+    } catch {
+      return null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, validatedCart, products, formData, shippingMethodId, paymentMethod, cliqRef, email, orderNote, subtotal, discountAmount, shippingCost, total]);
 
   const inputClass = (hasError: boolean) => [
     'w-full p-4 bg-slate-50 border rounded-2xl outline-none transition-all duration-300 font-medium text-slate-800',
@@ -517,10 +675,65 @@ const Checkout: React.FC = () => {
       : 'border-slate-200 focus:border-sky-400 focus:ring-4 focus:ring-sky-400/20 hover:border-slate-300'
   ].join(' ');
 
+  // Earlier attempt(s) of this browser (after a refresh / closing the browser). Shown on the normal checkout AND on the
+  // empty-cart view (e.g. another tab emptied the cart): the order number and the way to the shop never disappear.
+  const pendingBanner = pendingAttempts.length > 0 || identityUnknown ? (
+          <div className="mb-8 space-y-3" data-testid="pending-attempts" data-checked={pendingChecked ? 'yes' : 'no'}>
+            {identityUnknown && (
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 text-start" role="status" data-testid="identity-unknown">
+                <p className="font-black text-slate-900">{tr('تعذّر التحقق من حسابك الآن', 'We could not confirm your account right now')}</p>
+                <p className="text-sm font-bold text-slate-600 mt-1 leading-relaxed">
+                  {tr('لن نعرض أو نستعيد بيانات أي طلب سابق قبل التأكد من الحساب. تحقق من الاتصال ثم أعد المحاولة.', 'We will not show or restore any earlier order before your account is confirmed. Check your connection and try again.')}
+                </p>
+                <button type="button" onClick={() => setIdentityCheck((n) => n + 1)} data-testid="identity-retry" className="mt-3 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-black text-white">
+                  {tr('إعادة التحقق', 'Check again')}
+                </button>
+              </div>
+            )}
+            {pendingAttempts.map((p) =>
+              p.state === 'recovered' ? (
+                <div key={p.orderId} className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 text-start" role="status" data-testid="pending-attempt" data-status="recovered" data-order-id={p.orderId}>
+                  <p className="font-black text-emerald-800">{tr('تم تسجيل طلبك السابق بنجاح', 'Your earlier order was saved')}</p>
+                  <p className="text-sm font-bold text-emerald-700 mt-1 leading-relaxed">
+                    {tr('رقم الطلب', 'Order number')} <span dir="ltr" className="font-black">#{p.orderId}</span>.{' '}
+                    {tr('لا حاجة لإرساله مرة أخرى.', 'There is no need to send it again.')}{' '}
+                    <ReactRouterDOM.Link to={`/order-success/${p.orderId}`} className="underline">{tr('عرض الطلب', 'View the order')}</ReactRouterDOM.Link>
+                  </p>
+                </div>
+              ) : (
+                <div key={p.orderId} className="rounded-3xl border border-amber-200 bg-amber-50 p-5 text-start" role="alert" data-testid="pending-attempt" data-status={p.state} data-order-id={p.orderId}>
+                  <p className="font-black text-amber-900">{tr('لديك طلب سابق لم نتمكن من تأكيده بعد', 'You have an earlier order we could not confirm yet')}</p>
+                  <p className="text-sm font-bold text-amber-800 mt-1 leading-relaxed">
+                    {tr('رقم الطلب', 'Order number')} <span dir="ltr" className="font-black">#{p.orderId}</span>.{' '}
+                    {p.state === 'exists_unverified'
+                      ? tr('يوجد طلب مسجّل بهذا الرقم لكن لا يمكن التحقق من تفاصيله من هذا الجهاز.', 'An order with this number exists, but this device cannot verify its details.')
+                      : tr('لم يصلنا بعد ما يؤكد حفظه، وقد يكون ما زال قيد المعالجة.', 'We have no confirmation yet; it may still be processing.')}{' '}
+                    {tr(
+                      'لن نُنشئ طلبًا جديدًا قبل حسمه حتى لا يتكرر. إذا كانت سلتك وبياناتك كما هي فأكّد الطلب لإعادة المحاولة بنفس الرقم بأمان، وإلا تواصل مع المكتبة برقم الطلب.',
+                      'We will not create a new order before it is settled, to avoid duplicates. If your cart and details are unchanged, confirm to retry safely with the same number; otherwise contact the shop with the order number.'
+                    )}
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {lastPayloadRef.current?.id === p.orderId && (
+                      <button type="button" onClick={handleRetrySame} disabled={isProcessing} data-testid="pending-retry-same" className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-black text-white disabled:opacity-50">
+                        {tr('إعادة المحاولة بنفس الرقم', 'Retry with the same number')}
+                      </button>
+                    )}
+                    <a href={whatsappUrl(STORE_WHATSAPP, p.orderId, { kind: 'unconfirmed' })} target="_blank" rel="noopener noreferrer" data-testid="pending-whatsapp" className="inline-flex items-center gap-2 rounded-xl bg-[#25D366] px-4 py-2.5 text-sm font-black text-white">
+                      {tr('تواصل مع المكتبة عبر واتساب', 'Contact the shop on WhatsApp')}
+                    </a>
+                  </div>
+                </div>
+              )
+            )}
+          </div>
+  ) : null;
+
   if (!Array.isArray(validatedCart) || validatedCart.length === 0) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
         <SEO title={tt('checkout', 'إتمام الطلب', 'Checkout')} noIndex={true} />
+        {pendingBanner && <div className="w-full max-w-2xl">{pendingBanner}</div>}
         <div className="w-full max-w-md bg-white rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/40 p-10 text-center animate-in zoom-in-95 duration-500">
           <div className="mx-auto w-20 h-20 rounded-full bg-sky-50 flex items-center justify-center text-sky-500 mb-6 shadow-inner">
             <ShoppingBag size={32} strokeWidth={2.5} />
@@ -551,6 +764,8 @@ const Checkout: React.FC = () => {
             </p>
           </div>
         </div>
+
+        {pendingBanner}
 
         <div className="flex flex-col lg:flex-row gap-8 xl:gap-12">
           {/* Form Steps Container */}
@@ -634,6 +849,7 @@ const Checkout: React.FC = () => {
                       name="fullName"
                       value={formData.fullName}
                       onChange={(e) => setField('fullName', e.target.value)}
+                      maxLength={ORDER_LIMITS.nameMax}
                       type="text"
                       placeholder="الاسم الأول والأخير"
                       className={inputClass(!!errors.fullName)}
@@ -754,10 +970,12 @@ const Checkout: React.FC = () => {
                       name="streetAddress"
                       value={formData.streetAddress}
                       onChange={(e) => setField('streetAddress', e.target.value)}
+                      maxLength={ORDER_LIMITS.streetMax}
                       type="text"
                       placeholder="اسم الشارع - رقم البناية - الشقة (اختياري)"
-                      className={inputClass(false)} // أزلنا فحص الخطأ لأنه اختياري
+                      className={inputClass(!!errors.streetAddress)}
                     />
+                    {errors.streetAddress && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.streetAddress}</p>}
                   </div>
                 </div>
 
@@ -909,6 +1127,7 @@ const Checkout: React.FC = () => {
                         placeholder="رقم مكون من أرقام أو أحرف (e.g. 1234567890)"
                         value={cliqRef}
                         onChange={(e) => setCliqRef(e.target.value)}
+                        maxLength={ORDER_LIMITS.cliqRefMax}
                         className={inputClass(false) + ' bg-white mb-5 text-center tracking-wider text-xl font-black'}
                       />
 
@@ -917,7 +1136,7 @@ const Checkout: React.FC = () => {
                            <MessageCircle size={24} strokeWidth={2.5} />
                         </div>
                         <p className="text-sm font-bold text-slate-700 leading-relaxed">
-                          لتسريع العملية، سيتم <span className="text-[#25D366] font-black">تحويلك إلى الواتساب</span> لإرسال صورة الإيصال بمجرد النقر على زر تأكيد الطلب بالأسفل.
+                          بعد <span className="text-[#25D366] font-black">تأكيد الطلب</span> سيظهر لك زر لإرسال صورة الإيصال عبر الواتساب مع رقم الطلب.
                         </p>
                       </div>
                     </div>
@@ -941,6 +1160,107 @@ const Checkout: React.FC = () => {
                     </div>
                   </div>
                 )}
+
+                {/* Worker price preview: differences between the page and what the order system will compute */}
+                {pricePreview && pricePreview.diffs.length > 0 && (
+                  <div className="mt-8 rounded-3xl border border-amber-200 bg-amber-50 p-5 text-start" role="status">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="text-amber-500 shrink-0 mt-0.5" size={22} />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-black text-amber-900">
+                          {tr('تنبيه: يوجد اختلاف في الأسعار', 'Notice: prices differ')}
+                        </p>
+                        <p className="mt-1 text-sm font-bold text-amber-800/90">
+                          {pricePreview.diffs.includes('incomplete')
+                            ? tr('تعذّر التحقق من سعر بعض المنتجات حاليًا. سيُراجع المتجر السعر النهائي.', 'Some prices could not be checked right now. The shop will review the final price.')
+                            : tr('المجموع المعروض يختلف عن المجموع الذي سيحسبه نظام الطلبات حسب الأسعار الحالية. سيُعتمد السعر الحالي عند مراجعة الطلب.', 'The total shown differs from what the order system computes from current prices. The current price applies when the order is reviewed.')}
+                        </p>
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-sm font-bold">
+                          <span className="text-slate-600">{tr('المعروض في الصفحة', 'Shown on the page')}</span>
+                          <span className="tabular-nums text-end text-slate-900">{formatMoney(total)}</span>
+                          <span className="text-slate-600">{tr('حسب نظام الطلبات', 'Order system')}</span>
+                          <span className="tabular-nums text-end text-amber-900">{formatMoney(pricePreview.server.total)}</span>
+                        </div>
+                        {pricePreview.lines.some((l) => l.serverUnitPrice !== null && l.clientUnitPrice !== null && Math.abs(l.serverUnitPrice - l.clientUnitPrice) > 0.009) && (
+                          <ul className="mt-2 space-y-1 text-xs font-bold text-amber-900/80">
+                            {pricePreview.lines
+                              .filter((l) => l.serverUnitPrice !== null && l.clientUnitPrice !== null && Math.abs(l.serverUnitPrice - (l.clientUnitPrice as number)) > 0.009)
+                              .map((l) => (
+                                <li key={l.index}>
+                                  {getProductTitle(validatedCart[l.index] || {})}: {formatMoney(l.clientUnitPrice as number)} ← {formatMoney(l.serverUnitPrice as number)}
+                                </li>
+                              ))}
+                          </ul>
+                        )}
+                        {typeof refreshProducts === 'function' && (
+                          <button type="button" onClick={() => refreshProducts()} className="mt-3 inline-flex items-center gap-2 text-xs font-black text-amber-900 underline">
+                            <RefreshCw size={14} /> {tr('تحديث الأسعار', 'Refresh prices')}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Refused locally (input limits): nothing was sent, cart and any pending attempt are untouched */}
+                {submitBlocked && (
+                  <div className="mt-8 rounded-3xl border border-red-200 bg-red-50 p-5 text-start text-sm font-bold text-red-700 leading-relaxed" role="alert" data-testid="submit-blocked">
+                    {submitBlocked}
+                  </div>
+                )}
+
+                {/* Submission result (anything but a confirmed order) */}
+                {submitResult && (() => {
+                  const m = messageFor(submitResult);
+                  if (!m) return null;
+                  const orderId = 'orderId' in submitResult ? submitResult.orderId : '';
+                  const waKind = submitResult.status === 'conflict' ? 'conflict' : 'unconfirmed';
+                  const tone = m.tone === 'error' ? 'border-red-200 bg-red-50 text-red-900' : 'border-amber-200 bg-amber-50 text-amber-900';
+                  return (
+                    <div ref={resultPanelRef} className={`mt-8 rounded-3xl border p-5 text-start ${tone}`} role="alert" data-testid="submit-result" data-status={submitResult.status}>
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="shrink-0 mt-0.5" size={22} />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-black">{tr(m.titleAr, m.titleEn)}</p>
+                          <p className="mt-1 text-sm font-bold opacity-90">{tr(m.bodyAr, m.bodyEn)}</p>
+                          {m.showOrderId && orderId && (
+                            <p className="mt-3 text-sm font-bold">
+                              {tr('رقم الطلب:', 'Order number:')}{' '}
+                              <span className="font-black tracking-wider" dir="ltr" data-testid="submit-order-id">#{orderId}</span>
+                            </p>
+                          )}
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {(m.actions.includes('retry_same') || m.actions.includes('wait_retry') || m.actions.includes('check_connection')) && (
+                              <button type="button" onClick={handleRetrySame} disabled={isProcessing} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-black text-white disabled:opacity-50">
+                                <RefreshCw size={16} /> {tr('إعادة المحاولة بنفس رقم الطلب', 'Retry with the same order number')}
+                              </button>
+                            )}
+                            {m.actions.includes('whatsapp') && orderId && (
+                              <a href={whatsappUrl(STORE_WHATSAPP, orderId, { kind: waKind })} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-[#25D366] px-4 py-2.5 text-sm font-black text-white">
+                                <MessageCircle size={16} /> {tr('تواصل مع المكتبة عبر واتساب', 'Contact the shop on WhatsApp')}
+                              </a>
+                            )}
+                            {m.actions.includes('whatsapp') && !orderId && (
+                              <a href={whatsappNewOrderUrl(STORE_WHATSAPP, (cart || []).map((it: any) => ({ title: getProductTitle(it), quantity: it.quantity })))} target="_blank" rel="noopener noreferrer" data-testid="order-whatsapp" className="inline-flex items-center gap-2 rounded-xl bg-[#25D366] px-4 py-2.5 text-sm font-black text-white">
+                                <MessageCircle size={16} /> {tr('اطلب عبر واتساب', 'Order on WhatsApp')}
+                              </a>
+                            )}
+                            {m.actions.includes('check_identity') && (
+                              <button type="button" onClick={handlePlaceOrder} disabled={isProcessing} data-testid="identity-submit-retry" className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-black text-white disabled:opacity-50">
+                                <RefreshCw size={16} /> {tr('إعادة المحاولة', 'Try again')}
+                              </button>
+                            )}
+                            {m.actions.includes('fix_form') && (
+                              <button type="button" onClick={() => changeStep(1)} className="inline-flex items-center gap-2 rounded-xl border border-current px-4 py-2.5 text-sm font-black">
+                                {tr('مراجعة البيانات', 'Review details')}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col-reverse sm:flex-row justify-between items-center gap-4">
                   <button onClick={() => changeStep(2)} disabled={isProcessing} className="text-sm font-bold text-slate-500 hover:text-slate-900 transition-colors w-full sm:w-auto py-3">
@@ -1043,7 +1363,7 @@ const Checkout: React.FC = () => {
                 <textarea
                   value={orderNote || ''}
                   onChange={(e) => setOrderNote(e.target.value)}
-                  maxLength={600}
+                  maxLength={ORDER_LIMITS.noteMax}
                   placeholder="تعليمات لمندوب التوصيل أو تفاصيل تغليف الهدية..."
                   className="w-full min-h-[80px] resize-none p-4 rounded-2xl bg-slate-50 border border-slate-100 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-400/10 text-sm font-bold placeholder:font-medium placeholder:text-slate-400 transition-all"
                 />
@@ -1155,6 +1475,7 @@ const Checkout: React.FC = () => {
             }}
             className="flex-1 py-4 text-base shadow-xl shadow-sky-500/20"
             isLoading={isProcessing}
+            disabled={isProcessing}
           >
             {step === 1
               ? tt('continueToShipping', 'متابعة للتوصيل', 'Continue to Delivery')
