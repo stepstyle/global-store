@@ -92,7 +92,7 @@ test('happy path: synthetic users in dairsharaf-staging, tokens checked, all del
   assert.equal(fake.users.size, 2);
   assert.ok(fake.calls.every((c) => c.key === STAGING_API_KEY), 'only the staging web key');
   const r = await users.cleanup();
-  assert.deepEqual(r, { deleted: 2, failed: [] });
+  assert.deepEqual(r, { deleted: 2, failed: [], stopped: false });
   assert.equal(fake.users.size, 0, 'every test user deleted');
   assert.equal(secretsIn(JSON.stringify(r) + users.emails().join(','), fake), false);
 });
@@ -154,7 +154,7 @@ test('AUTH FAILURE: sign-up refused (e.g. e-mail/password disabled) -> clear err
     const fake = fakeAuth({ signUpError: [status, code] });
     const users = makeStagingUsers(st, { fetch: guarded(fake), runId: 'fail01', sleep: noSleep });
     await assert.rejects(users.create('a'), (e) => e instanceof StagingAuthError && e.code === code && e.status === status && !secretsIn(e.message, fake), code);
-    assert.deepEqual(await users.cleanup(), { deleted: 0, failed: [] });
+    assert.deepEqual(await users.cleanup(), { deleted: 0, failed: [], stopped: false });
   }
 });
 
@@ -162,7 +162,7 @@ test('expired token at cleanup: signs in again (password kept in memory) and del
   const fake = fakeAuth({ deleteError: (n) => (n === 1 ? [400, 'INVALID_ID_TOKEN'] : null) });
   const users = makeStagingUsers(st, { fetch: guarded(fake), runId: 'exp001', sleep: noSleep });
   await users.create('a');
-  assert.deepEqual(await users.cleanup(), { deleted: 1, failed: [] });
+  assert.deepEqual(await users.cleanup(), { deleted: 1, failed: [], stopped: false });
   assert.equal(fake.users.size, 0);
   assert.ok(fake.calls.some((c) => c.path === '/v1/accounts:signInWithPassword'));
 });
@@ -172,7 +172,7 @@ test('a user already gone counts as deleted', async () => {
   const users = makeStagingUsers(st, { fetch: guarded(fake), runId: 'gone01', sleep: noSleep });
   const a = await users.create('a');
   fake.users.delete(a.uid); // removed elsewhere
-  assert.deepEqual(await users.cleanup(), { deleted: 1, failed: [] });
+  assert.deepEqual(await users.cleanup(), { deleted: 1, failed: [], stopped: false });
 });
 
 test('CLEANUP FAILURE: retried, then REPORTED by e-mail (no password/token); the run fails; the error of a crashed run is kept', async () => {
@@ -221,10 +221,10 @@ test('DELETION SCOPE: cleanup only deletes the users THIS run created (self-dele
   } };
   const users2 = makeStagingUsers(st, { fetch: guardedFetch(st, spyFake.fetch), runId: 'scope2', sleep: noSleep });
   const c = await users2.create('c');
-  assert.deepEqual(await users2.cleanup(), { deleted: 1, failed: [] });
+  assert.deepEqual(await users2.cleanup(), { deleted: 1, failed: [], stopped: false });
   assert.deepEqual(deleteCalls, [c.uid], 'run 2 deleted only its own user');
   assert.ok(fake.users.has(a.uid) && fake.users.has(b.uid), "run 1's users are not touched by run 2");
-  assert.deepEqual(await users.cleanup(), { deleted: 2, failed: [] });
+  assert.deepEqual(await users.cleanup(), { deleted: 2, failed: [], stopped: false });
   assert.deepEqual([...fake.users.keys()], ['otherUidxxxxxxxxxxxxxxxxxxx'], 'the other account is still there');
   assert.equal(fake.calls.some((x) => !['/v1/accounts:signUp', '/v1/accounts:signInWithPassword', '/v1/accounts:delete'].includes(x.path)), false, 'no listing / admin endpoint used');
 });
