@@ -491,6 +491,15 @@ try {
     skipCron: false,
     skipBrowser: false,
     only,
+    // S40–S45: local simulation of the staging test users — test-signed ID tokens for this run's demo project
+    // (staging uses real Firebase Auth users from staging/auth-users.mjs; nothing to delete here)
+    users: {
+      create: async (label) => {
+        const uid = `loc${label}${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
+        return { uid, email: `${uid}@example.invalid`, idToken: await AUTH_SIGNER.idToken({ projectId: PROJECT_ID, uid }) };
+      },
+      forged: () => AUTH_FORGER.idToken({ projectId: PROJECT_ID, uid: 'forged-uid' }),
+    },
   });
     if (suite !== 'scenarios') {
       if (results.length) await sleep(62_000); // let S10's deliberate burst leave the per-IP rate-limit window

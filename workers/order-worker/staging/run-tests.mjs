@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { decodeFields } from '../src/firestore.js';
 import { parseArgs, prepareStaging, runCli } from './common.mjs';
 import { runScenarios } from './scenarios.mjs';
+import { makeStagingUsers } from './auth-users.mjs';
 
 const TURNSTILE_TEST_TOKEN = 'staging-turnstile-test-token'; // accepted by Cloudflare's always-pass TEST secret
 
@@ -55,8 +56,37 @@ export async function main(argv, deps = {}) {
     skipBrowser: args.flags.has('skip-browser'),
     only: args.only ? new Set(args.only.split(',')) : null,
   };
-  const results = await runScenarios(ctx);
-  return results.some((r) => !r.ok) ? 1 : 0;
+  // S40–S45: synthetic Firebase Auth users of dairsharaf-staging, created during the run and ALWAYS deleted after it
+  const users = (deps.makeUsers ?? makeStagingUsers)(st, { fetch: globalThis.fetch });
+  ctx.users = users;
+  // printed FIRST: if the run is stopped abruptly, this identifies its leftover test accounts (README)
+  console.log(`test users of this run (deleted at the end): ${users.emailPrefix}*@example.invalid in ${st.projectId}`);
+  const { code } = await runWithTestUsers(users, () => runScenarios(ctx));
+  return code;
+}
+
+/**
+ * Runs the scenarios, then deletes this run's test users WHATEVER happened (also when the run throws). A user that
+ * could not be deleted fails the run and is listed by e-mail (never password/token) for removal by hand.
+ */
+export async function runWithTestUsers(users, run, log = console.log) {
+  let results;
+  let error;
+  try {
+    results = await run();
+  } catch (e) {
+    error = e;
+  }
+  const cleanup = await users.cleanup();
+  if (cleanup.failed.length) {
+    log(`\nTEST USERS NOT DELETED (${cleanup.failed.length}) — remove them by hand in Firebase Auth of the staging project:`);
+    for (const f of cleanup.failed) log(`  ${f.email}  (${f.reason})`);
+  } else {
+    log(`test users: ${cleanup.deleted} deleted (prefix ${users.emailPrefix ?? '-'})`);
+  }
+  if (error) throw error;
+  const code = results.some((r) => !r.ok) || cleanup.failed.length ? 1 : 0;
+  return { results, cleanup, code };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) runCli(main);

@@ -205,9 +205,16 @@ export function assertWranglerFile(path, { expectName, expectTarget, projectId, 
  */
 export const STAGING_REQUEST_TIMEOUT_MS = 30_000;
 
+/** The only Firebase project whose Auth users the staging scripts may create / use / delete. */
+export const STAGING_PROJECT_ID = 'dairsharaf-staging';
+export const IDENTITY_TOOLKIT_HOST = 'identitytoolkit.googleapis.com';
+/** Firebase Auth REST calls the staging tests need — nothing else (no admin/batch/project endpoints). */
+export const IDENTITY_TOOLKIT_PATHS = Object.freeze(['/v1/accounts:signUp', '/v1/accounts:signInWithPassword', '/v1/accounts:delete']);
+
 export function guardedFetch(stagingCfg, realFetch = globalThis.fetch, { timeoutMs = STAGING_REQUEST_TIMEOUT_MS } = {}) {
-  const allowed = new Set([stagingCfg.workerHost, stagingCfg.sinkHost, 'oauth2.googleapis.com', 'firestore.googleapis.com']);
+  const allowed = new Set([stagingCfg.workerHost, stagingCfg.sinkHost, 'oauth2.googleapis.com', 'firestore.googleapis.com', IDENTITY_TOOLKIT_HOST]);
   const firestorePrefix = `/v1/projects/${stagingCfg.projectId}/databases/`;
+  const stagingApiKey = String(stagingCfg.firebaseWebConfig?.apiKey || '');
   return async (input, init) => {
     const url = new URL(typeof input === 'string' ? input : input.url);
     if (url.protocol !== 'https:' || !allowed.has(url.hostname)) {
@@ -215,6 +222,18 @@ export function guardedFetch(stagingCfg, realFetch = globalThis.fetch, { timeout
     }
     if (url.hostname === 'firestore.googleapis.com' && !url.pathname.startsWith(firestorePrefix)) {
       throw new StagingGuardError([`blocked Firestore request outside project ${stagingCfg.projectId}`]);
+    }
+    // Firebase Auth (test users): the project is chosen by the web API key in the URL — it must be the STAGING key
+    // of dairsharaf-staging (assertStagingConfig already refused any production identifier in the config)
+    if (url.hostname === IDENTITY_TOOLKIT_HOST) {
+      const method = String(init?.method || (typeof input === 'string' ? 'GET' : input.method) || 'GET').toUpperCase();
+      if (stagingCfg.projectId !== STAGING_PROJECT_ID) throw new StagingGuardError([`Firebase Auth calls are only allowed for ${STAGING_PROJECT_ID}`]);
+      if (!IDENTITY_TOOLKIT_PATHS.includes(url.pathname)) throw new StagingGuardError([`blocked Firebase Auth endpoint ${url.pathname}`]);
+      if (method !== 'POST') throw new StagingGuardError([`blocked Firebase Auth ${method}`]);
+      const keys = url.searchParams.getAll('key');
+      if (!stagingApiKey || keys.length !== 1 || keys[0] !== stagingApiKey || [...url.searchParams.keys()].some((k) => k !== 'key')) {
+        throw new StagingGuardError(['blocked Firebase Auth call: the API key must be exactly the staging web API key']);
+      }
     }
     if (url.pathname.includes(PROD_PROJECT_ID) || url.search.includes(PROD_PROJECT_ID)) {
       throw new StagingGuardError(['blocked request mentioning the production project']);

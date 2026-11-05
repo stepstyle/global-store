@@ -10,12 +10,16 @@
 //   triggerCron?() -> Promise,                  // local: hit /__scheduled; cloud: undefined (real cron)
 //   cronWaitMs, cronStepMs, notifyWaitMs,
 //   createBudget: { limit, windowMs },          // stay below the Worker's create rate limit (per client IP)
-//   skipCron, skipBrowser, only: Set|null, label
+//   skipCron, skipBrowser, only: Set|null, label,
+//   users?: { create(label) -> { uid, email, idToken }, forged() -> string }   // S40–S45 (signed-in customers):
+//            staging: real Firebase Auth test users (staging/auth-users.mjs); local: test-signed tokens
 // }
 
 import assert from 'node:assert/strict';
 import { checkoutOrder, line, makeOrderId } from '../test/fixtures.mjs';
 import { MARKER_PATH } from './common.mjs';
+import { hashTrackingKey } from '../src/tracking.js';
+import { randomBytes } from 'node:crypto';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -97,12 +101,12 @@ export function buildScenarios(ctx) {
     const p = await get(`products/${pid}`);
     return vid ? (p?.variants || []).find((v) => v.id === vid)?.stock : p?.stock;
   };
-  const create = async (order, { token = ctx.turnstileToken, headers = {}, budgeted = true } = {}) => {
+  const create = async (order, { token = ctx.turnstileToken, headers = {}, budgeted = true, extra = {} } = {}) => {
     if (budgeted) await budget.take(1);
     const r = await fetch(`${W}/create-order`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...headers },
-      body: JSON.stringify({ order, ...(token ? { turnstileToken: token } : {}) }),
+      body: JSON.stringify({ order, ...(token ? { turnstileToken: token } : {}), ...extra }),
     });
     let body = null;
     try {
@@ -260,6 +264,110 @@ export function buildScenarios(ctx) {
     }],
   ];
 
+  // ---------------- signed-in customers (S40–S45): real ID tokens on staging, test-signed locally ----------------
+  if (ctx.users) {
+    const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+    const newKey = () => Array.from(randomBytes(24), (b) => B32[b % 32]).join('');
+    const bearer = (tok) => ({ authorization: `Bearer ${tok}` });
+    const ledgerOf = (id) => get(`orderLedger/${id}`);
+    const orderDoc = (id) => get(`orders/${id}`);
+    const summary = (id, headers = {}) => fetch(`${W}/orders/${encodeURIComponent(id)}/summary`, { headers }).then(async (r) => ({ status: r.status, text: await r.text() }));
+    const status = (id) => fetch(`${W}/orders/${encodeURIComponent(id)}/status`).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+    // personal data of the fixture order (fixtures.mjs) that must never appear in a summary
+    const PII = (o) => [o.address?.fullName, o.address?.phone, o.address?.street, o.customerEmail].filter(Boolean).map(String);
+
+    scenarios.push(
+      ['S40', 'signed-in order is linked to the VERIFIED account (ID token), stock once', async () => {
+        const a = await ctx.users.create('a');
+        const o = checkoutOrder({ userId: a.uid });
+        const r = await create(o, { headers: bearer(a.idToken) });
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        const led = await ledgerOf(o.id);
+        assert.equal(led.ownerUid, a.uid, 'owner = verified uid');
+        assert.equal(led.userIdSource, 'firebase-id-token');
+        assert.equal((await orderDoc(o.id)).userId, a.uid);
+        assert.equal(await stock('p-simple'), 8, 'stock once');
+      }],
+      ['S41', 'replay of an OWNED order: owner -> replay; another account / no token -> 409 ORDER_EXISTS; owner never changes; stock once', async () => {
+        const a = await ctx.users.create('a');
+        const b = await ctx.users.create('b');
+        const o = checkoutOrder({ userId: a.uid });
+        assert.equal((await create(o, { headers: bearer(a.idToken) })).status, 200);
+        const again = await create(o, { headers: bearer(a.idToken) });
+        assert.equal(again.status, 200);
+        assert.equal(again.body?.replay, true, 'owner replay');
+        const other = await create(o, { headers: bearer(b.idToken) });
+        assert.equal(other.status, 409);
+        assert.equal(other.body?.code, 'ORDER_EXISTS');
+        const anon = await create(o);
+        assert.equal(anon.status, 409);
+        assert.equal(anon.body?.code, 'ORDER_EXISTS', 'same answer without a token (no oracle)');
+        assert.equal((await ledgerOf(o.id)).ownerUid, a.uid, 'owner unchanged');
+        assert.equal(await stock('p-simple'), 8, 'stock once');
+      }],
+      ['S42', 'token of account B with an order claiming account A -> 403 USERID_MISMATCH, nothing written', async () => {
+        const a = await ctx.users.create('a');
+        const b = await ctx.users.create('b');
+        const o = checkoutOrder({ userId: a.uid });
+        const r = await create(o, { headers: bearer(b.idToken) });
+        assert.equal(r.status, 403);
+        assert.equal(r.body?.code, 'USERID_MISMATCH');
+        assert.equal(await ledgerOf(o.id), null);
+        assert.equal(await orderDoc(o.id), null);
+        assert.equal(await stock('p-simple'), 10, 'stock untouched');
+      }],
+      ['S43', 'forged / garbage token -> 401 (nothing written); a guest without a token still buys', async () => {
+        const o = checkoutOrder();
+        for (const tok of [await ctx.users.forged(), 'not-a-token']) {
+          const r = await create(o, { headers: bearer(tok) });
+          assert.equal(r.status, 401, `token refused (${r.body?.code})`);
+          assert.match(String(r.body?.code), /^AUTH_(INVALID|EXPIRED)$/);
+        }
+        assert.equal(await ledgerOf(o.id), null);
+        assert.equal(await stock('p-simple'), 10);
+        const g = await create(checkoutOrder());
+        assert.equal(g.status, 200, 'guest unchanged');
+      }],
+      ['S44', 'tracking: status only without proof; details with the tracking key or the OWNER token; wrong key / other account -> same 404; no personal data', async () => {
+        const a = await ctx.users.create('a');
+        const b = await ctx.users.create('b');
+        const key = newKey();
+        const o = checkoutOrder({ userId: a.uid });
+        assert.equal((await create(o, { headers: bearer(a.idToken), extra: { trackingKeyHash: await hashTrackingKey(key) } })).status, 200);
+        const st = await status(o.id);
+        assert.equal(st.status, 200);
+        assert.deepEqual(Object.keys(st.body || {}).sort(), ['exists', 'ok', 'status']);
+        const refusals = [
+          await summary(o.id),
+          await summary(o.id, { 'x-tracking-key': newKey() }),
+          await summary(o.id, bearer(b.idToken)),
+          await summary(o.id, bearer(await ctx.users.forged())),
+        ];
+        const ref = refusals.map((x) => x.status);
+        assert.deepEqual(ref, [404, 404, 404, 404], 'every refusal looks the same');
+        assert.equal(new Set(refusals.map((x) => x.text)).size, 1, 'identical refusal bodies');
+        for (const ok of [await summary(o.id, { 'x-tracking-key': key }), await summary(o.id, bearer(a.idToken))]) {
+          assert.equal(ok.status, 200);
+          for (const p of PII(o)) assert.equal(ok.text.includes(p), false, 'summary without personal data');
+        }
+        assert.equal((await ledgerOf(o.id)).trackingKeyHash, await hashTrackingKey(key), 'only the hash is stored');
+      }],
+      ['S45', 'recovery after a lost answer: the SAME order resent with the same key -> replay, one order, one deduction; the key still opens it', async () => {
+        const a = await ctx.users.create('a');
+        const key = newKey();
+        const h = await hashTrackingKey(key);
+        const o = checkoutOrder({ userId: a.uid });
+        assert.equal((await create(o, { headers: bearer(a.idToken), extra: { trackingKeyHash: h } })).status, 200); // answer "lost"
+        const again = await create(o, { headers: bearer(a.idToken), extra: { trackingKeyHash: h } });
+        assert.equal(again.status, 200);
+        assert.equal(again.body?.replay, true);
+        assert.equal(await stock('p-simple'), 8, 'one deduction');
+        assert.equal((await summary(o.id, { 'x-tracking-key': key })).status, 200);
+        assert.equal((await ledgerOf(o.id)).trackingKeyHash, h, 'written once, unchanged');
+      }],
+    );
+  }
+
   if (!ctx.skipCron) {
     scenarios.push(['S11', `Telegram failure retried by cron (${ctx.triggerCron ? 'triggered locally' : `real cron, up to ${Math.round((ctx.cronWaitMs ?? 180_000) / 60_000)} min`})`, async () => {
       await fetch(`${S}/control`, { method: 'POST', headers: { ...sinkAuth, 'content-type': 'application/json' }, body: JSON.stringify({ failNext: { telegram: 1 } }) });
@@ -275,6 +383,59 @@ export function buildScenarios(ctx) {
       const tg = await sinkFor(o.id);
       assert.equal(tg.filter((c) => c.channel === 'telegram' && !c.ok).length, 1, 'one failed attempt recorded');
       assert.equal(tg.filter((c) => c.channel === 'telegram' && c.ok).length, 1, 'exactly one successful telegram');
+    }]);
+    scenarios.push(['S46', `cron: failed notifications are handled ONE order per run, OLDEST first; e-mail never resent; queue left only when done (${ctx.triggerCron ? 'triggered locally' : 'real cron'})`, async () => {
+      await fetch(`${S}/control`, { method: 'POST', headers: { ...sinkAuth, 'content-type': 'application/json' }, body: JSON.stringify({ failNext: { telegram: 2 } }) });
+      const older = checkoutOrder();
+      assert.equal((await create(older)).status, 200);
+      await sleep(1_500); // a clearly older due time
+      const newer = checkoutOrder();
+      assert.equal((await create(newer)).status, 200);
+      const tg = (l) => l?.notifications?.telegram;
+      for (const o of [older, newer]) {
+        // the first sends run after the answer (waitUntil): wait until both channels have settled
+        const l = await waitFor(async () => {
+          const x = await get(`orderLedger/${o.id}`);
+          return ['failed', 'sent'].includes(tg(x)?.state) && ['failed', 'sent'].includes(x?.notifications?.email?.state) ? x : null;
+        });
+        assert.ok(l, 'first notifications settled');
+        assert.equal(tg(l)?.state, 'failed', 'first telegram failed');
+        assert.equal(l?.notifications?.email?.state, 'sent', 'e-mail sent at once');
+        assert.equal(l?.notifyPending, true);
+        assert.ok(l?.notifyNextAt, 'queued with a due time');
+      }
+      const sentNow = async () => {
+        const [lo, ln] = await Promise.all([get(`orderLedger/${older.id}`), get(`orderLedger/${newer.id}`)]);
+        return { lo, ln, o: tg(lo)?.state === 'sent', n: tg(ln)?.state === 'sent' };
+      };
+      if (ctx.triggerCron) {
+        // local: each trigger is ONE cron run
+        await ctx.triggerCron();
+        const one = await waitFor(async () => { const s = await sentNow(); return s.o || s.n ? s : null; }, ctx.cronWaitMs ?? 30_000, 250);
+        assert.ok(one, 'the first run handled an order');
+        assert.deepEqual([one.o, one.n], [true, false], 'run 1: ONLY the oldest');
+        await ctx.triggerCron();
+        const two = await waitFor(async () => { const s = await sentNow(); return s.n ? s : null; }, ctx.cronWaitMs ?? 30_000, 250);
+        assert.ok(two, 'run 2: the newer one');
+      } else {
+        // real cron (every 5 min, one order per run): both end up sent, the older first, in DIFFERENT runs
+        const both = await waitFor(async () => { const s = await sentNow(); return s.o && s.n ? s : null; }, ctx.cronWaitMs ?? 720_000, ctx.cronStepMs ?? 15_000);
+        assert.ok(both, 'both sent by cron within the wait limit');
+        const tOld = new Date(tg(both.lo).sentAt).getTime();
+        const tNew = new Date(tg(both.ln).sentAt).getTime();
+        assert.ok(tOld < tNew, 'oldest first');
+        assert.ok(tNew - tOld >= 60_000, `not in the same run (${Math.round((tNew - tOld) / 1000)} s apart)`);
+      }
+      for (const o of [older, newer]) {
+        const l = await get(`orderLedger/${o.id}`);
+        assert.equal(tg(l)?.state, 'sent');
+        assert.equal(Number(tg(l)?.attempts), 2, 'one failure + one retry');
+        assert.equal(l?.notifyPending, false, 'left the queue when done');
+        assert.equal(l?.notifyNextAt === undefined || l?.notifyNextAt === null, true, 'no due time left');
+        const calls = await sinkFor(o.id);
+        assert.equal(calls.filter((c) => c.channel === 'telegram' && c.ok).length, 1, 'one telegram delivered');
+        assert.equal(calls.filter((c) => c.channel === 'email' && c.ok).length, 1, 'e-mail delivered once, never resent');
+      }
     }]);
   }
 
