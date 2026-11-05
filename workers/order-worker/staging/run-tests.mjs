@@ -6,6 +6,7 @@
 // The scenarios themselves live in staging/scenarios.mjs (shared with the local e2e run).
 
 import { pathToFileURL } from 'node:url';
+import { setFlagsFromString } from 'node:v8';
 import { decodeFields } from '../src/firestore.js';
 import { parseArgs, prepareStaging, runCli } from './common.mjs';
 import { runScenarios } from './scenarios.mjs';
@@ -115,6 +116,14 @@ export const SIGNAL_EXIT_CODES = Object.freeze({ SIGINT: 130, SIGTERM: 143, SIGH
  * Those leftovers are removed by hand (README).
  */
 export function installStopCleanup(users, { proc = process, exit = (c) => process.exit(c), log = console.log, limitMs = STOP_CLEANUP_LIMIT_MS, signals = Object.keys(SIGNAL_EXIT_CODES) } = {}) {
+  // Node 24 (seen on 24.14.0, Windows): process.exit() while V8 is tiering up the WebAssembly HTTP parser used by
+  // fetch() on a background thread crashes the process during teardown (libuv "Assertion failed:
+  // !(handle->flags & UV_HANDLE_CLOSING)", exit 0xC0000409 instead of the signal's code) — AFTER the cleanup, so
+  // users are deleted but the exit code is lost. Reproduced locally without any signal: fetch + process.exit crashed
+  // every time; with dynamic tiering off, never. Only the stop path calls process.exit (the normal end sets
+  // process.exitCode and lets Node finish), so it is turned off here, for this process only: the parser then stays
+  // on its baseline code (no measurable cost for these I/O-bound tests). Behaviour, limit and repeat handling unchanged.
+  if (proc === process) setFlagsFromString('--no-wasm-dynamic-tiering');
   let stopping = null;
   const listeners = [];
   const onSignal = (sig) => {

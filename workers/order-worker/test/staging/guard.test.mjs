@@ -5,7 +5,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, relative, sep } from 'node:path';
 import {
   assertStagingConfig, assertWranglerFile, guardedFetch, productionWebIdentifiers, StagingGuardError, REPO_ROOT,
 } from '../../staging/guard.mjs';
@@ -158,18 +158,55 @@ test('guardedFetch: staging paths allowed; production / foreign targets blocked 
 });
 
 // ---------------------------------------------------------------------------
-test('wrangler files: committed staging files still contain placeholders -> refused', () => {
-  const st = assertStagingConfig(good, { env: {} });
-  assert.throws(() => assertWranglerFile(TARGETS.order.toml, { expectName: 'anta-order-notify-staging', expectTarget: 'staging', projectId: st.projectId, sinkHost: st.sinkHost }), /REPLACE_WITH_/);
-  assert.throws(() => assertWranglerFile(TARGETS.sink.toml, { expectName: 'anta-notify-sink-staging' }), /REPLACE_WITH_/);
-});
-
-const filledOrderToml = () => readFileSync(TARGETS.order.toml, 'utf8').replaceAll('REPLACE_WITH_WORKERS_SUBDOMAIN', 'acme');
+// The COMMITTED version (git HEAD) of a staging wrangler file. The working copy may be filled in locally
+// (KV namespace id, workers.dev subdomain) and must not change what these tests check about the repository.
+const committedText = (abs) => {
+  const rel = relative(REPO_ROOT, abs).split(sep).join('/');
+  return execFileSync('git', ['show', `HEAD:${rel}`], { cwd: REPO_ROOT, encoding: 'utf8' });
+};
 const writeTmp = (name, text) => {
   const p = join(dir, name);
   writeFileSync(p, text);
   return p;
 };
+
+test('wrangler files: committed staging files (git HEAD) still contain placeholders -> refused', () => {
+  const st = assertStagingConfig(good, { env: {} });
+  assert.throws(() => assertWranglerFile(writeTmp('head-order.toml', committedText(TARGETS.order.toml)), { expectName: 'anta-order-notify-staging', expectTarget: 'staging', projectId: st.projectId, sinkHost: st.sinkHost }), /REPLACE_WITH_/);
+  assert.throws(() => assertWranglerFile(writeTmp('head-sink.toml', committedText(TARGETS.sink.toml)), { expectName: 'anta-notify-sink-staging' }), /REPLACE_WITH_/);
+});
+
+test('wrangler files: the LOCAL working copies are safe (filled in or not): only an unfilled placeholder may be reported', () => {
+  const onlyPlaceholders = (fn, label) => {
+    try {
+      fn();
+    } catch (e) {
+      assert.ok(e instanceof StagingGuardError, `${label}: ${e.message}`);
+      assert.deepEqual(e.problems.filter((p) => !/REPLACE_WITH_/.test(p)), [], label);
+    }
+  };
+  // sink: name, no production project / site / account / [env.*]; KV binding present, id unfilled or 32 hex
+  const sink = readFileSync(TARGETS.sink.toml, 'utf8');
+  onlyPlaceholders(() => assertWranglerFile(TARGETS.sink.toml, { expectName: 'anta-notify-sink-staging' }), 'sink');
+  const sinkCode = sink.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n');
+  // assert.ok (not assert.match): a failure must never print the file, which may hold the real KV id
+  assert.ok(/^binding = "SINK_KV"\r?$/m.test(sinkCode), 'sink: binding = "SINK_KV"');
+  assert.ok(/^SINK_ENVIRONMENT = "staging"\r?$/m.test(sinkCode), 'sink: SINK_ENVIRONMENT = "staging"');
+  assert.equal(/^\s*(routes?|zone_id|zone_name|custom_domain)\s*=|^\s*\[\[?routes?\]/m.test(sinkCode), false, 'sink: no route / zone / custom domain');
+  const ids = [...sinkCode.matchAll(/^\s*id\s*=\s*"([^"]*)"/gm)].map((m) => m[1]);
+  assert.equal(ids.length, 1, 'sink: exactly one KV id');
+  assert.ok(ids[0] === 'REPLACE_WITH_KV_NAMESPACE_ID' || /^[0-9a-f]{32}$/.test(ids[0]), 'sink: KV id is the placeholder or 32 hex characters'); // never printed
+  // order: same guard; the notification bases must be the staging sink on ONE workers.dev subdomain
+  const order = readFileSync(TARGETS.order.toml, 'utf8');
+  const base = (k) => (order.match(new RegExp(`^\\s*${k}\\s*=\\s*"([^"]+)"`, 'm')) || [])[1] ?? '';
+  const sinkHost = new URL(base('TELEGRAM_API_BASE')).hostname;
+  assert.match(sinkHost, /^anta-notify-sink-staging\.[a-z0-9_-]+\.workers\.dev$/i, 'order: Telegram base is the staging sink');
+  assert.equal(new URL(base('SENDGRID_API_BASE')).hostname, sinkHost, 'order: SendGrid base is the same sink');
+  const st = assertStagingConfig(good, { env: {} });
+  onlyPlaceholders(() => assertWranglerFile(TARGETS.order.toml, { expectName: 'anta-order-notify-staging', expectTarget: 'staging', projectId: st.projectId, sinkHost }), 'order');
+});
+
+const filledOrderToml = () => committedText(TARGETS.order.toml).replaceAll('REPLACE_WITH_WORKERS_SUBDOMAIN', 'acme');
 
 test('wrangler files: filled staging file passes; every tampering is refused', () => {
   const st = assertStagingConfig(good, { env: {} });
@@ -230,7 +267,7 @@ test('deploy-rules: plan only by default; --execute needs the exact staging proj
 });
 
 test('deploy-workers: committed placeholders refused; filled file -> dry-run only unless --execute + exact --confirm', async () => {
-  await assert.rejects(deployWorkersMain(['--which', 'order'], { config: good, env: {}, spawn: spawnSpy() }), /REPLACE_WITH_/);
+  await assert.rejects(deployWorkersMain(['--which', 'order'], { config: good, env: {}, spawn: spawnSpy(), tomlOverride: writeTmp('head-o.toml', committedText(TARGETS.order.toml)) }), /REPLACE_WITH_/);
   await assert.rejects(deployWorkersMain(['--which', 'prod'], { config: good, env: {}, spawn: spawnSpy(), tomlOverride: writeTmp('o.toml', filledOrderToml()) }), StagingGuardError);
 
   const deps = { config: good, env: {}, spawn: cliSpy(), tomlOverride: writeTmp('o2.toml', filledOrderToml()) };

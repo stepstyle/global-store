@@ -6,9 +6,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertStagingConfig, assertWranglerFile, StagingGuardError } from '../../staging/guard.mjs';
+import { execFileSync } from 'node:child_process';
+import { assertStagingConfig, assertWranglerFile, StagingGuardError, REPO_ROOT } from '../../staging/guard.mjs';
 import { verifyCloudflareAccount, verifyFirebaseAccount, wranglerEnv, firebaseEnv } from '../../staging/accounts.mjs';
-import { main as deployWorkersMain, TARGETS } from '../../staging/deploy-workers.mjs';
+import { main as deployWorkersMain } from '../../staging/deploy-workers.mjs';
 import { main as deployRulesMain } from '../../staging/deploy-rules.mjs';
 import { main as checkAccountsMain } from '../../staging/check-accounts.mjs';
 import { main as seedMain } from '../../staging/seed.mjs';
@@ -41,7 +42,9 @@ before(() => {
   };
   st = assertStagingConfig(good, { env: {} });
   orderToml = join(dir, 'order.toml');
-  writeFileSync(orderToml, readFileSync(TARGETS.order.toml, 'utf8').replaceAll('REPLACE_WITH_WORKERS_SUBDOMAIN', 'acme'));
+  // the COMMITTED file (git HEAD): a locally filled-in working copy must not change these tests
+  const committed = execFileSync('git', ['show', 'HEAD:workers/order-worker/wrangler.staging.toml'], { cwd: REPO_ROOT, encoding: 'utf8' });
+  writeFileSync(orderToml, committed.replaceAll('REPLACE_WITH_WORKERS_SUBDOMAIN', 'acme'));
 });
 after(() => rmSync(dir, { recursive: true, force: true }));
 
