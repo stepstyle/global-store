@@ -451,6 +451,11 @@ const AdminDashboard: React.FC = () => {
 
   // 🚀 [تعديل 1]: تحسين تحديث حالة الطلب ليكون احترافي ومحمي من التعليق
   const handleUpdateOrderStatus = async (id: string, newStatus: any) => {
+    // New deferred-stock orders must be accepted by the server, not by a direct Firestore status write.
+    if (newStatus === 'processing' && orders.some((o: any) => o.id === id && o.stockApprovalRequired === true)) {
+      showToast('اقبل هذا الطلب من رسالة تيليجرام حتى يُخصم المخزون بشكل صحيح.', 'error');
+      return;
+    }
     const actionNames: any = { processing: 'قبول الطلب', shipped: 'شحن الطلب', delivered: 'تسليم الطلب', cancelled: 'إلغاء الطلب' };
     
     // تأكيد قبل العملية لتجنب الخطأ
@@ -1528,7 +1533,10 @@ const AdminDashboard: React.FC = () => {
 
             <div className="p-5 border-t border-slate-100 bg-white rounded-b-3xl">
               <div className="flex flex-wrap items-center gap-2">
-                {selectedOrderStatus === 'new' && (
+                {selectedOrderStatus === 'new' && (selectedOrder as any)?.stockApprovalRequired === true && (
+                  <span className="text-sm font-bold text-amber-700">اقبل الطلب من تيليجرام ليُخصم المخزون عند القبول.</span>
+                )}
+                {selectedOrderStatus === 'new' && (selectedOrder as any)?.stockApprovalRequired !== true && (
                   <Button disabled={processingOrderId === selectedOrder.id} onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'processing')}>قبول الطلب</Button>
                 )}
                 {selectedOrderStatus === 'processing' && (
