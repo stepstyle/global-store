@@ -559,7 +559,7 @@ const Checkout: React.FC = () => {
       clearCart();
       if (typeof clearOrderNote === 'function') clearOrderNote();
       // not tt('alertSet', …): that translation key means 'alert registered' and would show the wrong text
-      showToast(tr('تم تأكيد طلبك بنجاح', 'Your order is confirmed.'), 'success');
+      showToast(tr('تم استلام طلبك، وبانتظار موافقة المكتبة.', 'Order received; awaiting store approval.'), 'success');
       navigate(`/order-success/${r.orderId}`, { replace: true });
       return;
     }
