@@ -67,6 +67,11 @@ async function handle(request, env, ctx, cfg) {
   // ---------------- create order ----------------
   if (url.pathname === '/create-order') {
     if (request.method !== 'POST') return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    // An order cannot be accepted if its approval channel is not configured.
+    if (cfg.isProd && cfg.stockMode === 'log' &&
+        (!cfg.telegram.webhookSecret || !cfg.telegram.adminUserId)) {
+      return reply({ ok: false, code: 'APPROVAL_NOT_CONFIGURED' }, 503);
+    }
     if (!(await allowRequest(env, cfg, 'create', ip))) return reply({ ok: false, code: 'RATE_LIMITED' }, 429);
 
     const { body, error } = await readJsonBody(request, cfg.maxBodyBytes);
