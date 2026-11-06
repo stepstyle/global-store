@@ -51,7 +51,7 @@ export async function checkProductionConfig(text) {
   if (vars.FIRESTORE_AUTH !== 'service-account') v.push('FIRESTORE_AUTH must be service-account');
   if (vars.PRICE_CHECK_MODE !== 'enforce') v.push('PRICE_CHECK_MODE must be enforce');
   if (vars.TURNSTILE_MODE !== 'enforce') v.push('TURNSTILE_MODE must be enforce');
-  if (vars.STOCK_MODE !== 'apply') v.push('STOCK_MODE must be apply');
+  if (vars.STOCK_MODE !== 'log') v.push('STOCK_MODE must be log (deduct only on approval)');
   const origins = String(vars.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
   if (JSON.stringify(origins.slice().sort()) !== JSON.stringify(PROD_ORIGINS.slice().sort())) v.push(`ALLOWED_ORIGINS must be exactly ${PROD_ORIGINS.join(',')}`);
   for (const k of ['TELEGRAM_API_BASE', 'SENDGRID_API_BASE', 'FIRESTORE_BASE_URL', 'OAUTH_TOKEN_URL', 'TURNSTILE_VERIFY_URL', 'AUTH_JWKS_URL']) if (vars[k] !== undefined) v.push(`${k} must not be set (official endpoints only)`);
