@@ -451,6 +451,15 @@ const AdminDashboard: React.FC = () => {
 
   // 🚀 [تعديل 1]: تحسين تحديث حالة الطلب ليكون احترافي ومحمي من التعليق
   const handleUpdateOrderStatus = async (id: string, newStatus: any) => {
+    // Worker-v2 reserves inventory at acceptance in an atomic server transaction.
+    // Direct Firestore status changes would skip the stock deduction entirely.
+    const target: any = orders.find((o: any) => o.id === id)
+      || (orderDetailsModal.order?.id === id ? orderDetailsModal.order : null);
+    if (target?.source === 'worker-v2' && target?.status === 'new' &&
+        (newStatus === 'processing' || newStatus === 'cancelled')) {
+      showToast('هذا الطلب يُقبل أو يُرفض من أزرار تيليجرام فقط لضمان تحديث المخزون بشكل صحيح.', 'error');
+      return;
+    }
     const actionNames: any = { processing: 'قبول الطلب', shipped: 'شحن الطلب', delivered: 'تسليم الطلب', cancelled: 'إلغاء الطلب' };
     
     // تأكيد قبل العملية لتجنب الخطأ
