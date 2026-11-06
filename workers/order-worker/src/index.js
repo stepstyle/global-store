@@ -15,6 +15,8 @@ import { allowRequest } from './ratelimit.js';
 import { createOrder, orderStatus, orderSummary, reconcileOrphans } from './orders.js';
 import { processNotifications, retryPendingNotifications } from './notify.js';
 import { ORDER_ID_RE } from './validate.js';
+import { decideOrder } from './approval.js';
+import { timingSafeEqual } from './http.js';
 import { AuthError, bearerToken, verifyFirebaseIdToken } from './auth.js';
 
 const STATUS_PATH = /^\/orders\/([^/]+)\/status$/;
@@ -44,7 +46,7 @@ async function handle(request, env, ctx, cfg) {
 
   // STAGING ONLY: secret access gate in front of every route except the health check "/" — BEFORE the rate limit,
   // body, identity, Turnstile, Firestore, stock and notifications. No usable secret in the Worker = all refused.
-  if (cfg.isStaging && url.pathname !== '/') {
+  if (cfg.isStaging && url.pathname !== '/' && url.pathname !== '/telegram-webhook') {
     const gate = stagingAccess(request, cfg);
     if (!gate.ok) {
       log('staging_gate.denied', { reason: gate.reason });
@@ -56,6 +58,44 @@ async function handle(request, env, ctx, cfg) {
   const ip = clientIp(request);
 
   if (url.pathname === '/') return reply({ ok: true, service: 'order-worker', version: WORKER_VERSION });
+
+  // Telegram webhook: secret header + exact chat and sender id. Callback data only carries an order id.
+  // Telegram cannot send the staging access header, so this route uses its own stronger shared-secret gate.
+  if (url.pathname === '/telegram-webhook') {
+    if (request.method !== 'POST') return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    if (!cfg.telegram.webhookSecret || !timingSafeEqual(request.headers.get('x-telegram-bot-api-secret-token'), cfg.telegram.webhookSecret)) {
+      return reply({ ok: false, code: 'UNAUTHORIZED' }, 401);
+    }
+    const { body, error } = await readJsonBody(request, cfg.maxBodyBytes);
+    if (error) return reply({ ok: false, code: 'INVALID_JSON' }, error === 413 ? 413 : 400);
+    const cb = body?.callback_query;
+    if (!cb) return reply({ ok: true }); // Ignore non-button bot updates.
+    const chatId = String(cb.message?.chat?.id ?? '');
+    const senderId = String(cb.from?.id ?? '');
+    if (chatId !== cfg.telegram.chatId || senderId !== cfg.telegram.adminUserId || !/^\d+$/.test(senderId)) {
+      return reply({ ok: true }); // Ignore any other group member / sender.
+    }
+    const match = /^(accept|reject):(ORD-[A-Z0-9]{4,16}-[A-Z0-9]{4,16})$/.exec(String(cb.data ?? ''));
+    const result = match ? await decideOrder(fs, match[2], match[1]) : { ok: false, code: 'INVALID_ACTION' };
+    const message = result.ok
+      ? result.code === 'ALREADY_DECIDED' ? (result.decision === 'accepted' ? '✅ تم قبول الطلب سابقًا' : '❌ تم رفض الطلب سابقًا')
+        : (result.decision === 'accepted' ? '✅ تم قبول الطلب وخصم الكمية' : '❌ تم رفض الطلب دون خصم')
+      : result.code === 'INSUFFICIENT_STOCK' ? '⚠️ المخزون غير كافٍ، لم يُقبل الطلب ولم يُخصم شيء'
+      : '⚠️ تعذر تنفيذ القرار: ' + result.code;
+    // Answer callback even on failure; never change buttons on an unsuccessful decision.
+    const apiBase = `${cfg.urls.telegram.replace(/\\/+$/, '')}/bot${cfg.telegram.token}`;
+    await fetch(`${apiBase}/answerCallbackQuery`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: cb.id, text: message.slice(0, 180), show_alert: !result.ok }),
+    });
+    if (result.ok && cb.message?.message_id != null) {
+      await fetch(`${apiBase}/editMessageReplyMarkup`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: cfg.telegram.chatId, message_id: cb.message.message_id, reply_markup: { inline_keyboard: [] } }),
+      }).catch(() => {});
+    }
+    return reply({ ok: true });
+  }
 
   // ---------------- create order ----------------
   if (url.pathname === '/create-order') {
