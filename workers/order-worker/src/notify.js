@@ -80,12 +80,25 @@ export function buildMessage(order, ledger, cfg) {
 /** A send may not outlive the claim's lease: aborted well before it expires (then marked failed, never sent). */
 const sendSignal = (cfg) => AbortSignal.timeout(Math.max(1_000, Math.min(cfg.notifySendTimeoutMs ?? 15_000, Math.floor(cfg.leaseMs / 2))));
 
-async function sendTelegram(cfg, text) {
+export function orderKeyboard(order, ledger, cfg) {
+  // No actions for old orders, already-stock-deducted orders, or unconfigured callbacks.
+  if (order?.status !== 'new' || order?.source !== 'worker-v2' ||
+      ledger?.stockMode !== 'log' || ledger?.mode !== 'created' ||
+      !cfg.telegram.webhookSecret || !cfg.telegram.adminUserId) return undefined;
+  const id = order?.id;
+  if (!/^ORD-[A-Z0-9]{4,16}-[A-Z0-9]{4,16}$/.test(id || '')) return undefined;
+  return { inline_keyboard: [[
+    { text: '✅ قبول الطلب', callback_data: `accept:${id}` },
+    { text: '❌ رفض الطلب', callback_data: `reject:${id}` },
+  ]] };
+}
+
+async function sendTelegram(cfg, text, keyboard) {
   const res = await fetch(`${cfg.urls.telegram.replace(/\/+$/, '')}/bot${cfg.telegram.token}/sendMessage`, {
     signal: sendSignal(cfg),
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: cfg.telegram.chatId, text }),
+    body: JSON.stringify({ chat_id: cfg.telegram.chatId, text, ...(keyboard ? { reply_markup: keyboard } : {}) }),
   });
   return { ok: res.ok, status: res.status };
 }
@@ -134,7 +147,7 @@ export async function processNotifications(fs, cfg, orderId) {
       const orderDoc = await fs.get(`orders/${orderId}`);
       const order = orderDoc.exists ? decodeFields(orderDoc.fields) : { id: orderId };
       const text = buildMessage(order, L, cfg);
-      result = ch === 'telegram' ? await sendTelegram(cfg, text) : await sendEmail(cfg, orderId, text);
+      result = ch === 'telegram' ? await sendTelegram(cfg, text, orderKeyboard(order, L, cfg)) : await sendEmail(cfg, orderId, text);
     } catch (e) {
       result = { ok: false, status: 0 };
     }
