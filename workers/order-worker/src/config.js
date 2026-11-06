@@ -82,6 +82,17 @@ export function loadConfig(env = {}) {
   const saEmail = str(env.FIREBASE_CLIENT_EMAIL);
   const saKey = String(env.FIREBASE_PRIVATE_KEY || '');
   const turnstileSecret = str(env.TURNSTILE_SECRET);
+  const telegramAdminUserId = str(env.TELEGRAM_ADMIN_USER_ID);
+  const telegramWebhookSecret = str(env.TELEGRAM_WEBHOOK_SECRET);
+  if (telegramWebhookSecret && !/^[A-Za-z0-9_-]{1,256}$/.test(telegramWebhookSecret)) {
+    errors.push('TELEGRAM_WEBHOOK_SECRET must match Telegram secret_token format');
+  }
+  if (telegramAdminUserId && !/^[1-9][0-9]{0,18}$/.test(telegramAdminUserId)) {
+    errors.push('TELEGRAM_ADMIN_USER_ID must be a numeric Telegram user ID');
+  }
+  if ((telegramAdminUserId && !telegramWebhookSecret) || (!telegramAdminUserId && telegramWebhookSecret)) {
+    errors.push('Telegram webhook secret and admin user ID must be configured together');
+  }
 
   const urls = {
     firestore: str(env.FIRESTORE_BASE_URL) || (remote ? 'https://firestore.googleapis.com/v1' : ''),
@@ -208,7 +219,7 @@ export function loadConfig(env = {}) {
     workerAuthToken: str(env.WORKER_AUTH_TOKEN),
     // staging only (read nowhere else): secret for the x-staging-access gate; empty = every gated route refused
     stagingAccessToken: isStaging ? str(env.STAGING_ACCESS_TOKEN) : '',
-    telegram: { token: str(env.TELEGRAM_BOT_TOKEN), chatId: str(env.TELEGRAM_CHAT_ID) },
+    telegram: { token: str(env.TELEGRAM_BOT_TOKEN), chatId: str(env.TELEGRAM_CHAT_ID), adminUserId: telegramAdminUserId, webhookSecret: telegramWebhookSecret },
     email: {
       apiKey: str(env.SENDGRID_API_KEY),
       to: str(env.ADMIN_EMAIL),
