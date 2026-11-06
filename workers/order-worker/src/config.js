@@ -84,8 +84,8 @@ export function loadConfig(env = {}) {
   const turnstileSecret = str(env.TURNSTILE_SECRET);
   const telegramAdminUserId = str(env.TELEGRAM_ADMIN_USER_ID);
   const telegramWebhookSecret = str(env.TELEGRAM_WEBHOOK_SECRET);
-  if (telegramWebhookSecret && !/^[A-Za-z0-9_-]{1,256}$/.test(telegramWebhookSecret)) {
-    errors.push('TELEGRAM_WEBHOOK_SECRET must match Telegram secret_token format');
+  if (telegramWebhookSecret && !/^[A-Za-z0-9_-]{32,256}$/.test(telegramWebhookSecret)) {
+    errors.push('TELEGRAM_WEBHOOK_SECRET must be 32-256 valid characters');
   }
   if (telegramAdminUserId && !/^[1-9][0-9]{0,18}$/.test(telegramAdminUserId)) {
     errors.push('TELEGRAM_ADMIN_USER_ID must be a numeric Telegram user ID');
