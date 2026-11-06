@@ -22,7 +22,11 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
   const productDocs = await fs.batchGet(productIds.map((id) => `products/${id}`));
   const products = new Map(productIds.map((id, i) => [id, productDocs[i]]));
 
-  const inv = planInventory(lines, products, cfg.stockMode);
+  // A new order with the approval workflow only checks availability; it does not deduct stock.
+  // Adopted/reconciled browser-written orders are intentionally ineligible: their stock history is unknown.
+  const deferStock = cfg.stockOnApproval === true;
+  const approvalEligible = deferStock && mode === 'created';
+  const inv = planInventory(lines, products, deferStock ? 'log' : cfg.stockMode);
   const pricing = computeServerPricing(inv.lineInfo, v.addressMeta, v.shippingMethodId);
   const mismatchFields = comparePricing(pricing, v.clientPricing);
   const priceMismatch = mismatchFields.length > 0;
@@ -60,6 +64,8 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     mode,
     workerVersion: WORKER_VERSION,
     stockMode: cfg.stockMode,
+    stockPolicy: approvalEligible ? 'on_accept' : deferStock ? 'legacy_unknown' : 'on_create',
+    ...(approvalEligible ? { stockApplied: false } : {}),
     serverPricing,
     clientPricing: v.clientPricing,
     priceMismatch,
@@ -122,6 +128,7 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
       address: v.address,
       addressMeta: v.addressMeta,
       source: 'worker-v2',
+      ...(approvalEligible ? { stockApprovalRequired: true } : {}),
       workerCheck,
     };
     writes.push({
