@@ -216,6 +216,10 @@ test('15. legacy orders are never deducted again: no ledger (browser / Worker v1
   await putDoc('orders/ORD-LEGACY01-AAAA', { id: 'ORD-LEGACY01-AAAA', status: 'new', items: [{ productId: 'p-simple', quantity: 2 }], userId: 'guest' });
   await press(env(), { orderId: 'ORD-LEGACY01-AAAA', op: 'acc' });
   assert.match(lastAnswer(), /طلب قديم/);
+  for (const op of ['can', 'bck', 'cfc']) {
+    await press(env(), { orderId: 'ORD-LEGACY01-AAAA', op });
+    assert.match(lastAnswer(), /طلب قديم/, `${op} on a legacy order (no ledger) is answered as legacy, not "not found"`);
+  }
   assert.equal(await productStock('p-simple'), 10);
   assert.equal((await getDecoded('orders/ORD-LEGACY01-AAAA')).status, 'new');
   // b) Worker v2 order created BEFORE approval mode (stock taken at creation)

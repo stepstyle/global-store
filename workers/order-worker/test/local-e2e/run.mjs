@@ -102,7 +102,16 @@ const t0 = Date.now();
 const inner = FILES.inner.replace(/\\/g, '/');
 // the UI suite also needs the Auth emulator (real sign-in in the browser); other suites stay Firestore-only
 const only = (process.env.E2E_SUITE || 'all') === 'ui' ? '"firestore,auth"' : 'firestore';
-const cmd = `firebase emulators:exec --only ${only} --project ${PROJECT_ID} --config "${FILES.firebaseJson}" "node ${inner}"`;
+// websocket port override (plan.mjs): a temporary copy of firebase.json, everything else identical
+let firebaseJson = FILES.firebaseJson;
+if (PORTS.emulatorWs !== 9152) {
+  const j = JSON.parse(readFileSync(FILES.firebaseJson, 'utf8'));
+  j.emulators.firestore.websocketPort = PORTS.emulatorWs;
+  firebaseJson = join(TMP, 'firebase.json');
+  writeFileSync(firebaseJson, JSON.stringify(j, null, 2));
+  say(`emulator websocket port ${PORTS.emulatorWs} (E2E_EMULATOR_WS_PORT)`);
+}
+const cmd = `firebase emulators:exec --only ${only} --project ${PROJECT_ID} --config "${firebaseJson}" "node ${inner}"`;
 const child = spawn(cmd, { cwd: WORKER_ROOT, env, shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let out = '';
 const echo = (d) => {

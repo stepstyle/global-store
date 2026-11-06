@@ -87,7 +87,9 @@ test('records only a summary: no personal data, no tokens, no headers, no recipi
   const { calls } = await r.json();
   assert.equal(calls.length, 2);
   for (const c of calls) {
-    assert.deepEqual(Object.keys(c).sort(), ['at', 'channel', 'customerTotal', 'length', 'ok', 'orderId', 'priceMismatch', 'serverTotal', 'sha256', 'warningCodes']);
+    const base = ['at', 'channel', 'customerTotal', 'length', 'ok', 'orderId', 'priceMismatch', 'serverTotal', 'sha256', 'warningCodes'];
+    // Telegram also records the approval fields: method, message id, button callback data, decision line (no PII)
+    assert.deepEqual(Object.keys(c).sort(), (c.channel === 'telegram' ? [...base, 'buttons', 'decision', 'messageId', 'method'] : base).sort());
     assert.equal(c.orderId, 'ORD-ABCD1234-MZ0Q1X2Y');
     assert.equal(c.priceMismatch, true);
     assert.equal(c.serverTotal, 8.2);
@@ -117,7 +119,7 @@ test('failure injection: failNext makes the next N sends fail, then recover', as
 test('failNext is clamped to 0..10', async () => {
   const env = mkEnv();
   const r = await call(env, '/control', { method: 'POST', headers: { 'x-sink-auth': RD }, body: { failNext: { telegram: 9999, email: -5 } } });
-  assert.deepEqual((await r.json()).failNext, { telegram: 10, email: 0 });
+  assert.deepEqual((await r.json()).failNext, { telegram: 10, email: 0, tgui: 0 });
 });
 
 test('DELETE /calls clears records; oversized body -> 413; unknown path -> 404', async () => {
@@ -153,4 +155,42 @@ test('summarize() of a message without order id / totals', async () => {
   assert.equal(s.orderId, null);
   assert.equal(s.serverTotal, null);
   assert.deepEqual(s.warningCodes, []);
+});
+
+// ------------------------------------------------------------------ Telegram order approval stand-in
+const APPROVAL_TEXT = ['🛒 طلب جديد من مكتبة دير شرف العلمية', '', 'رقم الطلب: ORD-ABCD1234-MZ0Q1X2Y', '👤 اسم العميل: Test Buyer', '📞 رقم الهاتف: +962791234567', '', '⏳ حالة الطلب: بانتظار الموافقة'].join('\n');
+const KB = { inline_keyboard: [[{ text: '✅ قبول الطلب', callback_data: 'v1:acc:ORD-ABCD1234-MZ0Q1X2Y' }, { text: '❌ رفض الطلب', callback_data: 'v1:rej:ORD-ABCD1234-MZ0Q1X2Y' }]] };
+
+test('approval: sendMessage returns a message_id and records buttons + decision; edit / answer are recorded without personal data', async () => {
+  const env = mkEnv();
+  const r = await call(env, `/telegram/bot${TG}/sendMessage`, { method: 'POST', body: { chat_id: '-100123', text: APPROVAL_TEXT, reply_markup: KB } });
+  const sent = await r.json();
+  assert.equal(r.status, 200);
+  assert.ok(Number.isInteger(sent.result.message_id) && sent.result.message_id > 0);
+  const accepted = APPROVAL_TEXT.replace('⏳ حالة الطلب: بانتظار الموافقة', '✅ تم قبول الطلب وخصم المخزون');
+  assert.equal((await call(env, `/telegram/bot${TG}/editMessageText`, { method: 'POST', body: { chat_id: '-100123', message_id: sent.result.message_id, text: accepted, reply_markup: { inline_keyboard: [[{ text: 'x', callback_data: 'v1:can:ORD-ABCD1234-MZ0Q1X2Y' }]] } } })).status, 200);
+  assert.equal((await call(env, `/telegram/bot${TG}/editMessageReplyMarkup`, { method: 'POST', body: { chat_id: '-100123', message_id: sent.result.message_id, reply_markup: { inline_keyboard: [] } } })).status, 200);
+  assert.equal((await call(env, `/telegram/bot${TG}/answerCallbackQuery`, { method: 'POST', body: { callback_query_id: 'cq-1', text: '✅ تم قبول الطلب وخصم المخزون', show_alert: false } })).status, 200);
+  const { calls } = await (await call(env, '/calls', { headers: { 'x-sink-auth': RD } })).json();
+  assert.deepEqual(calls.map((c) => c.method), ['sendMessage', 'editMessageText', 'editMessageReplyMarkup', 'answerCallbackQuery']);
+  assert.deepEqual(calls[0].buttons, ['v1:acc:ORD-ABCD1234-MZ0Q1X2Y', 'v1:rej:ORD-ABCD1234-MZ0Q1X2Y']);
+  assert.equal(calls[0].decision, 'pending');
+  assert.equal(calls[0].messageId, sent.result.message_id);
+  assert.equal(calls[1].decision, 'accepted');
+  assert.equal(calls[1].orderId, 'ORD-ABCD1234-MZ0Q1X2Y');
+  assert.deepEqual(calls[2].buttons, []);
+  assert.equal(calls[3].callbackQueryId, 'cq-1');
+  const stored = JSON.stringify(calls);
+  for (const p of ['Test Buyer', '+962791234567', '-100123', TG]) assert.ok(!stored.includes(p), `not stored: ${p}`);
+});
+
+test('approval: wrong token on edit / answer -> 401; unknown Telegram method -> 404; tgui failure injection', async () => {
+  const env = mkEnv();
+  assert.equal((await call(env, '/telegram/botWRONGTOKENxxxxxxxxxxxxxxxxx/editMessageText', { method: 'POST', body: { text: 'x' } })).status, 401);
+  assert.equal((await call(env, `/telegram/bot${TG}/deleteWebhook`, { method: 'POST', body: {} })).status, 404);
+  await call(env, '/control', { method: 'POST', headers: { 'x-sink-auth': RD }, body: { failNext: { tgui: 1 } } });
+  assert.equal((await call(env, `/telegram/bot${TG}/editMessageText`, { method: 'POST', body: { message_id: 1, text: APPROVAL_TEXT } })).status, 400);
+  assert.equal((await call(env, `/telegram/bot${TG}/editMessageText`, { method: 'POST', body: { message_id: 1, text: APPROVAL_TEXT } })).status, 200);
+  // sendMessage is not affected by tgui
+  assert.equal((await call(env, `/telegram/bot${TG}/sendMessage`, { method: 'POST', body: { text: APPROVAL_TEXT, reply_markup: KB } })).status, 200);
 });

@@ -4,6 +4,10 @@
 //   (STAGING_ACCESS_TOKEN: the order Worker's x-staging-access gate; added by staging/guard.mjs guardedFetch to
 //    requests to the order Worker only — local environment variable, never in a browser / VITE_* file)
 //   node staging/run-tests.mjs --config staging/staging.config.json [--only S03,S08] [--skip-cron] [--skip-browser]
+// Telegram order approval (A01–A16, staging/approval-scenarios.mjs) — the staging order Worker must be deployed WITH
+// APPROVAL_MODE=telegram and the same TEST values (never the real bot / chat / admins):
+//   STAGING_TELEGRAM_WEBHOOK_SECRET=… STAGING_TELEGRAM_CHAT_ID=-100… STAGING_TELEGRAM_ADMIN_IDS=<id1>,<id2> \
+//   node staging/run-tests.mjs --config … --suite approval [--only A01,A05] [--skip-cron]
 // Order of operations: guard -> marker check -> scenarios. Any guard failure stops before a single request.
 // The scenarios themselves live in staging/scenarios.mjs (shared with the local e2e run).
 
@@ -12,6 +16,9 @@ import { setFlagsFromString } from 'node:v8';
 import { decodeFields } from '../src/firestore.js';
 import { parseArgs, prepareStaging, runCli } from './common.mjs';
 import { runScenarios } from './scenarios.mjs';
+import { runApprovalScenarios } from './approval-scenarios.mjs';
+import { encodeFields } from '../src/firestore.js';
+import { StagingGuardError } from './guard.mjs';
 import { makeStagingUsers } from './auth-users.mjs';
 
 const TURNSTILE_TEST_TOKEN = 'staging-turnstile-test-token'; // accepted by Cloudflare's always-pass TEST secret
@@ -59,6 +66,8 @@ export async function main(argv, deps = {}) {
     skipBrowser: args.flags.has('skip-browser'),
     only: args.only ? new Set(args.only.split(',')) : null,
   };
+  if (args.suite === 'approval') return runApprovalSuite(ctx, fs, env);
+  if (args.suite && args.suite !== 'scenarios') throw new StagingGuardError(['--suite must be "scenarios" (default) or "approval"']);
   // S40–S45: synthetic Firebase Auth users of dairsharaf-staging, created during the run and ALWAYS deleted after it
   const users = (deps.makeUsers ?? makeStagingUsers)(st, { fetch: globalThis.fetch });
   ctx.users = users;
@@ -72,6 +81,39 @@ export async function main(argv, deps = {}) {
   } finally {
     stopHandler.dispose();
   }
+}
+
+/**
+ * A01–A16 against the deployed staging Workers. Button presses are POSTed to the staging Worker's /telegram/webhook with
+ * the TEST webhook secret (as Telegram would); Telegram itself is the staging sink. Synthetic data only (marker check).
+ */
+export async function runApprovalSuite(ctx, fs, env) {
+  const p = [];
+  const secret = String(env.STAGING_TELEGRAM_WEBHOOK_SECRET || '');
+  const chatId = String(env.STAGING_TELEGRAM_CHAT_ID || '');
+  const adminIds = String(env.STAGING_TELEGRAM_ADMIN_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!/^[A-Za-z0-9_-]{32,256}$/.test(secret)) p.push('STAGING_TELEGRAM_WEBHOOK_SECRET missing / malformed (32-256 chars)');
+  if (!/^-?\d{5,20}$/.test(chatId)) p.push('STAGING_TELEGRAM_CHAT_ID must be the numeric TEST chat id the staging Worker uses');
+  if (adminIds.length !== 2 || !adminIds.every((x) => /^[1-9]\d{0,19}$/.test(x))) p.push('STAGING_TELEGRAM_ADMIN_IDS must be the two TEST admin ids of the staging Worker');
+  if (p.length) throw new StagingGuardError(p);
+  const outsiderId = String(Number(adminIds[0]) + 7777);
+  const results = await runApprovalScenarios({
+    ...ctx, label: 'staging approval', webhookSecret: secret, chatId, adminIds, outsiderId,
+    cronWaitMs: CRON_WAIT_MS,
+    setStock: async (pid, vid, value) => {
+      const d = await fs.get(`products/${pid}`);
+      const cur = d.exists ? decodeFields(d.fields) : null;
+      if (!cur?.synthetic) throw new Error(`refusing to change a non-synthetic product (${pid})`);
+      const fields = vid ? { variants: cur.variants.map((v) => (v.id === vid ? { ...v, stock: value } : v)) } : { stock: value };
+      const r = await fs.commit([{ update: { name: fs.name(`products/${pid}`), fields: encodeFields(fields) }, updateMask: { fieldPaths: Object.keys(fields) }, currentDocument: { updateTime: d.updateTime } }]);
+      if (!r.ok) throw new Error(`setStock failed (${r.status})`);
+    },
+    seedLegacyOrder: async (o) => {
+      const r = await fs.commit([{ update: { name: fs.name(`orders/${o.id}`), fields: encodeFields({ ...o, status: 'new', seenByAdmin: false, synthetic: true }) }, currentDocument: { exists: false } }]);
+      if (!r.ok) throw new Error(`seedLegacyOrder failed (${r.status})`);
+    },
+  });
+  return results.some((r) => !r.ok) ? 1 : 0;
 }
 
 /** Prints what the cleanup did — e-mails only, never passwords or tokens. */

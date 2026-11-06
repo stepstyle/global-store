@@ -6,6 +6,9 @@
 // - Stores only a SUMMARY (order id, length, sha256, mismatch flag, warning codes, totals). Never stores
 //   names, phones, addresses, e-mails, chat ids, tokens or headers. Records expire after 7 days.
 // - Refuses to run unless SINK_ENVIRONMENT=staging and all three tokens are set, long and distinct.
+// - Telegram order approval (Worker APPROVAL_MODE=telegram): also stands in for editMessageText,
+//   editMessageReplyMarkup and answerCallbackQuery. Recorded: the method, the message id, the button callback data
+//   (`v1:<op>:<order id>`, no personal data), the decision state line, and the callback answer text.
 
 const MAX_BODY = 64 * 1024;
 const MIN_TOKEN = 24;
@@ -45,6 +48,24 @@ const money = (text, label) => {
   const m = text.match(new RegExp(`${label}: JOD (\\d+(?:\\.\\d+)?)`));
   return m ? Number(m[1]) : null;
 };
+
+const TG_METHODS = ['sendMessage', 'editMessageText', 'editMessageReplyMarkup', 'answerCallbackQuery'];
+const CALLBACK_RE = /^v1:[a-z]{3}:ORD-[A-Z0-9]{4,16}-[A-Z0-9]{4,16}$/;
+/** the inline buttons' callback data only (never their labels or anything else) */
+export function buttonsOf(replyMarkup) {
+  const rows = Array.isArray(replyMarkup?.inline_keyboard) ? replyMarkup.inline_keyboard : [];
+  return rows.flat().map((b) => String(b?.callback_data || '')).filter((d) => CALLBACK_RE.test(d));
+}
+/** the order message's decision line (fixed texts of the Worker, no personal data) */
+export function decisionOf(text) {
+  const t = String(text || '');
+  if (t.includes('بانتظار الموافقة')) return 'pending';
+  if (t.includes('تم قبول الطلب')) return 'accepted';
+  if (t.includes('تم رفض الطلب')) return 'rejected';
+  if (t.includes('تم إلغاء الطلب بعد القبول')) return 'cancelled';
+  return null;
+}
+const nextMessageId = () => 1 + Math.floor(Math.random() * 2_000_000_000);
 
 /** Summary only — no personal data, no secrets. */
 export async function summarize(channel, text) {
@@ -106,15 +127,27 @@ export default {
     }
 
     // ---- Telegram stand-in -------------------------------------------------
-    const tg = url.pathname.match(/^\/telegram\/bot([^/]+)\/sendMessage$/);
-    if (tg) {
+    const tg = url.pathname.match(/^\/telegram\/bot([^/]+)\/([A-Za-z]+)$/);
+    if (tg && TG_METHODS.includes(tg[2])) {
       if (request.method !== 'POST') return json({ ok: false }, 405);
       if (!safeEqual(decodeURIComponent(tg[1]), env.SINK_TELEGRAM_TOKEN)) return json({ ok: false, error_code: 401 }, 401);
       const { body, error } = await readBody(request);
       if (error) return json({ ok: false }, error);
-      const failed = await shouldFail(kv, 'telegram');
-      await record(kv, { ...(await summarize('telegram', body.text)), ok: !failed });
-      return failed ? json({ ok: false, error_code: 500 }, 500) : json({ ok: true, result: { message_id: Date.now() } });
+      const method = tg[2];
+      if (method === 'sendMessage') {
+        const failed = await shouldFail(kv, 'telegram');
+        const messageId = failed ? null : nextMessageId();
+        await record(kv, { ...(await summarize('telegram', body.text)), method, messageId, buttons: buttonsOf(body.reply_markup), decision: decisionOf(body.text), ok: !failed });
+        return failed ? json({ ok: false, error_code: 500 }, 500) : json({ ok: true, result: { message_id: messageId } });
+      }
+      const failed = await shouldFail(kv, 'tgui');
+      if (method === 'answerCallbackQuery') {
+        await record(kv, { channel: 'telegram-ui', method, at: new Date().toISOString(), callbackQueryId: String(body.callback_query_id || '').slice(0, 64), answer: String(body.text || '').slice(0, 200), alert: body.show_alert === true, ok: !failed });
+      } else {
+        const text = method === 'editMessageText' ? body.text : '';
+        await record(kv, { channel: 'telegram-ui', method, at: new Date().toISOString(), orderId: method === 'editMessageText' ? (String(text).match(ORDER_ID_RE) || [])[0] || null : (buttonsOf(body.reply_markup)[0] || '').slice(7) || null, messageId: Number.isInteger(body.message_id) ? body.message_id : null, buttons: buttonsOf(body.reply_markup), decision: decisionOf(text), ok: !failed });
+      }
+      return failed ? json({ ok: false, error_code: 400, description: 'sink failure' }, 400) : json({ ok: true, result: true });
     }
 
     // ---- SendGrid stand-in -------------------------------------------------
@@ -155,6 +188,7 @@ export default {
         const failNext = {
           telegram: Math.max(0, Math.min(10, Number(body?.failNext?.telegram || 0))),
           email: Math.max(0, Math.min(10, Number(body?.failNext?.email || 0))),
+          tgui: Math.max(0, Math.min(10, Number(body?.failNext?.tgui || 0))),
         };
         await kv.put('control', JSON.stringify({ failNext }), { expirationTtl: TTL_SECONDS });
         return json({ ok: true, failNext });

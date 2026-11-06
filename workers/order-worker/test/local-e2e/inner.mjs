@@ -13,6 +13,7 @@ import { PRODUCTS } from '../fixtures.mjs';
 import { MARKER_PATH } from '../../staging/common.mjs';
 import { runScenarios } from '../../staging/scenarios.mjs';
 import { runSubmitScenarios } from './submit-scenarios.mjs';
+import { runApprovalScenarios } from '../../staging/approval-scenarios.mjs';
 import { makeTestSigner } from '../token-signer.mjs';
 import { launchChrome, openTab } from './cdp.mjs';
 import { buildUiScenarios, runUiScenarios } from './ui-scenarios.mjs';
@@ -24,7 +25,7 @@ import { PLAN, PORTS, URLS, FILES, PROJECT_ID, TURNSTILE_PASS_TOKEN } from './pl
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const TMP = process.env.E2E_TMP;
 const CPU_MODE = process.env.E2E_MODE === 'cpu';
-const SUITE = process.env.E2E_SUITE || 'all'; // all | scenarios | submit | ui
+const SUITE = process.env.E2E_SUITE || 'all'; // all | scenarios | submit | ui | approval | approval-live
 const children = [];
 
 function fail(msg) {
@@ -243,7 +244,22 @@ const mock = http.createServer((req, res) => {
 
 // ---------------------------------------------------------------- wrangler dev (local only)
 const token = () => randomBytes(24).toString('hex');
-const T = { tg: token(), sg: token(), read: token(), worker: token() };
+const T = { tg: token(), sg: token(), read: token(), worker: token(), webhook: token() };
+// approval suite: Telegram order approval ON, with TEST-only ids (no real Telegram user / chat; the sink stands in)
+const APPROVAL = { chatId: '-1009990000001', adminIds: ['700000001', '700000002'], outsiderId: '700000999' };
+// approval-live (manual, see telegram-bridge.mjs): a REAL TEST bot through the local bridge on 127.0.0.1:8790.
+// Only numeric ids and a local shared secret come in; the bot token stays in the bridge process.
+const LIVE = SUITE === 'approval-live' ? (() => {
+  const secret = String(process.env.E2E_TG_LOCAL_SECRET || '');
+  const chatId = String(process.env.E2E_TG_CHAT_ID || '');
+  const adminIds = String(process.env.E2E_TG_ADMIN_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const p = [];
+  if (!/^[A-Za-z0-9_-]{32,256}$/.test(secret)) p.push('E2E_TG_LOCAL_SECRET (32+ chars, same value as the bridge)');
+  if (!/^-\d{5,20}$/.test(chatId)) p.push('E2E_TG_CHAT_ID (numeric TEST group id)');
+  if (!adminIds.length || !adminIds.every((x) => /^[1-9]\d{0,19}$/.test(x))) p.push('E2E_TG_ADMIN_IDS (numeric Telegram user ids of the testers)');
+  if (p.length) throw new Error(`approval-live needs: ${p.join('; ')}`);
+  return { secret, chatId, adminIds };
+})() : null;
 
 function startWrangler(label, toml, port, inspectorPort, vars, extra = []) {
   const log = createWriteStream(join(TMP, `wrangler-${label}.log`));
@@ -305,6 +321,64 @@ async function reseed() {
   ];
   const r = await fs.commit(writes);
   if (!r.ok) throw new Error(`seed failed (${r.status})`);
+}
+
+// ---------------------------------------------------------------- approval-live (manual: real TEST bot via the bridge)
+async function runLiveApproval() {
+  const { checkoutOrder, line } = await import('../fixtures.mjs');
+  const getDoc = async (path) => {
+    const d = await fs.get(path);
+    return d.exists ? decodeFields(d.fields) : null;
+  };
+  const stockOf = async (pid, vid) => {
+    const p = await getDoc(`products/${pid}`);
+    return vid ? (p?.variants || []).find((v) => v.id === vid)?.stock : p?.stock;
+  };
+  await reseed();
+  const orders = [
+    checkoutOrder({ items: [line('p-simple', 2)] }),
+    checkoutOrder({ items: [line('p-variants', 1, { variantId: 'var_red' }), line('p-simple', 1)] }),
+    checkoutOrder({ items: [line('p-last-one', 1)] }),
+  ];
+  for (const o of orders) {
+    const r = await fetch(`${URLS.order}/create-order`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ order: o, turnstileToken: TURNSTILE_PASS_TOKEN }) });
+    console.log(`[live] order ${o.id}: ${r.status}`);
+  }
+  const waitMin = Math.min(30, Math.max(1, Number(process.env.E2E_TG_WAIT_MIN || 10)));
+  console.log(`[live] 3 synthetic orders created. In the TEST group: accept / reject / cancel, press twice, etc. Watching for ${waitMin} min…`);
+  const seen = new Map();
+  const end = Date.now() + waitMin * 60_000;
+  while (Date.now() < end) {
+    for (const o of orders) {
+      const l = await getDoc(`orderLedger/${o.id}`);
+      const d = l?.decision || 'pending';
+      if (seen.get(o.id) !== d) {
+        seen.set(o.id, d);
+        console.log(`[live] ${o.id} -> ${d}${l?.decidedBy?.userId ? ` (by ${l.decidedBy.userId})` : ''}`);
+      }
+    }
+    if ([...seen.values()].filter((d) => d !== 'pending' && d !== 'accepted').length === orders.length) break;
+    await sleep(2000);
+  }
+  // invariant: stock = initial − (what accepted, not cancelled, orders took)
+  const taken = { 'p-simple': 0, 'var_red': 0, 'p-last-one': 0 };
+  for (const o of orders) {
+    if (seen.get(o.id) !== 'accepted') continue;
+    for (const it of o.items) taken[it.selectedVariant?.id || it.productId] += it.quantity;
+  }
+  const checks = [
+    ['p-simple', null, 10 - taken['p-simple']],
+    ['p-variants', 'var_red', 5 - taken.var_red],
+    ['p-last-one', null, 1 - taken['p-last-one']],
+  ];
+  const out = [];
+  for (const [pid, vid, want] of checks) {
+    const got = await stockOf(pid, vid);
+    out.push({ id: `LIVE-${vid || pid}`, name: `stock of ${vid || pid} matches the decisions (${want})`, ok: got === want, ...(got === want ? {} : { error: `stock ${got}, expected ${want}` }) });
+  }
+  for (const o of orders) out.push({ id: `LIVE-${o.id}`, name: `final decision: ${seen.get(o.id)}`, ok: true });
+  for (const r of out) console.log(`${r.ok ? '✔' : '✖'} ${r.id} ${r.name}${r.error ? ` — ${r.error}` : ''}`);
+  return out;
 }
 
 // ---------------------------------------------------------------- UI suite (real web app in headless Chrome)
@@ -430,6 +504,15 @@ try {
     TELEGRAM_BOT_TOKEN: T.tg, SENDGRID_API_KEY: T.sg, WORKER_AUTH_TOKEN: T.worker,
     // UI suite: the current web app sends no Turnstile token -> Phase 1 production mode (log), for this run only
     ...(SUITE === 'ui' ? { TURNSTILE_MODE: 'log' } : {}),
+    ...(SUITE === 'approval' ? {
+      APPROVAL_MODE: 'telegram', TELEGRAM_CHAT_ID: APPROVAL.chatId, TELEGRAM_ADMIN_USER_IDS: APPROVAL.adminIds.join(','),
+      TELEGRAM_WEBHOOK_SECRET: T.webhook, PRICE_CHECK_MODE: 'enforce',
+    } : {}),
+    ...(LIVE ? {
+      APPROVAL_MODE: 'telegram', TELEGRAM_API_BASE: 'http://127.0.0.1:8790/telegram', TELEGRAM_BOT_TOKEN: LIVE.secret,
+      TELEGRAM_CHAT_ID: LIVE.chatId, TELEGRAM_ADMIN_USER_IDS: LIVE.adminIds.join(','), TELEGRAM_WEBHOOK_SECRET: LIVE.secret,
+      PRICE_CHECK_MODE: 'enforce',
+    } : {}),
   }, ['--test-scheduled']);
   await waitReady('sink', URLS.sink);
   await waitReady('order', URLS.order);
@@ -459,6 +542,34 @@ try {
     });
   } else if (SUITE === 'ui') {
     results = await runUiSuite();
+  } else if (SUITE === 'approval-live') {
+    results = await runLiveApproval();
+  } else if (SUITE === 'approval') {
+    const getDoc = async (path) => {
+      const d = await fs.get(path);
+      return d.exists ? decodeFields(d.fields) : null;
+    };
+    results = await runApprovalScenarios({
+      label: 'local-e2e approval', projectId: PROJECT_ID, W: URLS.order, S: URLS.sink, sinkAuth: { 'x-sink-auth': T.read },
+      turnstileToken: TURNSTILE_PASS_TOKEN, get: getDoc, reseed,
+      only: process.env.E2E_ONLY ? new Set(process.env.E2E_ONLY.split(',')) : null,
+      webhookSecret: T.webhook, ...APPROVAL,
+      createBudget: { limit: 18, windowMs: 61_000 },
+      triggerCron: async () => { await fetch(`${URLS.order}/__scheduled?cron=*+*+*+*+*`); },
+      cronWaitMs: 60_000,
+      // test-only stock change between order and acceptance (an admin editing the product)
+      setStock: async (pid, vid, value) => {
+        const p = await getDoc(`products/${pid}`);
+        const fields = vid ? { variants: p.variants.map((v) => (v.id === vid ? { ...v, stock: value } : v)) } : { stock: value };
+        const r = await fs.commit([{ update: { name: fs.name(`products/${pid}`), fields: encodeFields(fields) }, updateMask: { fieldPaths: Object.keys(fields) } }]);
+        if (!r.ok) throw new Error(`setStock failed (${r.status})`);
+      },
+      // an order document WITHOUT ledger: what the old Checkout / Worker v1 wrote
+      seedLegacyOrder: async (o) => {
+        const r = await fs.commit([{ update: { name: fs.name(`orders/${o.id}`), fields: encodeFields({ ...o, status: 'new', seenByAdmin: false }) }, currentDocument: { exists: false } }]);
+        if (!r.ok) throw new Error(`seedLegacyOrder failed (${r.status})`);
+      },
+    });
   } else {
     const suite = SUITE; // all | scenarios (S01–S12) | submit (S13–S27)
     const only = process.env.E2E_ONLY ? new Set(process.env.E2E_ONLY.split(',')) : null;

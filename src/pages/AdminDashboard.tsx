@@ -181,7 +181,7 @@ const toMillis = (v: any): number => {
 
 const AdminDashboard: React.FC = () => {
   const navigate = useNavigate();
-  const { addProducts, deleteProduct, updateProduct, showToast, t, products, language, user } = useCart() as any;
+  const { addProducts, deleteProduct, updateProduct, showToast, t, products, language, user, refreshProducts } = useCart() as any;
 
   // 🚨🚨 ضع إيميلك الشخصي الحقيقي هنا بين الأقواس (مثال: admin@gmail.com) 🚨🚨
   const MY_ADMIN_EMAIL = "mohmmedmostakl@gmail.com".toLowerCase();
@@ -210,6 +210,8 @@ const AdminDashboard: React.FC = () => {
   const [newOrdersCount, setNewOrdersCount] = useState(0);
   const prevNewIdsRef = useRef<Set<string>>(new Set());
   const initializedRef = useRef(false);
+  // order id -> Telegram approval state seen in the previous snapshot (null until the first snapshot)
+  const approvalStatesRef = useRef<Map<string, string> | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -370,6 +372,18 @@ const AdminDashboard: React.FC = () => {
           }
 
           prevNewIdsRef.current = current;
+
+          // Telegram approval: accept deducts / cancel restores stock in the Worker. The product list is loaded once, so
+          // reload it when a decision that moved stock arrives, and the dashboard shows the new stock without a page reload.
+          const states = new Map<string, string>(
+            sorted.filter((o: any) => o?.approval?.policy === 'telegram').map((o: any) => [String(o.id), String(o.approval?.state || '')])
+          );
+          const before = approvalStatesRef.current;
+          approvalStatesRef.current = states;
+          if (before) {
+            const moved = [...states].some(([id, st]) => (st === 'accepted' || st === 'cancelled') && before.get(id) !== st);
+            if (moved) refreshProducts?.().catch?.(() => {});
+          }
         },
         (error: any) => {
           console.error('Admin orders subscription error:', error);

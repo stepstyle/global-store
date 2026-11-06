@@ -76,6 +76,46 @@ Check with `getWebhookInfo`: `url` must match, `last_error_message` must be empt
 - **Rules:** redeploy the previous rules file.
 - Never edit `orderLedger` by hand. It is the record that prevents double deduction.
 
+## Testing
+
+| Level | Command | Needs |
+|---|---|---|
+| Unit + emulator (18 scenarios) | `npm run test:integration` (includes `test/telegram-approval.test.mjs`) | nothing external |
+| Real Worker runtime (A01–A16) | `E2E_SUITE=approval E2E_RULES=final node test/local-e2e/run.mjs` | nothing external: workerd + notify sink + Firestore emulator on 127.0.0.1, network jail |
+| Staging (A01–A16) | `node staging/run-tests.mjs --config staging/staging.config.json --suite approval` | **approval**: deploy the staging Workers (sink + order) with `APPROVAL_MODE=telegram` and TEST ids |
+| Real TEST bot, by hand | `test/local-e2e/telegram-bridge.mjs` + `E2E_SUITE=approval-live` | **approval**: a new TEST bot and a TEST group; contacts api.telegram.org for that bot only |
+
+- If port 9152 is held by another program, set `E2E_EMULATOR_WS_PORT=<free port>`.
+- A01–A16 press the buttons exactly as Telegram does: `POST /telegram/webhook` with the secret header and a `callback_query` update. The sink plays Telegram and records the method, the message id, the callback data, the decision line and the answer, but no personal data.
+
+### Real TEST bot (no webhook is set, changed or removed on any bot)
+
+1. In BotFather, create a new bot whose username contains `test`. Create a test group and add the bot to it. Save the token in `workers/order-worker/.secrets/test-bot.token` (git-ignored).
+2. Run `node test/local-e2e/telegram-bridge.mjs --check --token-file .secrets/test-bot.token --forbid-bot-id <real store bot id>`.
+   - The real store bot's id is the number before `:` in its token.
+   - The bridge refuses a bot without "test" in its name, a bot that has a webhook, and the forbidden id.
+3. Terminal 1, the local stack:
+   ```
+   E2E_SUITE=approval-live E2E_TG_LOCAL_SECRET=<random 40 chars> E2E_TG_CHAT_ID=<test group id> E2E_TG_ADMIN_IDS=<your Telegram user id> node test/local-e2e/run.mjs
+   ```
+4. Terminal 2, once the stack prints that it is up:
+   ```
+   E2E_TG_LOCAL_SECRET=<same> node test/local-e2e/telegram-bridge.mjs --run --token-file .secrets/test-bot.token --chat-id <test group id> --confirm <test bot username> --forbid-bot-id <real store bot id>
+   ```
+5. In the test group, accept, reject, cancel and press buttons twice. The run checks that the stock matches the decisions.
+   - The bridge forwards only `sendMessage`, `editMessageText`, `editMessageReplyMarkup` and `answerCallbackQuery`, all forced to the test group.
+   - It receives button presses with `getUpdates` (long polling).
+
+## Duplicate Telegram messages (3 per order): what the code shows
+
+- Today the live site runs the `main` Checkout and Worker v1 `anta-order-notify`. In the repository, the **only** sender of the order message is Worker v1 `/create-order`: one `sendMessage` per HTTP call. It has no idempotency and no retry. The Cloud Functions `sendOrderEmail` and `secureOrderPrices` send no Telegram.
+- Three messages therefore mean three calls to `/create-order`, or a sender outside this repository. Checkout on `main` makes a new order id for each submit. Its guard is React state (`isProcessing`), and taps before the re-render each pass it. Each such call writes an order, deducts stock without a transaction, and sends a message.
+- How to tell, read-only and without changing anything:
+  - **Same order id three times:** three calls with the same body. Check the v1 Worker's request logs (Cloudflare dashboard, Workers → anta-order-notify → Logs) for three `POST /create-order`.
+  - **Three different ids with the same items:** multiple submits. Look in the Firestore console for orders with the same phone or items a few seconds apart.
+  - **Neither:** another sender. List the deployed Cloud Functions and Workers that use the same bot token.
+- Worker v2 (this PR) sends one message per order, enforced by the ledger, the notification claim and `replay` for a resent order (A12 / S02). After a crash between "sent" and "marked sent" one duplicate is possible; a duplicate can never deduct twice (A03).
+
 ## User guide (Arabic)
 
 1. يصل لكل طلب جديد رسالة في مجموعة الإدارة على تيليجرام فيها تفاصيل الطلب وزرّان: «✅ قبول الطلب» و«❌ رفض الطلب».

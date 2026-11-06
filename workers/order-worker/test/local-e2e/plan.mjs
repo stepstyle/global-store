@@ -8,7 +8,8 @@ export const WORKER_ROOT = resolve(here, '../..');
 export const PROJECT_ID = 'demo-dairsharaf-e2e';
 export const PORTS = {
   emulator: 8087,
-  emulatorWs: 9152,
+  // E2E_EMULATOR_WS_PORT: another free 127.0.0.1 port when 9152 is taken (e.g. by an unrelated emulator)
+  emulatorWs: /^\d{4,5}$/.test(process.env.E2E_EMULATOR_WS_PORT || '') ? Number(process.env.E2E_EMULATOR_WS_PORT) : 9152,
   authEmulator: 9099, // Firebase Auth emulator (UI suite: real sign-in in the browser; its tokens are unsigned)
   hub: 4410,
   logging: 4510,

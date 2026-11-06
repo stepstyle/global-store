@@ -146,10 +146,11 @@ export async function handleTelegramWebhook(request, cfg, fs) {
 
   // pure UI steps (no data change): ask for confirmation / go back
   if (op === 'can' || op === 'bck') {
-    const led = await fs.get(`orderLedger/${orderId}`).catch(() => ({ exists: false }));
+    const [ord, led] = await fs.batchGet([`orders/${orderId}`, `orderLedger/${orderId}`]).catch(() => [{ exists: false }, { exists: false }]);
     const L = led.exists ? decodeFields(led.fields) : null;
     if (!L || L.stockPolicy !== 'on_approval') {
-      await answer(L ? ANSWER.legacy : ANSWER.not_found, true);
+      // same answers as a decision: an existing order without an approval ledger is a legacy order
+      await answer(L || ord.exists ? ANSWER.legacy : ANSWER.not_found, true);
       return json({ ok: true });
     }
     const decision = L.decision || 'pending';
