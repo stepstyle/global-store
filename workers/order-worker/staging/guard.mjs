@@ -19,6 +19,14 @@ export const EMAIL_RE = /^[a-z0-9._+-]{1,64}@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
+/**
+ * Tracked wrangler files are placeholder TEMPLATES (no account / KV ids, subdomains, e-mails in git).
+ * The filled-in copy lives next to it as <name>.local.toml, git-ignored by the root .gitignore.
+ */
+export const localConfigPath = (template) => template.replace(/\.toml$/, '.local.toml');
+/** the filled local copy when it exists, else null */
+export const existingLocalConfig = (template) => (existsSync(localConfigPath(template)) ? localConfigPath(template) : null);
+
 export class StagingGuardError extends Error {
   constructor(problems) {
     super(`STAGING GUARD REFUSED:\n - ${problems.join('\n - ')}`);

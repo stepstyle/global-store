@@ -29,7 +29,7 @@ Order Worker v2 with `APPROVAL_MODE=telegram`. Code: `src/approval.js` (decision
 | `TELEGRAM_ADMIN_USER_IDS` | var | comma-separated numeric Telegram user ids allowed to decide |
 | `CURRENCY` | var | ISO code, default `JOD` |
 | `TELEGRAM_BOT_TOKEN` | **secret** | already exists, don't overwrite |
-| `TELEGRAM_WEBHOOK_SECRET` | **secret** (new) | 32–256 chars `[A-Za-z0-9_-]`, random; `wrangler secret put TELEGRAM_WEBHOOK_SECRET --config wrangler.production.toml` |
+| `TELEGRAM_WEBHOOK_SECRET` | **secret** (new) | 32–256 chars `[A-Za-z0-9_-]`, random; `wrangler secret put TELEGRAM_WEBHOOK_SECRET --config wrangler.production.local.toml` |
 
 `wrangler.production.toml` must also have:
 - a public endpoint (`workers_dev = true` or a `routes`/custom domain);
@@ -55,7 +55,7 @@ Check with `getWebhookInfo`: `url` must match, `last_error_message` must be empt
 
 1. Merge the PR after review. Don't deploy from an unmerged branch.
 2. Set the vars and the new secret (above). Don't change existing secrets.
-3. `npx wrangler deploy --dry-run --config wrangler.production.toml`, then `node production/check-config.mjs` must print no violations.
+3. `npx wrangler deploy --dry-run --config wrangler.production.local.toml`, then `node production/check-config.mjs` must print no violations.
 4. Deploy the Worker.
 5. Deploy `firestore.rules.final` (needs approval). Without it the dashboard can still move pending orders. The UI guard alone is not enough.
 6. `setWebhook` (above).

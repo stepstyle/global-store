@@ -1,4 +1,4 @@
-// Deploy the staging Workers (sink and/or order worker).
+// Deploy the staging Workers (sink and/or order worker) from the git-ignored filled copies *.local.toml.
 //   node staging/deploy-workers.mjs --config staging/staging.config.json --which sink|order          -> checks + dry-run plan
 //   node staging/deploy-workers.mjs --config … --which sink --execute --confirm anta-notify-sink-staging
 //
@@ -8,12 +8,12 @@
 // the real deploy only with --execute, an exact --confirm, and a live check that the logged-in wrangler
 // credentials belong to exactly that staging account (staging/accounts.mjs).
 
-import { resolve } from 'node:path';
+import { resolve, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import {
   assertStagingConfig, assertWranglerFile, loadStagingConfigFile, StagingGuardError, REPO_ROOT,
-  STAGING_WORKER_NAME, SINK_WORKER_NAME,
+  STAGING_WORKER_NAME, SINK_WORKER_NAME, localConfigPath, existingLocalConfig,
 } from './guard.mjs';
 import { WRANGLER, wranglerEnv, verifyCloudflareAccount } from './accounts.mjs';
 import { parseArgs, runCli } from './common.mjs';
@@ -23,10 +23,13 @@ export const TARGETS = {
   sink: { name: SINK_WORKER_NAME, toml: resolve(REPO_ROOT, 'workers/notify-sink/wrangler.toml'), expectTarget: null, checkProject: false },
 };
 
+// t.toml is the TRACKED template (placeholders only); deploys use its git-ignored filled copy t.toml -> *.local.toml
 export function planWorkerDeploy(st, which, tomlOverride) {
   const t = TARGETS[which];
   if (!t) throw new StagingGuardError(['--which must be "order" or "sink"']);
-  const toml = tomlOverride || t.toml;
+  const rel = (p) => relative(REPO_ROOT, p).split(sep).join('/');
+  const toml = tomlOverride || existingLocalConfig(t.toml);
+  if (!toml) throw new StagingGuardError([`${rel(localConfigPath(t.toml))} not found: copy ${rel(t.toml)} to it and fill in the REPLACE_WITH_ values (the copy is git-ignored; the tracked file keeps its placeholders)`]);
   assertWranglerFile(toml, {
     expectName: t.name,
     expectTarget: t.expectTarget,

@@ -42,8 +42,8 @@ before(() => {
   };
   st = assertStagingConfig(good, { env: {} });
   orderToml = join(dir, 'order.toml');
-  // the COMMITTED file (git HEAD): a locally filled-in working copy must not change these tests
-  const committed = execFileSync('git', ['show', 'HEAD:workers/order-worker/wrangler.staging.toml'], { cwd: REPO_ROOT, encoding: 'utf8' });
+  // the COMMITTED file (git index): a locally filled-in working copy must not change these tests
+  const committed = execFileSync('git', ['show', ':workers/order-worker/wrangler.staging.toml'], { cwd: REPO_ROOT, encoding: 'utf8' });
   writeFileSync(orderToml, committed.replaceAll('REPLACE_WITH_WORKERS_SUBDOMAIN', 'acme'));
 });
 after(() => rmSync(dir, { recursive: true, force: true }));

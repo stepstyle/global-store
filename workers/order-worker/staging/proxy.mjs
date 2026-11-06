@@ -24,7 +24,7 @@ import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { resolve, isAbsolute, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { assertStagingConfig, guardedFetch, loadStagingConfigFile, StagingGuardError, REPO_ROOT, STAGING_PROJECT_ID, STAGING_WORKER_NAME } from './guard.mjs';
+import { assertStagingConfig, guardedFetch, loadStagingConfigFile, StagingGuardError, REPO_ROOT, STAGING_PROJECT_ID, STAGING_WORKER_NAME, existingLocalConfig } from './guard.mjs';
 import { STAGING_ACCESS_MIN_LENGTH } from '../src/http.js';
 import { TURNSTILE_TEST_SECRETS } from '../src/config.js';
 import { parseArgs, runCli } from './common.mjs';
@@ -253,7 +253,7 @@ export async function main(argv, deps = {}) {
   // test Turnstile token: separate, explicit opt-in; refused unless the staging Worker config uses the always-pass
   // TEST secret in enforce mode (checked BEFORE the secret is loaded or anything is contacted)
   const testTurnstile = a.flags.has('test-turnstile');
-  if (testTurnstile) assertTestTurnstileAllowed(st, deps.wranglerText ?? readFileSync(resolve(REPO_ROOT, 'workers/order-worker/wrangler.staging.toml'), 'utf8'));
+  if (testTurnstile) assertTestTurnstileAllowed(st, deps.wranglerText ?? readFileSync((() => { const t = resolve(REPO_ROOT, 'workers/order-worker/wrangler.staging.toml'); return existingLocalConfig(t) || t; })(), 'utf8'));
   const secret = loadAccessToken(a.tokens ?? env.STAGING_TOKENS_FILE);
   const fetchImpl = guardedFetch(st, deps.realFetch ?? globalThis.fetch, { stagingAccessToken: secret });
   await verifyUpstream(st, fetchImpl);

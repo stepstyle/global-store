@@ -29,7 +29,7 @@ enforce يرفض طلباتها (لا رمز لديها)، وعندها يعتم
 **Cloudflare (Worker الإنتاج v2، الملف `workers/order-worker/wrangler.production.toml`):**
 - `name` — الاسم الجديد (مقترح: `anta-order-v2`) · `account_id` — حساب الإنتاج (32 hex)
 - متغيرات: `TELEGRAM_CHAT_ID` · `ADMIN_EMAIL` · `EMAIL_FROM` (مرسل موثّق في SendGrid)
-- أسرار (`wrangler secret put … --config wrangler.production.toml`): `FIREBASE_CLIENT_EMAIL` · `FIREBASE_PRIVATE_KEY`
+- أسرار (`wrangler secret put … --config wrangler.production.local.toml`): `FIREBASE_CLIENT_EMAIL` · `FIREBASE_PRIVATE_KEY`
   (حساب خدمة لمشروع `antastore1-82b50` بصلاحية Firestore فقط) · `TURNSTILE_SECRET` (الحقيقي) · `TELEGRAM_BOT_TOKEN`
   · `SENDGRID_API_KEY` · `WORKER_AUTH_TOKEN` (قيمة عشوائية جديدة)
 - فحص الجاهزية: `node workers/order-worker/production/check-config.mjs` يجب أن يطبع `OK`.
@@ -49,7 +49,7 @@ enforce يرفض طلباتها (لا رمز لديها)، وعندها يعتم
 
 | الخدمة | الأمر (قراءة) | المطلوب |
 |---|---|---|
-| Cloudflare | `wrangler whoami` (مع `CLOUDFLARE_ACCOUNT_ID` مثبّت) | حساب الإنتاج وحده، وليس حساب Staging (hopemohmmed) |
+| Cloudflare | `wrangler whoami` (مع `CLOUDFLARE_ACCOUNT_ID` مثبّت) | حساب الإنتاج وحده، وليس حساب Staging |
 | Firebase | `firebase projects:list --account <حساب الإنتاج>` | يرى `antastore1-82b50`. كل أمر يحمل `--project antastore1-82b50 --account …` صراحة |
 | Vercel | `vercel whoami` + `vercel env ls production` في مجلد مربوط بـglobal-store-oz2a | المشروع الصحيح، وأسماء المتغيرات المتوقعة |
 

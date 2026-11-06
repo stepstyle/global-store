@@ -3,7 +3,7 @@
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, relative, sep } from 'node:path';
 import {
@@ -12,7 +12,7 @@ import {
 import { main as seedMain } from '../../staging/seed.mjs';
 import { main as runTestsMain } from '../../staging/run-tests.mjs';
 import { main as deployRulesMain } from '../../staging/deploy-rules.mjs';
-import { main as deployWorkersMain, TARGETS } from '../../staging/deploy-workers.mjs';
+import { main as deployWorkersMain, TARGETS, planWorkerDeploy } from '../../staging/deploy-workers.mjs';
 
 const PROD = 'antastore1-82b50';
 const FAKE_KEY = '-----BEGIN PRIVATE KEY-----\nFAKEFAKEFAKE\n-----END PRIVATE KEY-----\n';
@@ -180,11 +180,11 @@ test('guardedFetch: staging paths allowed; production / foreign targets blocked 
 });
 
 // ---------------------------------------------------------------------------
-// The COMMITTED version (git HEAD) of a staging wrangler file. The working copy may be filled in locally
+// The COMMITTED version (git index = what is / will be committed) of a staging wrangler file. The working copy may be filled in locally
 // (KV namespace id, workers.dev subdomain) and must not change what these tests check about the repository.
 const committedText = (abs) => {
   const rel = relative(REPO_ROOT, abs).split(sep).join('/');
-  return execFileSync('git', ['show', `HEAD:${rel}`], { cwd: REPO_ROOT, encoding: 'utf8' });
+  return execFileSync('git', ['show', `:${rel}`], { cwd: REPO_ROOT, encoding: 'utf8' });
 };
 const writeTmp = (name, text) => {
   const p = join(dir, name);
@@ -507,4 +507,19 @@ test('guardedFetch: every staging request is bounded; the caller\'s own signal s
   await assert.rejects(p, /caller cancelled/);
   // blocked hosts are still refused before any request
   await assert.rejects(guardedFetch(st, hangUntilAborted)('https://firestore.googleapis.com/v1/projects/antastore1-82b50/databases/(default)/documents/x'), StagingGuardError);
+});
+
+test('deploy-workers: deploys ONLY from the git-ignored filled copy (*.local.toml), never from the tracked template', () => {
+  const st = assertStagingConfig(good, { env: {} });
+  for (const which of ['order', 'sink']) {
+    const local = TARGETS[which].toml.replace(/\.toml$/, '.local.toml');
+    if (existsSync(local)) {
+      let plan = null;
+      try { plan = planWorkerDeploy(st, which); } catch (e) { assert.ok(e instanceof StagingGuardError, `${which}: guard error only`); continue; } // a local file for ANOTHER config is refused, never printed
+      assert.ok(plan.dryRun.includes(local) && plan.deploy.includes(local), `${which}: the local copy is deployed`);
+      assert.ok(!plan.deploy.includes(TARGETS[which].toml), `${which}: never the template`);
+    } else {
+      assert.throws(() => planWorkerDeploy(st, which), (e) => e instanceof StagingGuardError && /\.local\.toml not found: copy/.test(e.message));
+    }
+  }
 });

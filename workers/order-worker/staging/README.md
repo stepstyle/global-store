@@ -21,8 +21,8 @@
 
 | الملف | الغرض |
 |---|---|
-| `../wrangler.staging.toml` | Worker الطلبات للـ Staging (فيه `REPLACE_WITH_WORKERS_SUBDOMAIN`) |
-| `../../notify-sink/` | المستقبِل الوهمي + `wrangler.toml` (فيه `REPLACE_WITH_KV_NAMESPACE_ID`) + اختباراته |
+| `../wrangler.staging.toml` | قالب Worker الطلبات للـ Staging (فيه `REPLACE_WITH_WORKERS_SUBDOMAIN`). انسخه إلى `wrangler.staging.local.toml` (مُستثنى من git) واملأه؛ النشر يستخدم النسخة المحلية فقط |
+| `../../notify-sink/` | المستقبِل الوهمي + قالب `wrangler.toml` (فيه `REPLACE_WITH_KV_NAMESPACE_ID`؛ النسخة المعبأة `wrangler.local.toml` مُستثناة من git) + اختباراته |
 | `guard.mjs`, `common.mjs` | الحارس والمساعدات |
 | `accounts.mjs`, `check-accounts.mjs` | التحقق من حساب Cloudflare/Firebase الذي سيُنفَّذ بصلاحياته (قراءة فقط) |
 | `seed.mjs` | منتجات وهمية + علامة Staging (`--reset` يحذف طلبات/سجلات Staging) |

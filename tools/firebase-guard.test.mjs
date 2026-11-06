@@ -143,7 +143,7 @@ test('staging target refused: other projects, production ids, direct/remote Work
   for (const projectId of ['antastore1-82b50', 'dairsharaf-dev', 'other-staging', 'demo-dairsharaf-dev', 'dairsharaf-staging2', '']) bad({ VITE_FIREBASE_PROJECT_ID: projectId }, /VITE_FIREBASE_PROJECT_ID=dairsharaf-staging/);
   for (const id of productionIdentifiers(PROD)) bad({ VITE_EXTRA: `x${id}x` }, /production Firebase identifier/);
   bad({ VITE_FIREBASE_AUTH_DOMAIN: PROD.authDomain }, /production|AUTH_DOMAIN/);
-  for (const u of ['https://anta-order-notify-staging.hopemohmmed.workers.dev', 'http://localhost:8789', 'https://127.0.0.1:8789', 'http://127.0.0.1:8789/x', 'http://192.168.1.5:8789', '']) bad({ VITE_WORKER_URL: u }, /VITE_WORKER_URL/);
+  for (const u of ['https://anta-order-notify-staging.example-sub.workers.dev', 'http://localhost:8789', 'https://127.0.0.1:8789', 'http://127.0.0.1:8789/x', 'http://192.168.1.5:8789', '']) bad({ VITE_WORKER_URL: u }, /VITE_WORKER_URL/);
   bad({ VITE_STAGING_ACCESS_TOKEN: 'x' }, /secrets never go into VITE_/);
   bad({ VITE_WORKER_AUTH_TOKEN: 'x' }, /secrets never go into VITE_/);
   bad({ VITE_SOMETHING: 'a'.repeat(64) }, /looks like a secret/);

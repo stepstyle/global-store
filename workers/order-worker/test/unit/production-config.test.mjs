@@ -2,11 +2,13 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { checkProductionConfig } from '../../production/check-config.mjs';
 import { loadConfig } from '../../src/config.js';
 
-// a FIXED template (the original placeholder draft) — independent of the operator's real wrangler.production.toml
-const DRAFT = readFileSync(new URL('../fixtures/wrangler.production.template.toml', import.meta.url), 'utf8');
+// the TRACKED template (placeholders only). The operator's filled copy is wrangler.production.local.toml (git-ignored)
+// and is never read by the tests.
+const DRAFT = readFileSync(new URL('../../wrangler.production.toml', import.meta.url), 'utf8');
 const FILLED = DRAFT
   .replace('REPLACE_WITH_PRODUCTION_WORKER_NAME', 'anta-order-v2')
   .replace('REPLACE_WITH_PRODUCTION_CLOUDFLARE_ACCOUNT_ID', '0123456789abcdef0123456789abcdef')
@@ -37,7 +39,7 @@ test('every unsafe variant is a VIOLATION', async () => {
     'turnstile test secret in vars': FILLED.replace('[vars]', '[vars]\nTURNSTILE_SECRET = "1x0000000000000000000000000000000AA"'),
     'local origin': FILLED.replace('https://www.dairsharaf.com"', 'https://www.dairsharaf.com,http://localhost:3000"'),
     'extra origin': FILLED.replace('https://www.dairsharaf.com"', 'https://www.dairsharaf.com,https://evil.example"'),
-    'staging sink': FILLED.replace('[vars]', '[vars]\nTELEGRAM_API_BASE = "https://anta-notify-sink-staging.hopemohmmed.workers.dev/telegram"'),
+    'staging sink': FILLED.replace('[vars]', '[vars]\nTELEGRAM_API_BASE = "https://anta-notify-sink-staging.example-sub.workers.dev/telegram"'),
     'old worker name': FILLED.replace('name = "anta-order-v2"', 'name = "anta-order-notify"'),
     'staging name': FILLED.replace('name = "anta-order-v2"', 'name = "anta-order-notify-staging"'),
     'staging build target': FILLED.replace(`__DEPLOY_TARGET__ = "'production'"`, `__DEPLOY_TARGET__ = "'staging'"`),
@@ -65,4 +67,34 @@ test('config.js: a production Worker with any REPLACE_WITH_ value never runs (CO
   const c = loadConfig({ ...env, TELEGRAM_CHAT_ID: 'REPLACE_WITH_TELEGRAM_CHAT_ID' });
   assert.equal(c.ok, false);
   assert.ok(c.errors.some((e) => e.includes('TELEGRAM_CHAT_ID')));
+});
+
+// ------------------------------------------------------------------ no real identifiers in git
+const REPO = new URL('../../../../', import.meta.url);
+const TEMPLATES = ['workers/order-worker/wrangler.production.toml', 'workers/order-worker/wrangler.staging.toml', 'workers/notify-sink/wrangler.toml'];
+const codeOf = (text) => text.split(/\r?\n/).filter((l) => !l.trim().startsWith('#')).join('\n');
+
+test('tracked wrangler files are placeholder templates: no account / KV id, no real subdomain, chat id or e-mail', () => {
+  for (const rel of TEMPLATES) {
+    const code = codeOf(readFileSync(new URL(rel, REPO), 'utf8'));
+    // assert.ok, never assert.match: a failure must not print the file
+    assert.ok(!/\b[0-9a-f]{32}\b/.test(code), `${rel}: no 32-hex id`);
+    assert.ok(!/"-?\d{6,}"/.test(code), `${rel}: no numeric chat id`);
+    assert.ok(!/[A-Za-z0-9._%+-]+@(?!example\.(com|invalid)\b)[A-Za-z0-9.-]+\.[a-z]{2,}/.test(code), `${rel}: no real e-mail`);
+    for (const host of code.match(/[a-z0-9-]+\.[A-Za-z0-9_-]+\.workers\.dev/g) || []) assert.ok(host.includes('REPLACE_WITH_'), `${rel}: workers.dev subdomain is a placeholder`);
+    assert.ok(code.includes('REPLACE_WITH_'), `${rel}: still a template`);
+  }
+});
+
+test('the filled copies (wrangler*.local.toml) are git-ignored', () => {
+  const paths = TEMPLATES.map((p) => p.replace(/\.toml$/, '.local.toml'));
+  const out = execFileSync('git', ['check-ignore', '--no-index', ...paths], { cwd: REPO, encoding: 'utf8' });
+  assert.deepEqual(out.trim().split(/\r?\n/).sort(), paths.slice().sort());
+});
+
+test('production template: public endpoint + retry cron are built in; once filled it passes every rule', async () => {
+  assert.match(DRAFT, /^workers_dev = true\r?$/m);
+  assert.match(DRAFT, /^crons = \["\*\/5 \* \* \* \*"\]\r?$/m);
+  const r = await checkProductionConfig(FILLED);
+  assert.deepEqual(r, { violations: [], placeholders: [], deployable: true });
 });

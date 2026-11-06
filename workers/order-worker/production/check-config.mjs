@@ -1,15 +1,19 @@
 // LOCAL check of wrangler.production.toml (no network, no secrets read). Exit 0 = deployable shape, 1 = blocked.
-//   node production/check-config.mjs [--toml <path>]
+//   node production/check-config.mjs [--toml <path>]   (default: wrangler.production.local.toml, else the template)
 // Two kinds of findings:
 //   VIOLATION   — a rule broken by the file itself (staging/local value, test key, secret in [vars], weak mode …)
 //   PLACEHOLDER — a production value nobody filled in yet (REPLACE_WITH_…): deploy stays blocked
 // Plus a simulation: the Worker's own loadConfig() (production build) with the file's [vars] + FAKE secrets must pass.
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve, dirname, basename } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const DEFAULT_TOML = resolve(HERE, '../wrangler.production.toml');
+/** tracked TEMPLATE (placeholders only, in git) */
+export const TEMPLATE_TOML = resolve(HERE, '../wrangler.production.toml');
+/** the operator's filled copy — git-ignored by the root .gitignore; checked by default when it exists */
+export const LOCAL_TOML = resolve(HERE, '../wrangler.production.local.toml');
+export const DEFAULT_TOML = existsSync(LOCAL_TOML) ? LOCAL_TOML : TEMPLATE_TOML;
 export const PROD_PROJECT = 'antastore1-82b50';
 export const PROD_ORIGINS = ['https://dairsharaf.com', 'https://www.dairsharaf.com'];
 const SECRET_NAMES = ['FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY', 'TURNSTILE_SECRET', 'TELEGRAM_BOT_TOKEN', 'SENDGRID_API_KEY', 'WORKER_AUTH_TOKEN', 'STAGING_ACCESS_TOKEN'];
@@ -67,7 +71,7 @@ export async function checkProductionConfig(text) {
   if (crons === undefined || !/"[^"]+"/.test(crons)) v.push('crons is empty: failed Telegram / e-mail notifications would never be retried (use e.g. ["*/5 * * * *"])');
   // Telegram approval: its non-secret settings must be complete (the secret TELEGRAM_WEBHOOK_SECRET is a `wrangler secret`)
   if (vars.APPROVAL_MODE === 'telegram' && !/^\d+(,\d+)*$/.test(String(vars.TELEGRAM_ADMIN_USER_IDS || '').replace(/\s/g, ''))) v.push('APPROVAL_MODE=telegram needs TELEGRAM_ADMIN_USER_IDS (numeric Telegram user ids)');
-  if (/dairsharaf-staging|hopemohmmed|anta-notify-sink|127\.0\.0\.1|localhost|demo-|example\.invalid/i.test(blob)) v.push('staging / local / test value present');
+  if (/dairsharaf-staging|-staging\.[a-z0-9-]+\.workers\.dev|anta-notify-sink|127\.0\.0\.1|localhost|demo-|example\.invalid/i.test(blob)) v.push('staging / local / test value present');
   if (/[123]x0{20,}[A-F]{2}/.test(blob)) v.push('Turnstile TEST key present');
   if (/BEGIN PRIVATE KEY|AIza[0-9A-Za-z_-]{30,}|[0-9a-f]{64}/.test(blob)) v.push('secret-looking value in the file');
 
@@ -91,6 +95,7 @@ export async function checkProductionConfig(text) {
 async function main() {
   const i = process.argv.indexOf('--toml');
   const path = i > 0 ? process.argv[i + 1] : DEFAULT_TOML;
+  console.log(`checking ${basename(path)}`);
   const r = await checkProductionConfig(readFileSync(path, 'utf8'));
   for (const x of r.violations) console.log(`VIOLATION    ${x}`);
   for (const x of r.placeholders) console.log(`PLACEHOLDER  ${x} (fill in before deploying)`);

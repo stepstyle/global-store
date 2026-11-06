@@ -31,3 +31,7 @@ dist-ssr
 dairsharaf-*-order-worker.json
 .secrets/
 .env
+
+# Filled-in wrangler configs (real account ids, KV ids, subdomains, chat ids, e-mails) stay LOCAL.
+# The tracked wrangler*.toml files are placeholder templates; copy one to wrangler*.local.toml and fill it in.
+**/wrangler*.local.toml
