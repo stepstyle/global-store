@@ -22,7 +22,8 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
   const productDocs = await fs.batchGet(productIds.map((id) => `products/${id}`));
   const products = new Map(productIds.map((id, i) => [id, productDocs[i]]));
 
-  const inv = planInventory(lines, products, cfg.stockMode);
+  // Checkout only validates/prices stock; the Telegram acceptance endpoint is the ONLY place that deducts.
+  const inv = planInventory(lines, products, 'log');
   const pricing = computeServerPricing(inv.lineInfo, v.addressMeta, v.shippingMethodId);
   const mismatchFields = comparePricing(pricing, v.clientPricing);
   const priceMismatch = mismatchFields.length > 0;
@@ -59,12 +60,15 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     payloadHash: hash,
     mode,
     workerVersion: WORKER_VERSION,
-    stockMode: cfg.stockMode,
+    stockMode: 'deferred',
+    inventoryWorkflow: 'approval-v1',
+    stockDecision: 'pending',
+    stockApplied: false,
     serverPricing,
     clientPricing: v.clientPricing,
     priceMismatch,
     warnings,
-    stockDeductions: inv.deductions,
+    stockDeductions: [],
     strippedFields,
     userIdVerified: !!verifiedUid,
     // the VERIFIED owner (Firebase ID token uid), written once with the ledger (exists:false precondition); later
@@ -141,7 +145,8 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     });
   }
 
-  for (const w of inv.writes) {
+  // No product writes during order creation. Stock stays unchanged until Telegram approval.
+  for (const w of []) {
     writes.push({
       update: { name: fs.name(`products/${w.productId}`), fields: w.fields },
       updateMask: { fieldPaths: w.mask },
