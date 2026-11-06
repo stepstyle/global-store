@@ -505,6 +505,13 @@ export const db = {
       const nextStatus = String(status || '').toLowerCase();
 
       if (firebaseReady()) {
+        // Approval-workflow orders must be accepted/rejected by the Worker in one atomic stock transaction.
+        if (nextStatus === 'processing' || nextStatus === 'cancelled') {
+          const ledger = await getDoc(doc(firestore, 'orderLedger', id));
+          if (!ledger.exists() || ledger.data()?.inventoryWorkflow === 'approval-v1') {
+            throw new Error('هذا الطلب يُقبل أو يُرفض من تيليجرام فقط حتى يتحدث المخزون بشكل صحيح.');
+          }
+        }
         await updateDoc(doc(firestore, 'orders', id), {
           status: nextStatus,
           seenByAdmin: true,
