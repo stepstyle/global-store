@@ -5,6 +5,7 @@
 //   GET  /orders/:id/status     { exists, status } only — no personal data
 //   GET  /test                  Telegram test message      (x-worker-auth required)
 //   POST /notify-order          resend notifications        (x-worker-auth required)
+//   POST /telegram/webhook      one-tap approve/reject       (Telegram secret + owner id)
 //   OPTIONS *                   CORS preflight (allow-listed origins only)
 // Cron (scheduled): retry pending notifications; reconcile orphans (disabled by default).
 
@@ -16,6 +17,7 @@ import { createOrder, orderStatus, orderSummary, reconcileOrphans } from './orde
 import { processNotifications, retryPendingNotifications } from './notify.js';
 import { ORDER_ID_RE } from './validate.js';
 import { AuthError, bearerToken, verifyFirebaseIdToken } from './auth.js';
+import { handleTelegramWebhook } from './telegram-webhook.js';
 
 const STATUS_PATH = /^\/orders\/([^/]+)\/status$/;
 const SUMMARY_PATH = /^\/orders\/([^/]+)\/summary$/;
@@ -56,6 +58,13 @@ async function handle(request, env, ctx, cfg) {
   const ip = clientIp(request);
 
   if (url.pathname === '/') return reply({ ok: true, service: 'order-worker', version: WORKER_VERSION });
+
+  // Server-to-server Telegram webhook (secret header + private owner chat/user ID).
+  if (url.pathname === '/telegram/webhook') {
+    if (request.method !== 'POST') return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    const result = await handleTelegramWebhook(request, fs, cfg);
+    return reply(result.body, result.status);
+  }
 
   // ---------------- create order ----------------
   if (url.pathname === '/create-order') {
