@@ -49,6 +49,9 @@ FIREBASE_PROJECT_ID = "antastore1-82b50"
 FIRESTORE_AUTH = "service-account"
 # Telegram / SendGrid: NOT set here -> the official APIs (api.telegram.org / api.sendgrid.com), enforced by config.js
 TELEGRAM_CHAT_ID = "6585888926"
+# Bot callbacks are disabled until BOTH are explicitly configured privately in Cloudflare:
+# TELEGRAM_ADMIN_USER_ID (non-secret numeric admin ID) and TELEGRAM_WEBHOOK_SECRET (secret_token).
+# Do not set Telegram webhook or deploy this configuration without staging tests and approval.
 ADMIN_EMAIL = "mohmmedmostakl@gmail.com"
 EMAIL_FROM = "mohmmedmostakl8@gmail.com"
 EMAIL_FROM_NAME = "مكتبة دير شرف العلمية"
@@ -56,5 +59,5 @@ ADMIN_BASE_URL = "https://dairsharaf.com"
 ALLOWED_ORIGINS = "https://dairsharaf.com,https://www.dairsharaf.com"
 TURNSTILE_MODE = "enforce"
 PRICE_CHECK_MODE = "enforce"
-STOCK_MODE = "apply"
+STOCK_MODE = "log"
 RECONCILE_ENABLED = "false"
