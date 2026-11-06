@@ -394,8 +394,8 @@ const OrderSuccess: React.FC = () => {
         {status === 'success' && !order && (
           <div className="mt-2">
             <p className="text-slate-500 mb-6 font-medium leading-relaxed">
-              {tr('تم تأكيد طلبك رقم', 'Your order')} <span dir="ltr" className="font-black text-slate-900">#{safeId}</span>{' '}
-              {tr('بنجاح.', 'is confirmed.')}
+              {tr('تم استلام طلبك رقم', 'Your order')} <span dir="ltr" className="font-black text-slate-900">#{safeId}</span>{' '}
+              {tr('وبانتظار قبول المكتبة.', 'was received and awaits store approval.')}
             </p>
             <Link to="/" className="block">
               <button className="w-full py-4 rounded-2xl bg-black text-white font-extrabold">{tt('backToHome', 'الاستمرار بالتسوق', 'Continue Shopping')}</button>
