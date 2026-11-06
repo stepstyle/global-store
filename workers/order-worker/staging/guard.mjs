@@ -5,6 +5,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, isAbsolute, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PROD_PROJECT_ID, STAGING_PROJECT_RE, SINK_HOST_RE } from '../src/config.js';
+import { STAGING_ACCESS_MIN_LENGTH } from '../src/http.js';
 
 export const PROD_WORKER_NAME = 'anta-order-notify';
 export const STAGING_WORKER_NAME = 'anta-order-notify-staging';
@@ -139,6 +140,10 @@ export function assertStagingConfig(cfg, { repoRoot = REPO_ROOT, env = process.e
     for (const v of ['STAGING_SINK_READ_TOKEN', 'STAGING_WORKER_AUTH_TOKEN']) {
       if (String(env[v] || '').length < MIN_TOKEN) p.push(`environment variable ${v} missing or shorter than ${MIN_TOKEN}`);
     }
+    // the order Worker's staging access gate (src/http.js stagingAccess): same minimum as the Worker side
+    if (String(env.STAGING_ACCESS_TOKEN || '').length < STAGING_ACCESS_MIN_LENGTH) {
+      p.push(`environment variable STAGING_ACCESS_TOKEN missing or shorter than ${STAGING_ACCESS_MIN_LENGTH}`);
+    }
   }
 
   if (p.length) throw new StagingGuardError(p);
@@ -211,7 +216,7 @@ export const IDENTITY_TOOLKIT_HOST = 'identitytoolkit.googleapis.com';
 /** Firebase Auth REST calls the staging tests need — nothing else (no admin/batch/project endpoints). */
 export const IDENTITY_TOOLKIT_PATHS = Object.freeze(['/v1/accounts:signUp', '/v1/accounts:signInWithPassword', '/v1/accounts:delete']);
 
-export function guardedFetch(stagingCfg, realFetch = globalThis.fetch, { timeoutMs = STAGING_REQUEST_TIMEOUT_MS } = {}) {
+export function guardedFetch(stagingCfg, realFetch = globalThis.fetch, { timeoutMs = STAGING_REQUEST_TIMEOUT_MS, stagingAccessToken = '' } = {}) {
   const allowed = new Set([stagingCfg.workerHost, stagingCfg.sinkHost, 'oauth2.googleapis.com', 'firestore.googleapis.com', IDENTITY_TOOLKIT_HOST]);
   const firestorePrefix = `/v1/projects/${stagingCfg.projectId}/databases/`;
   const stagingApiKey = String(stagingCfg.firebaseWebConfig?.apiKey || '');
@@ -238,9 +243,17 @@ export function guardedFetch(stagingCfg, realFetch = globalThis.fetch, { timeout
     if (url.pathname.includes(PROD_PROJECT_ID) || url.search.includes(PROD_PROJECT_ID)) {
       throw new StagingGuardError(['blocked request mentioning the production project']);
     }
+    // the staging access gate: the header goes ONLY to the order Worker (never the sink, Google or anything else).
+    // A caller that sets x-staging-access itself (e.g. '' or a wrong value to test the gate) keeps its own value.
+    let headers = init?.headers;
+    if (url.hostname === stagingCfg.workerHost && stagingAccessToken) {
+      const h = new Headers(init?.headers ?? (typeof input === 'string' ? undefined : input.headers));
+      if (!h.has('x-staging-access')) h.set('x-staging-access', stagingAccessToken);
+      headers = h;
+    }
     const bound = AbortSignal.timeout(timeoutMs);
     const signal = init?.signal ? AbortSignal.any([init.signal, bound]) : bound;
-    return realFetch(input, { ...init, signal });
+    return realFetch(input, { ...init, ...(headers !== undefined ? { headers } : {}), signal });
   };
 }
 

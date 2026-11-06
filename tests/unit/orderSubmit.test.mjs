@@ -781,3 +781,12 @@ test('public status request (number only)', async () => {
   assert.equal(await fetchOrderStatus(ID, opts(), deps(mk(500, {}))), null);
   assert.equal(await fetchOrderStatus('bad', opts(), deps(mk(200, {}))), null);
 });
+
+// ================================================================== Worker PRICE_CHECK_MODE=enforce
+test('422 PRICE_CHANGED (enforce): rejected at once, sent exactly ONCE — never resent automatically', async () => {
+  const E422 = { status: 422, body: { ok: false, code: 'PRICE_CHANGED', problems: ['total'], serverPricing: { total: 3.5 } } };
+  const f = fakeFetch([E422, OK()], [EXISTS]);
+  const r = await submitOrder(order(), opts(), deps(f));
+  assert.deepEqual([r.kind, r.code, r.status], ['rejected', 'PRICE_CHANGED', 422]);
+  assert.equal(f.creates().length, 1, 'no retry after a price refusal');
+});

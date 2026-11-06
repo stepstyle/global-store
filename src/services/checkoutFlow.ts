@@ -504,6 +504,11 @@ export function messageFor(r: CheckoutResult): UiMessage | null {
       if (r.code === 'USERID_MISMATCH') {
         return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'تغيّر الحساب المسجّل', titleEn: 'The signed-in account changed', bodyAr: 'الحساب المسجّل الآن يختلف عن الحساب الذي بدأت به هذا الطلب، فلم يُرسل. راجع بياناتك ثم أكّد الطلب من جديد.', bodyEn: 'The account signed in now differs from the one this order was started with, so it was not sent. Review your details and confirm again.' };
       }
+      // Worker PRICE_CHECK_MODE=enforce: 422, nothing was saved or reserved. Never resent automatically: the customer
+      // reviews the order (the price preview of step 3 shows the server's numbers) and confirms again.
+      if (r.code === 'PRICE_CHANGED') {
+        return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'تغيّر السعر', titleEn: 'The price changed', bodyAr: 'تغيّر سعر أحد المنتجات أو رسوم التوصيل. يرجى مراجعة الطلب قبل التأكيد. لم يُنشأ أي طلب.', bodyEn: 'The price of an item or the delivery fee changed. Please review your order before confirming. No order was created.' };
+      }
       if (r.code === 'PAYLOAD_TOO_LARGE') {
         return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'الطلب كبير جدًا', titleEn: 'Order too large', bodyAr: 'قلّل عدد المنتجات أو طول الملاحظات ثم أعد المحاولة.', bodyEn: 'Reduce the items or the note length and try again.' };
       }

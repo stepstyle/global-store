@@ -51,7 +51,9 @@ export async function main(argv, deps = {}) {
   const runEnv = wranglerEnv(st, env); // refuses before any spawn
   const spawn = deps.spawn ?? spawnSync;
 
-  console.log(`PLAN: ${plan.name} -> Cloudflare account ${st.cloudflareAccountId}\n  dry-run: node ${plan.dryRun.slice(1).join(' ')}\n  deploy : node ${plan.deploy.slice(1).join(' ')}`);
+  // Output never shows the Cloudflare account id or login e-mail (they stay in staging.config.json); the account is
+  // still pinned for every wrangler call by runEnv / who.env below.
+  console.log(`PLAN: ${plan.name} -> the configured staging Cloudflare account (id hidden)\n  dry-run: node ${plan.dryRun.slice(1).join(' ')}\n  deploy : node ${plan.deploy.slice(1).join(' ')}`);
   const dry = spawn(process.execPath, plan.dryRun, { stdio: 'inherit', env: runEnv });
   if ((dry.status ?? 1) !== 0) throw new Error('dry-run failed — not deploying');
 
@@ -60,7 +62,7 @@ export async function main(argv, deps = {}) {
     return 0;
   }
   const who = verifyCloudflareAccount(st, { env, spawn });
-  console.log(`account check OK: ${who.email} -> ${who.accountId} (only account)`);
+  console.log('account check OK: wrangler sees exactly one account — the configured staging one — with the configured e-mail (both hidden)');
   const r = spawn(process.execPath, plan.deploy, { stdio: 'inherit', env: who.env });
   return r.status ?? 1;
 }

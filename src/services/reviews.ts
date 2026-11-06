@@ -12,6 +12,7 @@ import {
   deleteDoc,
   doc,
   serverTimestamp,
+  deleteField,
 } from 'firebase/firestore';
 
 import { db as firebaseDb, isFirebaseInitialized } from './firebase';
@@ -210,7 +211,7 @@ export const reviewsApi = {
     const pid = sanitize(input.productId);
     const uid = sanitize(input.userId);
     const userName = sanitize(input.userName) || 'User';
-    const userEmail = sanitize(input.userEmail);
+    // privacy: reviews are PUBLIC — the reviewer's e-mail is never stored in them (input.userEmail is ignored)
     const comment = sanitize(input.comment);
     const rating = clampRating(input.rating);
 
@@ -235,7 +236,6 @@ export const reviewsApi = {
             productId: pid,
             userId: uid,
             userName,
-            userEmail,
             rating,
             comment,
             status: 'published', // أو 'hidden' إذا أردت مراجعة الإدارة أولاً
@@ -252,7 +252,8 @@ export const reviewsApi = {
             rating,
             comment,
             userName,
-            userEmail,
+            // removes the e-mail an OLD review may still carry (firestore.rules.final allows only its removal)
+            userEmail: deleteField(),
             updatedAt: serverTimestamp(),
           });
         }
@@ -261,7 +262,10 @@ export const reviewsApi = {
         return;
       }
     } catch (error) {
-      console.error('Firebase upsert failed, falling back to local:', error);
+      console.error('Firebase upsert failed:', error);
+      // the review was NOT published: never pretend otherwise by saving it in this browser only — the caller shows
+      // "failed, try again". The local store is used only when Firebase is not configured at all (mock mode).
+      if (isFirebaseInitialized && firebaseDb) throw error;
     }
 
     // Local Fallback
@@ -275,7 +279,6 @@ export const reviewsApi = {
         productId: pid,
         userId: uid,
         userName,
-        userEmail,
         rating,
         comment,
         status: 'published',
@@ -291,7 +294,6 @@ export const reviewsApi = {
         rating,
         comment,
         userName,
-        userEmail,
         updatedAtMs: now,
       };
     }
@@ -329,6 +331,7 @@ export const reviewsApi = {
       }
     } catch (error) {
       console.error('Firebase toggleLike failed:', error);
+      if (isFirebaseInitialized && firebaseDb) throw error; // not saved: no local-only pretend
     }
 
     // Local Fallback
@@ -372,6 +375,7 @@ export const reviewsApi = {
       }
     } catch (error) {
       console.error('Firebase setStatus failed:', error);
+      if (isFirebaseInitialized && firebaseDb) throw error; // not saved: no local-only pretend
     }
 
     // Local Fallback
@@ -411,6 +415,7 @@ export const reviewsApi = {
       }
     } catch (error) {
       console.error('Firebase setAdminReply failed:', error);
+      if (isFirebaseInitialized && firebaseDb) throw error; // not saved: no local-only pretend
     }
 
     // Local Fallback
@@ -443,6 +448,7 @@ export const reviewsApi = {
       }
     } catch (error) {
       console.error('Firebase remove failed:', error);
+      if (isFirebaseInitialized && firebaseDb) throw error; // not saved: no local-only pretend
     }
 
     // Local Fallback

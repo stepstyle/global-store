@@ -1,0 +1,9 @@
+{
+  "name": "dairsharaf-ai-discovery",
+  "private": true,
+  "type": "module",
+  "description": "STAGING-only AI intent helper for product discovery. Fake provider by default. No deploy script on purpose.",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}

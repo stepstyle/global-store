@@ -52,6 +52,23 @@ export function hasValidWorkerAuth(request, cfg) {
   return timingSafeEqual(request.headers.get('x-worker-auth') || '', cfg.workerAuthToken);
 }
 
+/** minimum length of STAGING_ACCESS_TOKEN; a shorter (or missing) secret refuses every gated request */
+export const STAGING_ACCESS_MIN_LENGTH = 32;
+
+/**
+ * STAGING ONLY access gate (`x-staging-access`, compared in constant time). Fails CLOSED: a Worker without a
+ * usable secret refuses everything. An ADDITIONAL layer: it never replaces Firebase Auth, the tracking key or
+ * x-worker-auth. Sent only by local Node.js staging clients — not in CORS allow-headers, so a browser cannot send it.
+ * Returns { ok, reason } — the reason is for logs and never contains the header or the secret.
+ */
+export function stagingAccess(request, cfg) {
+  const expected = typeof cfg.stagingAccessToken === 'string' ? cfg.stagingAccessToken : '';
+  if (expected.length < STAGING_ACCESS_MIN_LENGTH) return { ok: false, reason: 'not_configured' };
+  const got = request.headers.get('x-staging-access');
+  if (!got) return { ok: false, reason: 'missing' };
+  return timingSafeEqual(got, expected) ? { ok: true, reason: null } : { ok: false, reason: 'mismatch' };
+}
+
 export function clientIp(request) {
   return request.headers.get('cf-connecting-ip') || 'unknown';
 }

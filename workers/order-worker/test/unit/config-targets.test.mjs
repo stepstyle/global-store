@@ -27,6 +27,8 @@ const PRODUCTION = {
   FIREBASE_CLIENT_EMAIL: 'firebase-adminsdk-abcde@antastore1-82b50.iam.gserviceaccount.com',
   FIREBASE_PRIVATE_KEY: FAKE_KEY,
   TURNSTILE_SECRET: '0x4AAAAAAAREALLOOKINGSECRET',
+  PRICE_CHECK_MODE: 'enforce', // production launch requirement (config.js)
+  TURNSTILE_MODE: 'enforce',
 };
 
 const withTarget = (t) => {
@@ -128,4 +130,19 @@ test('misconfigured staging Worker answers CONFIG_ERROR and makes ZERO outbound 
     globalThis.fetch = original;
   }
   assert.equal(outbound, 0);
+});
+
+test('production refuses the transitional modes: PRICE_CHECK_MODE and TURNSTILE_MODE must both be enforce', () => {
+  withTarget('production');
+  assert.equal(loadConfig(PRODUCTION).ok, true);
+  for (const [k, v] of [['PRICE_CHECK_MODE', 'log'], ['PRICE_CHECK_MODE', undefined], ['TURNSTILE_MODE', 'log'], ['TURNSTILE_MODE', 'off'], ['TURNSTILE_MODE', undefined]]) {
+    const env = { ...PRODUCTION, [k]: v };
+    if (v === undefined) delete env[k];
+    const c = loadConfig(env);
+    assert.equal(c.ok, false, `${k}=${v}`);
+    assert.ok(c.errors.some((e) => e.includes(`production requires ${k}=enforce`)), c.errors.join('; '));
+  }
+  // staging keeps its own (log) price mode unchanged
+  withTarget('staging');
+  assert.equal(loadConfig({ ...STAGING, PRICE_CHECK_MODE: 'log' }).ok, true);
 });

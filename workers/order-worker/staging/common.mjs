@@ -26,7 +26,8 @@ export function parseArgs(argv) {
 export function prepareStaging({ configPath, config, env = process.env, requireTokens = false, realFetch = globalThis.fetch }) {
   const raw = config ?? loadStagingConfigFile(configPath);
   const st = assertStagingConfig(raw, { env, requireTokens });
-  const fetchImpl = guardedFetch(st, realFetch);
+  // STAGING_ACCESS_TOKEN (order Worker gate) is read from the local environment only — never from a file sent to a browser
+  const fetchImpl = guardedFetch(st, realFetch, { stagingAccessToken: String(env.STAGING_ACCESS_TOKEN || '') });
   globalThis.fetch = fetchImpl;
 
   const key = JSON.parse(readFileSync(st.serviceAccountKeyPath, 'utf8'));

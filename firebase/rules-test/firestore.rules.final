@@ -101,8 +101,10 @@ service cloud.firestore {
     // orderLedger, worker_test, …: no match => denied to all clients.
 
     // ---------- reviews (same as compat) ----------
+    // reviews are PUBLIC: no e-mail address in them (privacy). 'userEmail' is no longer accepted on create; an author
+    // may only REMOVE it from an old review (see update), never write it.
     function reviewKeys() {
-      return ['productId', 'userId', 'userName', 'userEmail', 'rating', 'comment', 'status',
+      return ['productId', 'userId', 'userName', 'rating', 'comment', 'status',
               'likesCount', 'likesBy', 'adminReply', 'createdAt', 'updatedAt'];
     }
 
@@ -128,6 +130,8 @@ service cloud.firestore {
         || (signedIn()
             && resource.data.userId == request.auth.uid
             && changed().hasOnly(['rating', 'comment', 'userName', 'userEmail', 'updatedAt'])
+            // userEmail may only be REMOVED (old reviews), never written or changed
+            && (!('userEmail' in changed()) || !('userEmail' in request.resource.data))
             && validRating(request.resource.data.rating)
             && isStr(request.resource.data.get('comment', ''), 2000))
         || (signedIn()

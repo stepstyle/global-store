@@ -63,6 +63,34 @@ export function computeServerPricing(lines, addressMeta, shippingMethodId) {
   };
 }
 
+/** Stock/variant warnings that make the server price of a line unknowable or ambiguous (enforce refuses them). */
+export const PRICE_BLOCKING_WARNINGS = Object.freeze(['PRODUCT_NOT_FOUND', 'VARIANT_NOT_FOUND', 'AMBIGUOUS_VARIANT', 'DUPLICATE_VARIANT_ID']);
+
+/**
+ * PRICE_CHECK_MODE=enforce: everything that must hold before an order may be saved. Returns [] when the order's
+ * numbers equal the SERVER's (trusted product / variant prices from Firestore + server discount & shipping rules),
+ * otherwise the list of problems. Nothing the browser sends is trusted: each line's unit price, subtotal, discount,
+ * shipping and total must be PRESENT and equal (± PRICE_TOLERANCE) to what the server computed.
+ * @param server  computeServerPricing(...) result
+ * @param client  validated clientPricing { subtotal, discountAmount, shippingCost, total }
+ * @param lines   planInventory lineInfo [{ index, serverUnitPrice }]
+ * @param items   validated order items [{ clientUnitPrice }] (same order as lines)
+ * @param warnings planInventory + pricing warnings
+ */
+export function enforcePriceProblems(server, client, lines, items, warnings = []) {
+  const p = new Set(comparePricing(server, client)); // totals that differ + 'incomplete'
+  for (const k of ['subtotal', 'discountAmount', 'shippingCost', 'total']) {
+    if (client?.[k] === null || client?.[k] === undefined) p.add(`missing:${k}`);
+  }
+  lines.forEach((l, i) => {
+    const c = items[i]?.clientUnitPrice;
+    if (c === null || c === undefined) p.add(`missing:items[${l.index}].price`);
+    else if (l.serverUnitPrice === null || l.serverUnitPrice === undefined || Math.abs(l.serverUnitPrice - c) > PRICE_TOLERANCE) p.add(`items[${l.index}].price`);
+  });
+  for (const w of warnings) if (PRICE_BLOCKING_WARNINGS.includes(w.code)) p.add(w.line !== undefined ? `${w.code}:items[${w.line}]` : w.code);
+  return [...p];
+}
+
 /** Returns the list of fields where the browser's numbers differ from the server's. */
 export function comparePricing(server, client) {
   const diffs = [];

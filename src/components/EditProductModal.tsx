@@ -1145,5 +1145,4 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ isOpen, onClose, pr
     </div>
   );
 };
-
 export default EditProductModal;

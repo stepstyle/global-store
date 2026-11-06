@@ -180,7 +180,7 @@ export const initFirebase = () => {
 
   try {
     initWithTarget(target);
-    if (import.meta.env.DEV) console.log(`🔥 Firebase config source: ${target.kind === 'production' ? target.source : 'emulator'}`);
+    if (import.meta.env.DEV) console.log(`🔥 Firebase config source: ${target.kind === 'production' ? target.source : target.kind}`);
   } catch (e) {
     if (import.meta.env.DEV) console.error('Failed to init Firebase', e);
     initFailed = true;

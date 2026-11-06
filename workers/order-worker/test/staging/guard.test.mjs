@@ -20,7 +20,7 @@ let dir;
 let keyPath;
 let prodKeyPath;
 let good;
-const TOKENS = { STAGING_SINK_READ_TOKEN: 'r'.repeat(32), STAGING_WORKER_AUTH_TOKEN: 'w'.repeat(32) };
+const TOKENS = { STAGING_SINK_READ_TOKEN: 'r'.repeat(32), STAGING_WORKER_AUTH_TOKEN: 'w'.repeat(32), STAGING_ACCESS_TOKEN: 'g'.repeat(32) };
 const STAGING_CF = '0123456789abcdef0123456789abcdef';
 const STAGING_EMAIL = 'staging-owner@example.com';
 // Answers the read-only account queries as a correctly logged-in staging setup would; records every call.
@@ -129,6 +129,28 @@ test('refuses: ambient credentials / project variables pointing elsewhere', () =
 test('refuses: missing / short test tokens when the script needs them', () => {
   refuses(good, { env: {}, requireTokens: true });
   refuses(good, { env: { STAGING_SINK_READ_TOKEN: 'short', STAGING_WORKER_AUTH_TOKEN: 'w'.repeat(32) }, requireTokens: true });
+  // the order Worker's access gate secret: required, >= 32 characters (same minimum as the Worker)
+  refuses(good, { env: { STAGING_SINK_READ_TOKEN: 'r'.repeat(32), STAGING_WORKER_AUTH_TOKEN: 'w'.repeat(32) }, requireTokens: true });
+  refuses(good, { env: { ...TOKENS, STAGING_ACCESS_TOKEN: 'g'.repeat(31) }, requireTokens: true });
+});
+
+test('guardedFetch: x-staging-access goes to the ORDER Worker only, never to the sink / Google; caller value kept', async () => {
+  const st = assertStagingConfig(good, { env: {} });
+  const seen = [];
+  const spy = async (input, init) => { seen.push([String(typeof input === 'string' ? input : input.url), new Headers(init?.headers).get('x-staging-access')]); return new Response('{}'); };
+  const SECRET = 'g'.repeat(32);
+  const f = guardedFetch(st, spy, { stagingAccessToken: SECRET });
+  await f('https://anta-order-notify-staging.acme.workers.dev/create-order', { method: 'POST', headers: { 'content-type': 'application/json' } });
+  await f('https://anta-order-notify-staging.acme.workers.dev/orders/x/status');
+  await f('https://anta-notify-sink-staging.acme.workers.dev/calls', { headers: { 'x-sink-auth': 'r'.repeat(32) } });
+  await f('https://firestore.googleapis.com/v1/projects/dairsharaf-staging/databases/(default)/documents/products/x');
+  await f('https://oauth2.googleapis.com/token');
+  await f('https://anta-order-notify-staging.acme.workers.dev/create-order', { headers: { 'x-staging-access': '' } }); // gate test: "missing"
+  assert.deepEqual(seen.map((x) => x[1]), [SECRET, SECRET, null, null, null, '']);
+  // without a configured token nothing is added (scripts that never call the Worker: seed, deploy)
+  const plain = guardedFetch(st, spy);
+  await plain('https://anta-order-notify-staging.acme.workers.dev/');
+  assert.equal(seen.at(-1)[1], null);
 });
 
 // ---------------------------------------------------------------------------

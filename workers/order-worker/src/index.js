@@ -10,7 +10,7 @@
 
 import { loadConfig, WORKER_VERSION } from './config.js';
 import { Firestore } from './firestore.js';
-import { corsHeaders, json, readJsonBody, hasValidWorkerAuth, clientIp, log } from './http.js';
+import { corsHeaders, json, readJsonBody, hasValidWorkerAuth, stagingAccess, clientIp, log } from './http.js';
 import { allowRequest } from './ratelimit.js';
 import { createOrder, orderStatus, orderSummary, reconcileOrphans } from './orders.js';
 import { processNotifications, retryPendingNotifications } from './notify.js';
@@ -41,6 +41,16 @@ async function handle(request, env, ctx, cfg) {
   const reply = (body, status = 200) => json(body, status, cors);
 
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+
+  // STAGING ONLY: secret access gate in front of every route except the health check "/" — BEFORE the rate limit,
+  // body, identity, Turnstile, Firestore, stock and notifications. No usable secret in the Worker = all refused.
+  if (cfg.isStaging && url.pathname !== '/') {
+    const gate = stagingAccess(request, cfg);
+    if (!gate.ok) {
+      log('staging_gate.denied', { reason: gate.reason });
+      return reply({ ok: false, code: 'STAGING_ACCESS_DENIED' }, 403);
+    }
+  }
 
   const fs = new Firestore(cfg);
   const ip = clientIp(request);

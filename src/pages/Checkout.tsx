@@ -30,6 +30,12 @@ import {
 } from '../services/checkoutFlow';
 import { previewServerPricing } from '../services/pricePreview';
 import { getFirebaseAuth, currentIdentity } from '../services/firebase';
+import { siteKeyFrom } from '../services/turnstile';
+import { useTurnstile } from '../components/useTurnstile';
+
+// Cloudflare Turnstile: PUBLIC site key only (the secret stays in the Worker). Unset = no widget (the Worker decides:
+// TURNSTILE_MODE=enforce refuses orders without a token).
+const TURNSTILE_SITE_KEY = siteKeyFrom(import.meta.env.VITE_TURNSTILE_SITE_KEY);
 import { ORDER_LIMITS, ORDER_EMAIL_RE, checkOrderLimits, sanitizeOrderLine } from '../services/orderLimits';
 
 /** uid of the customer signed in with Firebase Auth right now, or null (guest / not signed in / local mock user). */
@@ -192,9 +198,14 @@ const Checkout: React.FC = () => {
   const [submitResult, setSubmitResult] = useState<CheckoutResult | null>(null);
   // why the order was NOT sent (checked locally before sending); shown inline — App's toasts are not rendered
   const [submitBlocked, setSubmitBlocked] = useState('');
+  // Turnstile widget on the payment step; a FRESH single-use token is asked before every send (orderSubmit)
+  const turnstile = useTurnstile(TURNSTILE_SITE_KEY, step === 3, isAR ? 'ar' : 'en');
+  const turnstileTokenRef = useRef(turnstile.getToken);
+  turnstileTokenRef.current = turnstile.getToken;
   const workerOpts = useMemo<SubmitOptions>(
     () => ({
       workerUrl: String(import.meta.env.VITE_WORKER_URL || ''),
+      ...(TURNSTILE_SITE_KEY ? { getTurnstileToken: () => turnstileTokenRef.current() } : {}),
       // Firebase ID token of the signed-in customer (refreshed on request after a 401); null for guests
       getAuthToken: async (forceRefresh: boolean) => {
         const current = getFirebaseAuth()?.currentUser;
@@ -610,6 +621,12 @@ const Checkout: React.FC = () => {
         setSubmitBlocked(tt('enterCliqRef', 'يرجى إدخال الرقم المرجعي لحوالة CliQ', 'Please enter the CliQ reference number.'));
         return;
       }
+    }
+
+    // Turnstile configured but unavailable: nothing is sent (the Worker would refuse a missing token anyway)
+    if (turnstile.enabled && turnstile.status === 'error') {
+      setSubmitBlocked(tr('تعذّر تحميل التحقق الأمني، فلم يُرسل الطلب. حدّث الصفحة ثم أعد المحاولة.', 'The security check is unavailable, so the order was not sent. Refresh the page and try again.'));
+      return;
     }
 
     // the Worker's input limits: refuse HERE with a clear message (nothing is sent; cart and pending attempt untouched)
@@ -1199,6 +1216,18 @@ const Checkout: React.FC = () => {
                         )}
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {/* Cloudflare Turnstile (only when a site key is configured) */}
+                {turnstile.enabled && (
+                  <div className="mt-8" data-testid="turnstile">
+                    <div ref={turnstile.containerRef} />
+                    {turnstile.status === 'error' && (
+                      <p className="mt-2 text-xs font-bold text-red-600" role="alert">
+                        {tr('تعذّر تحميل التحقق الأمني. تحقّق من الاتصال ثم حدّث الصفحة. لن يُرسل الطلب بدونه.', 'The security check could not load. Check your connection and refresh the page. The order cannot be sent without it.')}
+                      </p>
+                    )}
                   </div>
                 )}
 

@@ -36,6 +36,9 @@ const Checkout = React.lazy(() => import('./pages/Checkout'));
 const OrderSuccess = React.lazy(() => import('./pages/OrderSuccess'));
 const MyOrders = React.lazy(() => import('./pages/MyOrders'));
 const AdminAddProduct = React.lazy(() => import('./pages/AdminAddProduct'));
+// DEV ONLY — AI Product Discovery lab. import.meta.env.DEV is the constant `false` in production builds, so Vite drops
+// this import (and the page chunk) from the published site.
+const AiDiscoveryLab = import.meta.env.DEV ? React.lazy(() => import('./pages/dev/AiDiscoveryLab')) : null;
 
 const ORDER_NOTE_KEY = 'anta_order_note_v1';
 const ORDER_NOTE_MAX_CHARS = 600;
@@ -376,6 +379,7 @@ const App: React.FC = () => {
                 <Route path="/my-orders" element={<MyOrders />} />
                 {/* 🛡️ AdminGuard used here properly */}
                 <Route path="/admin-secure" element={<AdminGuard><AdminDashboard /></AdminGuard>} />
+                {AiDiscoveryLab && <Route path="/dev/ai-discovery" element={<AiDiscoveryLab />} />}
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Suspense>

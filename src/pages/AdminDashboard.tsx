@@ -1,6 +1,6 @@
 // src/pages/AdminDashboard.tsx
 import { collection, query, where, orderBy, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
-import { getFirestoreDb, firebaseReady as fbReady } from '../services/firebase';
+import { getFirestoreDb, firebaseReady as fbReady, getFirebaseAuth } from '../services/firebase';
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import Papa from 'papaparse';
 import { useNavigate } from 'react-router-dom';
@@ -479,16 +479,21 @@ const AdminDashboard: React.FC = () => {
       // إرسال إيميل التنبيه بالخفاء بدون انتظار (عشان ما يعلّق الموقع أبدًا)
       const orderToNotify: any = orders.find((o: any) => o.id === id);
       if (orderToNotify && orderToNotify.customerEmail) {
-        fetch('/api/notify-customer', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: orderToNotify.customerEmail,
-            name: orderToNotify.address?.fullName || 'عميلنا العزيز',
-            orderId: id,
-            status: newStatus
-          })
-        }).catch(err => console.error('Silent email error:', err));
+        // the e-mail function only acts for a VERIFIED admin: send this admin's Firebase ID token
+        (async () => {
+          const idToken = await getFirebaseAuth()?.currentUser?.getIdToken().catch(() => null);
+          if (!idToken) return;
+          await fetch('/api/notify-customer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+            body: JSON.stringify({
+              email: orderToNotify.customerEmail,
+              name: orderToNotify.address?.fullName || 'عميلنا العزيز',
+              orderId: id,
+              status: newStatus
+            })
+          });
+        })().catch(err => console.error('Silent email error:', err));
       }
     } catch (e: any) {
       console.error(e);

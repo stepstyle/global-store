@@ -30,7 +30,8 @@ const guards = [
   ['ENVIRONMENT=staging on a local build', { ENVIRONMENT: 'staging' }],
   ['ENVIRONMENT=production on a local build', { ENVIRONMENT: 'production' }],
   ['localhost lookalike host', { FIRESTORE_BASE_URL: 'http://127.0.0.1.evil.com/v1' }],
-  ['PRICE_CHECK_MODE=enforce not available in phase 1', { PRICE_CHECK_MODE: 'enforce' }],
+  // enforce is now a supported mode (test/unit/price-enforce.test.mjs); anything other than log|enforce is refused
+  ['PRICE_CHECK_MODE unknown value', { PRICE_CHECK_MODE: 'strict' }],
 ];
 for (const [name, o] of guards) {
   test(`guard blocks: ${name}`, () => assert.equal(loadConfig({ ...local, ...o }).ok, false));

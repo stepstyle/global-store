@@ -99,7 +99,7 @@ test('every staging script refuses a config without account values BEFORE any sp
   const cli = fakeCli();
   const fetchCalls = [];
   const realFetch = async () => { fetchCalls.push(1); return new Response('{}'); };
-  const env = { STAGING_SINK_READ_TOKEN: 'r'.repeat(32), STAGING_WORKER_AUTH_TOKEN: 'w'.repeat(32) };
+  const env = { STAGING_SINK_READ_TOKEN: 'r'.repeat(32), STAGING_WORKER_AUTH_TOKEN: 'w'.repeat(32), STAGING_ACCESS_TOKEN: 'g'.repeat(32) };
   const deps = { config: noAccounts, env, spawn: cli, tomlOverride: orderToml, realFetch };
   await assert.rejects(deployWorkersMain(['--which', 'order', '--execute', '--confirm', 'anta-order-notify-staging'], deps), /cloudflareAccountId/);
   await assert.rejects(deployRulesMain(['--rules', 'final', '--execute', '--confirm', 'dairsharaf-staging'], deps), /firebaseAccountEmail/);
@@ -183,6 +183,48 @@ test('deploy-workers: every wrong-account case stops BEFORE the real deploy; dry
   assert.equal(await deployWorkersMain(['--which', 'order', '--execute', '--confirm', 'anta-order-notify-staging'], { config: good, env: {}, spawn: ok, tomlOverride: orderToml }), 0);
   assert.deepEqual(ok.calls.map((c) => (c.args.includes('--dry-run') ? 'dry-run' : c.args.includes('whoami') ? 'whoami' : 'deploy')), ['dry-run', 'whoami', 'deploy']);
   assert.ok(ok.calls.every((c) => c.env.CLOUDFLARE_ACCOUNT_ID === CF_STAGING));
+});
+
+test('deploy-workers: output never shows a Cloudflare account id, login e-mail or key — on success AND on every refusal', async () => {
+  const SECRETS = [CF_STAGING, CF_OTHER, EMAIL, OTHER_EMAIL, 'BEGIN PRIVATE KEY', FAKE_KEY.trim()];
+  const run = async (argv, deps) => {
+    const out = [];
+    const orig = { log: console.log, error: console.error, warn: console.warn };
+    console.log = console.error = console.warn = (...a) => out.push(a.join(' '));
+    let result;
+    try {
+      result = await deployWorkersMain(argv, { config: good, env: {}, tomlOverride: orderToml, ...deps });
+    } catch (e) {
+      out.push(e.message); // what runCli prints for a refusal / error
+      result = e;
+    } finally {
+      Object.assign(console, orig);
+    }
+    return { result, text: out.join('\n') };
+  };
+  const EXEC = ['--which', 'order', '--execute', '--confirm', 'anta-order-notify-staging'];
+  const cases = {
+    'dry-run only': [['--which', 'order'], { spawn: fakeCli() }, 0],
+    'deploy OK': [EXEC, { spawn: fakeCli() }, 0],
+    'wrong --confirm': [['--which', 'order', '--execute', '--confirm', 'anta-order-notify'], { spawn: fakeCli() }, StagingGuardError],
+    'not logged in': [EXEC, { spawn: fakeCli({ cf: null }) }, StagingGuardError],
+    'store account': [EXEC, { spawn: fakeCli({ cf: { loggedIn: true, email: OTHER_EMAIL, accounts: [{ id: CF_OTHER, name: 'Store' }] } }) }, StagingGuardError],
+    'two accounts': [EXEC, { spawn: fakeCli({ cf: { loggedIn: true, email: EMAIL, accounts: [{ id: CF_STAGING }, { id: CF_OTHER }] } }) }, StagingGuardError],
+    'other e-mail': [EXEC, { spawn: fakeCli({ cf: { loggedIn: true, email: OTHER_EMAIL, accounts: [{ id: CF_STAGING }] } }) }, StagingGuardError],
+    'env points to another account': [EXEC, { spawn: fakeCli(), env: { CLOUDFLARE_ACCOUNT_ID: CF_OTHER } }, StagingGuardError],
+    'dry-run fails': [EXEC, { spawn: fakeCli({ deployStatus: 1 }) }, Error],
+    'production project config': [EXEC, { spawn: fakeCli(), config: { ...good, projectId: PROD } }, StagingGuardError],
+    'wrangler file of another account': [EXEC, { spawn: fakeCli(), tomlOverride: (() => { const p = join(dir, 'acct.toml'); writeFileSync(p, `account_id = "${CF_OTHER}"\n${readFileSync(orderToml, 'utf8')}`); return p; })() }, StagingGuardError],
+  };
+  for (const [name, [argv, deps, expected]] of Object.entries(cases)) {
+    const { result, text } = await run(argv, deps);
+    if (expected === 0) assert.equal(result, 0, name);
+    else assert.ok(result instanceof expected, `${name}: refused (${result?.message ?? result})`);
+    assert.ok(text.length > 0, `${name}: something was reported`);
+    for (const s of SECRETS) assert.equal(text.includes(s), false, `${name}: output must not contain account data / keys`); // value never printed
+    for (const c of deps.spawn.calls) assert.notEqual(c.env?.CLOUDFLARE_ACCOUNT_ID, CF_OTHER, `${name}: never pinned to another account`);
+    if (expected !== 0) assert.equal(deps.spawn.deploys().length, 0, `${name}: no real deploy`);
+  }
 });
 
 // ------------------------------------------------------------------ Firebase

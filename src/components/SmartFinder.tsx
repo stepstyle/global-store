@@ -2,6 +2,8 @@
 import React, { useState, useMemo } from 'react';
 import { Sparkles, ArrowRight, ArrowLeft, RefreshCcw, Search, Baby, User, Users, Heart, Gamepad2, BrainCircuit, PartyPopper, ArrowUpRight,Palette,X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+// The SAME discovery engine as the free-text search (src/services/discovery): store data only, deterministic order.
+import { discoverWithIntent, giftFinderIntent } from '../services/discovery/index.ts';
 
 interface Product {
   id: string;
@@ -19,13 +21,19 @@ interface SmartFinderProps {
   isRtl: boolean;
 }
 
-type Step = 'intro' | 'who' | 'age' | 'interest' | 'result';
+type Step = 'intro' | 'who' | 'age' | 'ageDetail' | 'interest' | 'result';
+
+// "0-3" is too wide to suggest something safe for a baby: the finder asks the exact range (same style, one tap).
+const YOUNG_AGE_DETAIL: { value: string; ar: string; en: string }[] = [
+  { value: '0-1', ar: 'أقل من سنة', en: 'Under 1 year' },
+  { value: '1-2', ar: 'من سنة إلى سنتين', en: '1 to 2 years' },
+  { value: '2-3', ar: 'من سنتين إلى 3 سنوات', en: '2 to 3 years' },
+];
 
 const SmartFinder: React.FC<SmartFinderProps> = ({ products, L, isRtl }) => {
   const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [step, setStep] = useState<Step>('intro');
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   const [answers, setAnswers] = useState({
     who: '',
@@ -46,54 +54,17 @@ const SmartFinder: React.FC<SmartFinderProps> = ({ products, L, isRtl }) => {
 
   const handleAnswer = (key: keyof typeof answers, value: string, nextStep: Step) => {
     setAnswers(prev => ({ ...prev, [key]: value }));
-    if (nextStep === 'result') {
-      setIsAnalyzing(true);
-      setStep('result');
-      // محاكاة تفكير الذكاء الاصطناعي لمدة ثانية
-      setTimeout(() => setIsAnalyzing(false), 1200);
-    } else {
-      setStep(nextStep);
-    }
+    setStep(nextStep);
   };
 
-  // 🧠 خوارزمية الذكاء الاصطناعي البسيطة (Smart Filtering)
- // 🧠 خوارزمية المكتشف الذكي (المعدلة حسب أقسام متجرك الحقيقية)
-  const recommendedProducts = useMemo(() => {
-    if (step !== 'result' || isAnalyzing) return [];
-
-    let filtered = [...products];
-
-    // 1. الفلترة الأساسية بتعتمد على "السؤال الثالث" اللي بيطابق "الأقسام" عندك
-    if (answers.interest === 'educational') {
-      // إذا اختار تعليم وذكاء: بنجيبله ألعاب المنتسوري والتركيب
-      filtered = filtered.filter(p => p.category === 'Games' && 
-        (p.subCategory === 'montessori' || p.subCategory === 'building-blocks' || p.name.includes('تعليم') || p.name.includes('تركيب')));
-    } 
-    else if (answers.interest === 'fun') {
-      // إذا اختار مرح وتسلية: بنجيبله ألعاب الأولاد، البنات، والجماعية (الترفيهية)
-      filtered = filtered.filter(p => p.category === 'Games' && 
-        (p.subCategory === 'boys-toys' || p.subCategory === 'girls-toys' || p.subCategory === 'group-games' || p.name.includes('لعبة')));
-    } 
-    else if (answers.interest === 'art') {
-      // إذا اختار رسم وفن: بنحوله فوراً على قسم القرطاسية
-      filtered = filtered.filter(p => p.category === 'Stationery');
-    }
-
-    // 2. فلتر إضافي قوي: إذا بالسؤال الأول اختار "بيبي"
-    if (answers.who === 'baby') {
-      // بنلغي كل إشي وبنعطيه منتجات قسم مستلزمات الأطفال والمركبات
-      filtered = products.filter(p => p.category === 'BabyGear');
-    }
-
-    // 3. الحماية السحرية: إذا الفلتر ما لقى إشي (عشان ما تطلع الشاشة فاضية للزبون ويزعل)
-    if (filtered.length === 0) {
-       // بنسحب كل الألعاب كخيار بديل
-       filtered = products.filter(p => p.category === 'Games');
-    }
-
-    // 4. خلط المنتجات: عشان كل مرة يكبس فيها الزبون يطلعله 3 هدايا مختلفة عن اللي قبلها
-    return filtered.sort(() => 0.5 - Math.random()).slice(0, 3);
-  }, [answers, products, step, isAnalyzing]);
+  // The three answers -> a structured request for the discovery engine (only what the customer chose; no budget is
+  // asked, so none is assumed). Same engine and rules as the free-text search: store data only, stable order,
+  // out-of-stock never recommended, missing data said plainly.
+  const discovery = useMemo(() => {
+    if (step !== 'result') return null;
+    return discoverWithIntent(giftFinderIntent(answers), products, { limit: 6 });
+  }, [answers, products, step]);
+  const recommendedProducts = discovery?.results ?? [];
   return (
     <>
       {/* 🌟 القسم البارز في الصفحة الرئيسية */}
@@ -111,7 +82,7 @@ const SmartFinder: React.FC<SmartFinderProps> = ({ products, L, isRtl }) => {
               {L('محتار شو تختار؟', 'Not sure what to choose?')}
             </h3>
             <p className="text-white/80 text-sm sm:text-base max-w-lg">
-              {L('جاوب على 3 أسئلة سريعة، وخلي الذكاء الاصطناعي يختارلك الهدية المثالية بلمح البصر.', 'Answer 3 quick questions, and let our AI pick the perfect gift in seconds.')}
+              {L('جاوب على 3 أسئلة سريعة، ونقترح عليك هدايا مناسبة من منتجات المتجر مع سبب كل اقتراح.', 'Answer 3 quick questions and get gift suggestions from our store, each with the reason why.')}
             </p>
           </div>
           
@@ -135,7 +106,7 @@ const SmartFinder: React.FC<SmartFinderProps> = ({ products, L, isRtl }) => {
                 </div>
                 <div>
                   <h4 className="font-black text-slate-900 text-lg leading-none">{L('المكتشف الذكي', 'Smart Finder')}</h4>
-                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mt-1">{step === 'result' ? L('اكتمل التحليل', 'Analysis Complete') : L('خطوة ' + (step === 'who' ? '1' : step === 'age' ? '2' : '3') + ' من 3', 'Step ' + (step === 'who' ? '1' : step === 'age' ? '2' : '3') + ' of 3')}</p>
+                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mt-1">{step === 'result' ? L('النتائج', 'Results') : L('خطوة ' + (step === 'who' ? '1' : step === 'age' || step === 'ageDetail' ? '2' : '3') + ' من 3', 'Step ' + (step === 'who' ? '1' : step === 'age' || step === 'ageDetail' ? '2' : '3') + ' of 3')}</p>
                 </div>
               </div>
               <button onClick={handleClose} className="p-2 rounded-full hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition-colors">
@@ -169,8 +140,23 @@ const SmartFinder: React.FC<SmartFinderProps> = ({ products, L, isRtl }) => {
                   <h2 className="text-2xl font-black text-slate-800 text-center mb-6">{L('كم العمر تقريباً؟', 'What is the approximate age?')}</h2>
                   <div className="grid grid-cols-2 gap-3">
                     {['0-3', '4-7', '8-12', '+13'].map((ageGrp) => (
-                      <button key={ageGrp} onClick={() => handleAnswer('age', ageGrp, 'interest')} className="py-4 px-6 rounded-2xl border-2 border-slate-100 hover:border-indigo-500 hover:bg-indigo-500 hover:text-white hover:shadow-lg text-slate-700 transition-all font-black text-lg">
+                      <button key={ageGrp} onClick={() => handleAnswer('age', ageGrp, ageGrp === '0-3' ? 'ageDetail' : 'interest')} className="py-4 px-6 rounded-2xl border-2 border-slate-100 hover:border-indigo-500 hover:bg-indigo-500 hover:text-white hover:shadow-lg text-slate-700 transition-all font-black text-lg">
                         {ageGrp} {L('سنوات', 'Years')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* السؤال الثاني (تكملة): "0-3" واسع جدًا لاقتراح آمن — نسأل عن العمر بدقة */}
+              {step === 'ageDetail' && (
+                <div className="animate-in slide-in-from-right-8 duration-500">
+                  <h2 className="text-2xl font-black text-slate-800 text-center mb-2">{L('كم عمره بالتحديد؟', 'Exactly how old?')}</h2>
+                  <p className="text-sm text-slate-500 font-bold text-center mb-6">{L('حتى نقترح منتجًا مناسبًا وآمنًا لعمره', 'So we only suggest age-appropriate products')}</p>
+                  <div className="grid grid-cols-1 gap-3">
+                    {YOUNG_AGE_DETAIL.map((a) => (
+                      <button key={a.value} onClick={() => handleAnswer('age', a.value, 'interest')} className="py-4 px-6 rounded-2xl border-2 border-slate-100 hover:border-indigo-500 hover:bg-indigo-500 hover:text-white hover:shadow-lg text-slate-700 transition-all font-black text-lg">
+                        {L(a.ar, a.en)}
                       </button>
                     ))}
                   </div>
@@ -207,34 +193,39 @@ const SmartFinder: React.FC<SmartFinderProps> = ({ products, L, isRtl }) => {
               {/* شاشة التحميل والنتائج */}
               {step === 'result' && (
                 <div className="animate-in fade-in duration-500">
-                  {isAnalyzing ? (
-                    <div className="flex flex-col items-center justify-center py-10">
-                      <div className="relative">
-                        <div className="w-20 h-20 border-4 border-indigo-100 rounded-full"></div>
-                        <div className="w-20 h-20 border-4 border-indigo-600 rounded-full border-t-transparent animate-spin absolute top-0 left-0"></div>
-                        <Sparkles className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-indigo-600 animate-pulse" size={24} />
-                      </div>
-                      <h3 className="mt-6 text-xl font-black text-slate-800">{L('جاري تحليل طلبك...', 'Analyzing your request...')}</h3>
-                      <p className="text-slate-500 font-bold mt-2">{L('نبحث في مئات المنتجات لنجد الأفضل', 'Searching hundreds of products to find the best')}</p>
-                    </div>
-                  ) : (
                     <div>
                       <div className="text-center mb-8">
                         <div className="inline-flex items-center justify-center w-16 h-16 bg-emerald-100 text-emerald-500 rounded-full mb-4">
                           <PartyPopper size={32} />
                         </div>
-                        <h2 className="text-2xl font-black text-slate-800">{L('وجدنا الخيارات المثالية لك!', 'We found the perfect matches!')}</h2>
+                        <h2 className="text-2xl font-black text-slate-800">
+                          {recommendedProducts.length
+                            ? L('اقتراحات مناسبة من المتجر', 'Suggestions from our store')
+                            : L('لم نجد هدية مناسبة الآن', 'No matching gift right now')}
+                        </h2>
+                        {!recommendedProducts.length && discovery && (
+                          <p data-testid="finder-message" className="text-slate-500 font-bold mt-2 text-sm">{discovery.message}</p>
+                        )}
+                        {discovery?.clarification && (
+                          <p data-testid="finder-clarification" className="text-indigo-700 font-bold mt-2 text-sm">{discovery.clarification.question}</p>
+                        )}
                       </div>
-                      
-                      <div className="space-y-3">
-                        {recommendedProducts.map((p, idx) => (
-                          <div key={p.id} onClick={() => { handleClose(); navigate(`/product/${p.id}`); }} className="flex items-center gap-4 p-3 pr-4 rounded-2xl border border-slate-100 hover:border-indigo-300 hover:shadow-md bg-white cursor-pointer transition-all group">
+
+                      <div className="space-y-3" data-testid="finder-results">
+                        {recommendedProducts.map((p) => (
+                          <div key={p.id} data-product-id={p.id} onClick={() => { handleClose(); navigate(`/product/${p.id}`); }} className="flex items-center gap-4 p-3 pr-4 rounded-2xl border border-slate-100 hover:border-indigo-300 hover:shadow-md bg-white cursor-pointer transition-all group">
                             <div className="w-20 h-20 rounded-xl overflow-hidden bg-slate-50 shrink-0">
                               <img src={p.image} alt={p.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
                             </div>
                             <div className="flex-1 min-w-0">
                               <h4 className="font-bold text-slate-900 text-sm sm:text-base line-clamp-2 group-hover:text-indigo-600 transition-colors">{isRtl ? p.name : p.nameEn || p.name}</h4>
                               <p className="font-black text-indigo-600 mt-1">{p.price} JOD</p>
+                              {/* how it matches, in words (no percentage: the engine's score is not a measured accuracy) */}
+                              <p className={`text-[11px] font-bold mt-0.5 ${p.matchLevel === 'alternative' || p.matchLevel === 'inferred' ? 'text-amber-700' : 'text-emerald-700'}`} data-role="match">{p.matchLabel}</p>
+                              {/* why it is suggested — every line comes from the product's store data */}
+                              <p className="text-[11px] text-slate-500 mt-1 line-clamp-2" data-role="reasons">{p.reasons.slice(0, 2).join(' · ')}</p>
+                              {p.caveats.map((c) => <p key={c} className="text-[11px] text-amber-700 mt-0.5" data-role="caveat">{c}</p>)}
+                              {p.missing.map((m) => <p key={m} className="text-[11px] text-slate-400 mt-0.5" data-role="missing">{m}</p>)}
                             </div>
                             <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors shrink-0">
                               <ArrowRight size={18} className="rtl:rotate-180" />
@@ -243,11 +234,22 @@ const SmartFinder: React.FC<SmartFinderProps> = ({ products, L, isRtl }) => {
                         ))}
                       </div>
 
+                      {discovery && discovery.unavailable.length > 0 && (
+                        <p data-testid="finder-unavailable" className="mt-4 text-xs text-slate-500 font-bold">
+                          {L('مناسب لكن غير متوفر حاليًا: ', 'Matching but out of stock: ')}{discovery.unavailable.map((u) => u.name).join('، ')}
+                        </p>
+                      )}
+                      {discovery && discovery.unconfirmed.length > 0 && (
+                        <p data-testid="finder-unconfirmed" className="mt-2 text-xs text-slate-400 font-bold">
+                          {L('لم نقترحها لأن بيانات المتجر لا تؤكد مناسبتها (المعلومات غير كافية): ', 'Not suggested — the store data does not confirm they suit (insufficient information): ')}
+                          {discovery.unconfirmed.map((u) => u.name).join('، ')}
+                        </p>
+                      )}
+
                       <button onClick={() => setStep('who')} className="mt-6 w-full py-4 text-slate-500 hover:bg-slate-100 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors">
                         <RefreshCcw size={18} /> {L('البحث مرة أخرى', 'Search Again')}
                       </button>
                     </div>
-                  )}
                 </div>
               )}
             </div>

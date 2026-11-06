@@ -171,12 +171,11 @@ const registerPayload = (uid, role = 'customer') => ({
   createdAt: '2026-11-03T10:00:00.000Z',
 });
 
-// reviews.ts upsertReview() (insert branch)
+// reviews.ts upsertReview() (insert branch) — no userEmail since the privacy fix (reviews are public)
 const reviewPayload = (userId, overrides = {}) => ({
   productId: 'p-simple',
   userId,
   userName: 'Reviewer',
-  userEmail: 'r@example.com',
   rating: 5,
   comment: 'منتج ممتاز',
   status: 'published',

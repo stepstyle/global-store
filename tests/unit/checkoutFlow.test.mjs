@@ -291,3 +291,10 @@ test('trackingKeys store: validated entries only, newest first, max 30', () => {
   kv.setItem(TRACKING_KEYS_STORAGE, '{broken');
   assert.equal(keys.get('ORD-AAAA1111-BBBB'), null);
 });
+
+test('PRICE_CHANGED (Worker enforce, 422): clear Arabic message, nothing created, no order number shown', () => {
+  const m = messageFor({ status: 'rejected', orderId: 'ORD-ABCD1234-XYZ1', code: 'PRICE_CHANGED' });
+  assert.equal(m.bodyAr, 'تغيّر سعر أحد المنتجات أو رسوم التوصيل. يرجى مراجعة الطلب قبل التأكيد. لم يُنشأ أي طلب.');
+  assert.equal(m.showOrderId, false);
+  assert.deepEqual(m.actions, ['fix_form']);
+});

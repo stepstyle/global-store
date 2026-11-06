@@ -6,7 +6,7 @@
 import { encodeFields, decodeFields, isConflict } from './firestore.js';
 import { validateOrderInput, orderHash, ORDER_ID_RE } from './validate.js';
 import { planInventory } from './inventory.js';
-import { computeServerPricing, comparePricing } from './pricing.js';
+import { computeServerPricing, comparePricing, enforcePriceProblems } from './pricing.js';
 import { initialNotifications, processNotifications } from './notify.js';
 import { WORKER_VERSION } from './config.js';
 import { log } from './http.js';
@@ -38,6 +38,16 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     total: pricing.total,
     lines: inv.lineInfo.map((l) => ({ index: l.index, productId: l.productId, variantId: l.variantId, unitPrice: l.serverUnitPrice })),
   };
+
+  // PRICE_CHECK_MODE=enforce: refuse BEFORE any write — no orders/ document, no orderLedger, no stock change, no
+  // notification (all of those only happen after the commit below). log mode is unchanged (recorded, then saved).
+  if (cfg.priceCheckMode === 'enforce') {
+    const problems = enforcePriceProblems(pricing, v.clientPricing, inv.lineInfo, v.items, warnings);
+    if (problems.length) {
+      log('order.price_rejected', { orderId: v.id, mode, problems });
+      return { ok: false, conflict: false, priceRejected: { problems, serverPricing } };
+    }
+  }
   const workerCheck = { version: WORKER_VERSION, mode, serverPricing, priceMismatch, warnings };
 
   const id = v.id;
@@ -249,6 +259,15 @@ export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {
       if (ctx?.waitUntil) ctx.waitUntil(p);
       return { status: 200, body: { ok: true, orderId: id, replay: false } };
     }
+    // enforce: nothing was written. 422 (not 409): the storefront treats it as "refused, nothing saved".
+    // The server's own numbers come back so the customer can be shown the current price.
+    if (r.priceRejected) {
+      const sp = r.priceRejected.serverPricing;
+      return {
+        status: 422,
+        body: { ok: false, code: 'PRICE_CHANGED', problems: r.priceRejected.problems, serverPricing: { subtotal: sp.subtotal, discount: sp.discount, shipping: sp.shipping, total: sp.total, lines: sp.lines.map((l) => ({ index: l.index, unitPrice: l.unitPrice })) } },
+      };
+    }
     if (!r.conflict) return { status: 503, body: { ok: false, code: 'RETRY_LATER' } };
     await sleep(40 * (attempt + 1) + Math.floor(Math.random() * 40));
   }
@@ -339,7 +358,7 @@ export async function reconcileOrphans(fs, cfg) {
       processed += 1;
       await processNotifications(fs, cfg, docId);
     } else {
-      skip(r.conflict ? 'conflict' : 'commit_failed');
+      skip(r.priceRejected ? 'price_changed' : r.conflict ? 'conflict' : 'commit_failed');
     }
   }
   return { enabled: true, processed, skipped };

@@ -1,6 +1,8 @@
 // Staging end-to-end tests: staging Worker + REAL Google OAuth + REAL Firestore (staging project only)
 // + staging sink. Synthetic data only.
-//   STAGING_SINK_READ_TOKEN=... STAGING_WORKER_AUTH_TOKEN=... \
+//   STAGING_SINK_READ_TOKEN=... STAGING_WORKER_AUTH_TOKEN=... STAGING_ACCESS_TOKEN=... \
+//   (STAGING_ACCESS_TOKEN: the order Worker's x-staging-access gate; added by staging/guard.mjs guardedFetch to
+//    requests to the order Worker only — local environment variable, never in a browser / VITE_* file)
 //   node staging/run-tests.mjs --config staging/staging.config.json [--only S03,S08] [--skip-cron] [--skip-browser]
 // Order of operations: guard -> marker check -> scenarios. Any guard failure stops before a single request.
 // The scenarios themselves live in staging/scenarios.mjs (shared with the local e2e run).

@@ -180,6 +180,8 @@ const PRODUCTION = {
   ENVIRONMENT: 'production', FIREBASE_PROJECT_ID: 'antastore1-82b50', FIRESTORE_AUTH: 'service-account',
   FIREBASE_CLIENT_EMAIL: 'firebase-adminsdk-abcde@antastore1-82b50.iam.gserviceaccount.com', FIREBASE_PRIVATE_KEY: FAKE_KEY,
   TURNSTILE_SECRET: '0x4AAAAAAAREALLOOKINGSECRET',
+  PRICE_CHECK_MODE: 'enforce', // production launch requirement (config.js)
+  TURNSTILE_MODE: 'enforce',
 };
 const LOCAL = {
   ENVIRONMENT: 'local', FIREBASE_PROJECT_ID: 'demo-x', FIRESTORE_AUTH: 'emulator', FIRESTORE_BASE_URL: 'http://127.0.0.1:1/v1',

@@ -154,13 +154,25 @@ export function loadConfig(env = {}) {
       errors.push('production must not use a Turnstile test secret');
     }
     if (allowedOrigins.some((o) => !HTTPS_URL.test(o))) errors.push('production ALLOWED_ORIGINS must be https');
+    // launch requirement: production never runs the transitional modes (log = a wrong price / a missing Turnstile
+    // token is only recorded). The production v2 config must set both explicitly to enforce.
+    // an unfilled draft value (wrangler.production.toml) never runs
+    const unfilled = Object.entries(env || {}).filter(([, v]) => typeof v === 'string' && v.includes('REPLACE_WITH_')).map(([k]) => k);
+    if (unfilled.length) errors.push(`production has unfilled placeholder value(s): ${unfilled.join(', ')}`);
+    if (str(env.PRICE_CHECK_MODE) !== 'enforce') errors.push('production requires PRICE_CHECK_MODE=enforce');
+    if (str(env.TURNSTILE_MODE) !== 'enforce') errors.push('production requires TURNSTILE_MODE=enforce');
+    // the staging access gate (src/http.js) has no meaning in production: a production Worker that carries the
+    // variable is refused outright instead of silently ignoring it
+    if (str(env.STAGING_ACCESS_TOKEN)) errors.push('production must not set STAGING_ACCESS_TOKEN (staging-only gate)');
   }
 
   const stockMode = oneOf(env.STOCK_MODE, ['off', 'log', 'apply'], 'log');
-  const priceCheckMode = oneOf(env.PRICE_CHECK_MODE, ['log'], 'log'); // 'enforce' arrives in Phase 2
+  // log (default, unchanged): a price difference is recorded (PRICE_MISMATCH) and the order is saved as before.
+  // enforce: an order whose numbers differ from the server's is refused (422 PRICE_CHANGED) before ANY write.
+  const priceCheckMode = oneOf(env.PRICE_CHECK_MODE, ['log', 'enforce'], 'log');
   const turnstileMode = turnstileModeRaw;
   if (!stockMode) errors.push('STOCK_MODE must be off|log|apply');
-  if (!priceCheckMode) errors.push('PRICE_CHECK_MODE must be log (enforce not available in phase 1)');
+  if (!priceCheckMode) errors.push('PRICE_CHECK_MODE must be log|enforce');
   if (!turnstileMode) errors.push('TURNSTILE_MODE must be off|log|enforce');
 
   return {
@@ -194,6 +206,8 @@ export function loadConfig(env = {}) {
     rateLimitCreatePerMin: num(env.RATE_LIMIT_CREATE_PER_MIN, 10),
     rateLimitStatusPerMin: num(env.RATE_LIMIT_STATUS_PER_MIN, 60),
     workerAuthToken: str(env.WORKER_AUTH_TOKEN),
+    // staging only (read nowhere else): secret for the x-staging-access gate; empty = every gated route refused
+    stagingAccessToken: isStaging ? str(env.STAGING_ACCESS_TOKEN) : '',
     telegram: { token: str(env.TELEGRAM_BOT_TOKEN), chatId: str(env.TELEGRAM_CHAT_ID) },
     email: {
       apiKey: str(env.SENDGRID_API_KEY),

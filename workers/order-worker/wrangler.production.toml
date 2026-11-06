@@ -1,0 +1,60 @@
+# PRODUCTION — order Worker v2. ⛔ DRAFT: NOT DEPLOYABLE until every REPLACE_WITH_ value is filled in and
+#   node production/check-config.mjs
+# passes. Three independent stops while a placeholder is left:
+#   1. account_id below is not a 32-hex Cloudflare account id -> `wrangler deploy` refuses;
+#   2. src/config.js refuses any production value containing "REPLACE_WITH_" (CONFIG_ERROR on every request);
+#   3. production/check-config.mjs lists what is missing.
+#
+# - __DEPLOY_TARGET__ = 'production' is compiled in: this bundle can never run as staging/local.
+# - src/config.js additionally refuses (production): another Firebase project, a service account of another project,
+#   Turnstile TEST secrets, any non-https origin, Telegram/SendGrid URLs other than the official APIs,
+#   PRICE_CHECK_MODE / TURNSTILE_MODE other than enforce, STAGING_ACCESS_TOKEN.
+# - NEW Worker name (recommended, see PRODUCTION_ROLLOUT_PLAN.md): the old Worker "anta-order-notify" keeps serving
+#   browser tabs opened before the switch, then is retired separately. Do NOT reuse its name.
+#
+# Secrets (`wrangler secret put <NAME> --config wrangler.production.toml`, NEVER in this file):
+#   FIREBASE_CLIENT_EMAIL   service account of antastore1-82b50 (…@antastore1-82b50.iam.gserviceaccount.com)
+#   FIREBASE_PRIVATE_KEY    its private key
+#   TURNSTILE_SECRET        the REAL Turnstile secret matching VITE_TURNSTILE_SITE_KEY in Vercel
+#   TELEGRAM_BOT_TOKEN      the store's Telegram bot token
+#   SENDGRID_API_KEY        the store's SendGrid key
+#   WORKER_AUTH_TOKEN       new random value (owner tools /test, /notify-order)
+
+name = "anta-order-v2"
+account_id = "4ab668540c9793c41c29f8611e94a5c3"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = false
+preview_urls = false
+
+[define]
+__DEPLOY_TARGET__ = "'production'"
+
+[triggers]
+crons = []
+
+[[ratelimits]]
+name = "CREATE_RATE_LIMITER"
+namespace_id = "41011"
+simple = { limit = 20, period = 60 }
+
+[[ratelimits]]
+name = "STATUS_RATE_LIMITER"
+namespace_id = "41012"
+simple = { limit = 120, period = 60 }
+
+[vars]
+ENVIRONMENT = "production"
+FIREBASE_PROJECT_ID = "antastore1-82b50"
+FIRESTORE_AUTH = "service-account"
+# Telegram / SendGrid: NOT set here -> the official APIs (api.telegram.org / api.sendgrid.com), enforced by config.js
+TELEGRAM_CHAT_ID = "6585888926"
+ADMIN_EMAIL = "mohmmedmostakl@gmail.com"
+EMAIL_FROM = "mohmmedmostakl8@gmail.com"
+EMAIL_FROM_NAME = "مكتبة دير شرف العلمية"
+ADMIN_BASE_URL = "https://dairsharaf.com"
+ALLOWED_ORIGINS = "https://dairsharaf.com,https://www.dairsharaf.com"
+TURNSTILE_MODE = "enforce"
+PRICE_CHECK_MODE = "enforce"
+STOCK_MODE = "apply"
+RECONCILE_ENABLED = "false"
