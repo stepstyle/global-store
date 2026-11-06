@@ -19,6 +19,8 @@
 #   TELEGRAM_BOT_TOKEN      the store's Telegram bot token
 #   SENDGRID_API_KEY        the store's SendGrid key
 #   WORKER_AUTH_TOKEN       new random value (owner tools /test, /notify-order)
+#   TELEGRAM_WEBHOOK_SECRET separate random secret; store in Cloudflare secrets, never in Git
+# Telegram setWebhook must only be configured after an approved public HTTPS endpoint exists.
 
 name = "anta-order-v2"
 account_id = "4ab668540c9793c41c29f8611e94a5c3"
@@ -57,4 +59,5 @@ ALLOWED_ORIGINS = "https://dairsharaf.com,https://www.dairsharaf.com"
 TURNSTILE_MODE = "enforce"
 PRICE_CHECK_MODE = "enforce"
 STOCK_MODE = "apply"
+STOCK_ON_APPROVAL = "true"
 RECONCILE_ENABLED = "false"
