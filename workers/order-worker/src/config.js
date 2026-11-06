@@ -166,6 +166,8 @@ export function loadConfig(env = {}) {
     if (str(env.STAGING_ACCESS_TOKEN)) errors.push('production must not set STAGING_ACCESS_TOKEN (staging-only gate)');
   }
 
+  if (remote && (!str(env.TELEGRAM_WEBHOOK_SECRET) || str(env.TELEGRAM_WEBHOOK_SECRET).length < 32 || !/^\d+$/.test(str(env.TELEGRAM_ADMIN_USER_ID)))) errors.push('Telegram webhook secret (32+ chars) and numeric admin user id required');
+
   const stockMode = oneOf(env.STOCK_MODE, ['off', 'log', 'apply'], 'log');
   // log (default, unchanged): a price difference is recorded (PRICE_MISMATCH) and the order is saved as before.
   // enforce: an order whose numbers differ from the server's is refused (422 PRICE_CHANGED) before ANY write.
@@ -208,7 +210,7 @@ export function loadConfig(env = {}) {
     workerAuthToken: str(env.WORKER_AUTH_TOKEN),
     // staging only (read nowhere else): secret for the x-staging-access gate; empty = every gated route refused
     stagingAccessToken: isStaging ? str(env.STAGING_ACCESS_TOKEN) : '',
-    telegram: { token: str(env.TELEGRAM_BOT_TOKEN), chatId: str(env.TELEGRAM_CHAT_ID) },
+    telegram: { token: str(env.TELEGRAM_BOT_TOKEN), chatId: str(env.TELEGRAM_CHAT_ID), webhookSecret: str(env.TELEGRAM_WEBHOOK_SECRET), adminUserId: str(env.TELEGRAM_ADMIN_USER_ID) },
     email: {
       apiKey: str(env.SENDGRID_API_KEY),
       to: str(env.ADMIN_EMAIL),
