@@ -190,3 +190,30 @@ test('KNOWN (old data): reviews written BEFORE the fix still carry userEmail unt
   const s = await assertSucceeds(getDoc(doc(as.guest(), 'reviews/r1')));
   if (s.data().userEmail !== 'alice@example.com') throw new Error('fixture changed');
 });
+
+// ------------------------------------------------------------------ Telegram order approval (order.approval)
+test('APPROVAL: pending orders cannot be decided from the dashboard; accepted ones only ship/deliver; legacy unchanged', async () => {
+  await env.withSecurityRulesDisabled(async (c) => {
+    const db = c.firestore();
+    await setDoc(doc(db, 'orders/ORD-APPRPEND-AAAA'), { ...workerOrder('ORD-APPRPEND-AAAA', 'guest', 'x@example.com'), approval: { policy: 'telegram', state: 'pending' } });
+    await setDoc(doc(db, 'orders/ORD-APPRACCP-AAAA'), { ...workerOrder('ORD-APPRACCP-AAAA', 'guest', 'x@example.com'), status: 'processing', approval: { policy: 'telegram', state: 'accepted' } });
+  });
+  const upd = (who, id, status) => updateDoc(doc(as[who](), `orders/${id}`), { status, seenByAdmin: true, updatedAt: serverTimestamp() });
+  // pending: no accept / reject / cancel / fraud from the dashboard (the Worker decides, with the stock)
+  for (const s of ['processing', 'cancelled', 'shipped', 'fraud', 'delivered']) await assertFails(upd('admin', 'ORD-APPRPEND-AAAA', s), `pending -> ${s}`);
+  await assertSucceeds(updateDoc(doc(as.admin(), 'orders/ORD-APPRPEND-AAAA'), { seenByAdmin: true, updatedAt: serverTimestamp() }), 'marking as seen is fine');
+  // accepted: only processing -> shipped -> delivered (cancelling must restock -> Telegram)
+  await assertSucceeds(upd('admin', 'ORD-APPRACCP-AAAA', 'shipped'));
+  await assertSucceeds(upd('admin', 'ORD-APPRACCP-AAAA', 'delivered'));
+  await assertFails(upd('admin', 'ORD-APPRACCP-AAAA', 'cancelled'));
+  await assertFails(upd('admin', 'ORD-APPRACCP-AAAA', 'new'));
+  // nobody can write / fake / remove the approval marker
+  await assertFails(updateDoc(doc(as.admin(), 'orders/ORD-APPRPEND-AAAA'), { approval: { policy: 'telegram', state: 'accepted' } }));
+  await assertFails(updateDoc(doc(as.owner(), 'orders/ORD-APPRPEND-AAAA'), { status: 'processing', approval: { policy: 'telegram', state: 'accepted' } }));
+  await assertFails(updateDoc(doc(as.alice(), `orders/${ORD_ALICE}`), { status: 'processing' }), 'customer cannot accept her own order');
+  // legacy orders (no approval field): unchanged — the admin may still cancel / accept as before
+  await assertSucceeds(upd('admin', ORD_GUEST, 'processing'));
+  await assertSucceeds(upd('admin', ORD_GUEST, 'cancelled'));
+  // products: no client can change stock (the Worker does, with its service account)
+  await assertFails(updateDoc(doc(as.alice(), 'products/p1'), { stock: 999 }));
+});

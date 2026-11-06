@@ -2,10 +2,11 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { checkProductionConfig, DEFAULT_TOML } from '../../production/check-config.mjs';
+import { checkProductionConfig } from '../../production/check-config.mjs';
 import { loadConfig } from '../../src/config.js';
 
-const DRAFT = readFileSync(DEFAULT_TOML, 'utf8');
+// a FIXED template (the original placeholder draft) — independent of the operator's real wrangler.production.toml
+const DRAFT = readFileSync(new URL('../fixtures/wrangler.production.template.toml', import.meta.url), 'utf8');
 const FILLED = DRAFT
   .replace('REPLACE_WITH_PRODUCTION_WORKER_NAME', 'anta-order-v2')
   .replace('REPLACE_WITH_PRODUCTION_CLOUDFLARE_ACCOUNT_ID', '0123456789abcdef0123456789abcdef')
@@ -42,6 +43,9 @@ test('every unsafe variant is a VIOLATION', async () => {
     'staging build target': FILLED.replace(`__DEPLOY_TARGET__ = "'production'"`, `__DEPLOY_TARGET__ = "'staging'"`),
     'secret in vars': FILLED.replace('[vars]', '[vars]\nSENDGRID_API_KEY = "SG.fake"'),
     'emulator': FILLED.replace('[vars]', '[vars]\nFIRESTORE_BASE_URL = "http://127.0.0.1:8080/v1"'),
+    'no public endpoint (workers_dev=false, no routes)': FILLED.replace('workers_dev = true', 'workers_dev = false'),
+    'no cron (notifications never retried)': FILLED.replace('crons = ["*/5 * * * *"]', 'crons = []'),
+    'telegram approval without admin ids': FILLED.replace('[vars]', '[vars]\nAPPROVAL_MODE = "telegram"'),
   };
   for (const [name, text] of Object.entries(bad)) {
     const r = await checkProductionConfig(text);

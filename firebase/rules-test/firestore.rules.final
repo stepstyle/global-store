@@ -82,6 +82,25 @@ service cloud.firestore {
         || (signedIn() && resource.data.userId == request.auth.uid);
     }
 
+    // Telegram-approval orders carry `approval` (written ONLY by the Worker's service account; no client can set or
+    // change it — create is closed and admin updates may touch status/seenByAdmin/updatedAt only). Their decisions
+    // (accept = atomic stock deduction, reject, cancel = stock returned once) happen ONLY in the Worker:
+    //   pending  -> the dashboard cannot change the status at all
+    //   accepted -> only processing <-> shipped <-> delivered (cancelling must go through the Worker to restock)
+    //   rejected / cancelled -> final
+    // Orders without `approval` (legacy / browser / Worker v1): unchanged behaviour.
+    function approvalState() {
+      return resource.data.get('approval', {}).get('state', '');
+    }
+    function adminStatusMoveAllowed() {
+      let next = request.resource.data.status;
+      return approvalState() == ''
+        || next == resource.data.status
+        || (approvalState() == 'accepted'
+            && resource.data.status in ['processing', 'shipped', 'delivered']
+            && next in ['processing', 'shipped', 'delivered']);
+    }
+
     match /orders/{id} {
       // Only the Worker (service account) creates orders.
       allow create: if false;
@@ -93,7 +112,8 @@ service cloud.firestore {
       // Admin dashboard only changes status (storage.ts updateStatus).
       allow update: if isAdmin()
         && changed().hasOnly(['status', 'seenByAdmin', 'updatedAt'])
-        && request.resource.data.status in ['new', 'processing', 'shipped', 'delivered', 'cancelled', 'fraud'];
+        && request.resource.data.status in ['new', 'processing', 'shipped', 'delivered', 'cancelled', 'fraud']
+        && adminStatusMoveAllowed();
 
       allow delete: if isOwner();
     }

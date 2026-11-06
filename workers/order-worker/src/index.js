@@ -16,6 +16,7 @@ import { createOrder, orderStatus, orderSummary, reconcileOrphans } from './orde
 import { processNotifications, retryPendingNotifications } from './notify.js';
 import { ORDER_ID_RE } from './validate.js';
 import { AuthError, bearerToken, verifyFirebaseIdToken } from './auth.js';
+import { handleTelegramWebhook } from './telegram.js';
 
 const STATUS_PATH = /^\/orders\/([^/]+)\/status$/;
 const SUMMARY_PATH = /^\/orders\/([^/]+)\/summary$/;
@@ -41,6 +42,11 @@ async function handle(request, env, ctx, cfg) {
   const reply = (body, status = 200) => json(body, status, cors);
 
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+
+  // Telegram order approval webhook: authenticated by its OWN secret (X-Telegram-Bot-Api-Secret-Token, see
+  // src/telegram.js) — checked before the staging gate because Telegram cannot send x-staging-access.
+  // 404 unless APPROVAL_MODE=telegram.
+  if (url.pathname === '/telegram/webhook') return handleTelegramWebhook(request, cfg, new Firestore(cfg));
 
   // STAGING ONLY: secret access gate in front of every route except the health check "/" — BEFORE the rate limit,
   // body, identity, Turnstile, Firestore, stock and notifications. No usable secret in the Worker = all refused.

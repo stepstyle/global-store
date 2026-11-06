@@ -57,6 +57,16 @@ export async function checkProductionConfig(text) {
   for (const k of ['TELEGRAM_API_BASE', 'SENDGRID_API_BASE', 'FIRESTORE_BASE_URL', 'OAUTH_TOKEN_URL', 'TURNSTILE_VERIFY_URL', 'AUTH_JWKS_URL']) if (vars[k] !== undefined) v.push(`${k} must not be set (official endpoints only)`);
   for (const k of SECRET_NAMES) if (vars[k] !== undefined) v.push(`${k} is a SECRET — never in [vars] (wrangler secret put)`);
   const blob = text.replace(/^\s*#.*$/gm, '');
+  // reachability: the storefront AND the Telegram webhook need a public URL — workers.dev or a route/custom domain
+  const workersDev = (blob.match(/^\s*workers_dev\s*=\s*(true|false)/m) || [])[1];
+  const hasRoutes = /^\s*routes?\s*=/m.test(blob) || /^\s*\[\[routes\]\]/m.test(blob);
+  if (workersDev === 'false' && !hasRoutes) v.push('no public endpoint: workers_dev = false and no routes / custom domain — the storefront and the Telegram webhook could not reach the Worker');
+  // the cron retries failed notifications (and, with Telegram approval, a lost order message would leave the
+  // order pending with no button to decide it)
+  const crons = (blob.match(/^\s*crons\s*=\s*\[([^\]]*)\]/m) || [])[1];
+  if (crons === undefined || !/"[^"]+"/.test(crons)) v.push('crons is empty: failed Telegram / e-mail notifications would never be retried (use e.g. ["*/5 * * * *"])');
+  // Telegram approval: its non-secret settings must be complete (the secret TELEGRAM_WEBHOOK_SECRET is a `wrangler secret`)
+  if (vars.APPROVAL_MODE === 'telegram' && !/^\d+(,\d+)*$/.test(String(vars.TELEGRAM_ADMIN_USER_IDS || '').replace(/\s/g, ''))) v.push('APPROVAL_MODE=telegram needs TELEGRAM_ADMIN_USER_IDS (numeric Telegram user ids)');
   if (/dairsharaf-staging|hopemohmmed|anta-notify-sink|127\.0\.0\.1|localhost|demo-|example\.invalid/i.test(blob)) v.push('staging / local / test value present');
   if (/[123]x0{20,}[A-F]{2}/.test(blob)) v.push('Turnstile TEST key present');
   if (/BEGIN PRIVATE KEY|AIza[0-9A-Za-z_-]{30,}|[0-9a-f]{64}/.test(blob)) v.push('secret-looking value in the file');
@@ -65,6 +75,7 @@ export async function checkProductionConfig(text) {
   const { loadConfig } = await import(pathToFileURL(resolve(HERE, '../src/config.js')).href);
   const env = Object.fromEntries(Object.entries(vars).map(([k, val]) => [k, val.includes('REPLACE_WITH_') ? (k.includes('EMAIL') || k === 'EMAIL_FROM' ? 'filled@example.com' : 'filled-value') : val]));
   Object.assign(env, {
+    ...(vars.APPROVAL_MODE === 'telegram' ? { TELEGRAM_WEBHOOK_SECRET: 'f'.repeat(40) } : {}),
     FIREBASE_CLIENT_EMAIL: `fake-sa@${PROD_PROJECT}.iam.gserviceaccount.com`,
     FIREBASE_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n',
     TURNSTILE_SECRET: '0x4AAAAAAAFAKEFAKEFAKEFAKE', TELEGRAM_BOT_TOKEN: 'fake', SENDGRID_API_KEY: 'fake', WORKER_AUTH_TOKEN: 'f'.repeat(32),

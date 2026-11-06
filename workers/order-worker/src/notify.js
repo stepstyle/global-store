@@ -9,6 +9,7 @@
 
 import { encodeFields, decodeFields } from './firestore.js';
 import { log } from './http.js';
+import { approvalText, keyboardFor } from './telegram.js';
 
 export const CHANNELS = ['telegram', 'email'];
 const MAX_TEXT = 3900; // Telegram hard limit is 4096
@@ -80,14 +81,17 @@ export function buildMessage(order, ledger, cfg) {
 /** A send may not outlive the claim's lease: aborted well before it expires (then marked failed, never sent). */
 const sendSignal = (cfg) => AbortSignal.timeout(Math.max(1_000, Math.min(cfg.notifySendTimeoutMs ?? 15_000, Math.floor(cfg.leaseMs / 2))));
 
-async function sendTelegram(cfg, text) {
+async function sendTelegram(cfg, text, replyMarkup) {
   const res = await fetch(`${cfg.urls.telegram.replace(/\/+$/, '')}/bot${cfg.telegram.token}/sendMessage`, {
     signal: sendSignal(cfg),
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: cfg.telegram.chatId, text }),
+    body: JSON.stringify({ chat_id: cfg.telegram.chatId, text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }),
   });
-  return { ok: res.ok, status: res.status };
+  // the message id lets the decision edit THIS message later (buttons -> final state); not needed for success
+  const data = await res.json().catch(() => null);
+  const messageId = Number.isInteger(data?.result?.message_id) ? data.result.message_id : null;
+  return { ok: res.ok, status: res.status, messageId };
 }
 
 async function sendEmail(cfg, orderId, text) {
@@ -133,15 +137,20 @@ export async function processNotifications(fs, cfg, orderId) {
     try {
       const orderDoc = await fs.get(`orders/${orderId}`);
       const order = orderDoc.exists ? decodeFields(orderDoc.fields) : { id: orderId };
-      const text = buildMessage(order, L, cfg);
-      result = ch === 'telegram' ? await sendTelegram(cfg, text) : await sendEmail(cfg, orderId, text);
+      // Telegram-approval orders: the Arabic message from the ledger's SERVER prices + the buttons for the order's
+      // CURRENT decision (a late retry after a decision carries no stale buttons). The e-mail stays informational.
+      const approval = L.stockPolicy === 'on_approval';
+      const text = approval && ch === 'telegram' ? approvalText(order, L, cfg) : buildMessage(order, L, cfg);
+      result = ch === 'telegram'
+        ? await sendTelegram(cfg, text, approval ? keyboardFor(L.decision || 'pending', orderId) : undefined)
+        : await sendEmail(cfg, orderId, text);
     } catch (e) {
       result = { ok: false, status: 0 };
     }
 
     // 'sent' ONLY after the provider confirmed it; anything else (error, timeout, non-2xx) is 'failed' -> retried
     const mark = result.ok
-      ? { state: 'sent', attempts, sentAt: new Date() }
+      ? { state: 'sent', attempts, sentAt: new Date(), ...(result.messageId ? { messageId: result.messageId } : {}) }
       : { state: 'failed', attempts, lastStatus: result.status, failedAt: new Date() };
     const marked = await markOwned(fs, ledgerPath, ch, claimId, mark);
     log('notify', { orderId, channel: ch, ok: result.ok, status: result.status, attempts, marked });

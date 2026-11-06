@@ -175,6 +175,26 @@ export function loadConfig(env = {}) {
   if (!priceCheckMode) errors.push('PRICE_CHECK_MODE must be log|enforce');
   if (!turnstileMode) errors.push('TURNSTILE_MODE must be off|log|enforce');
 
+  // ---- Telegram order approval (src/approval.js) ------------------------------------------------------------
+  // off (default, unchanged): stock is deducted when the order is created (STOCK_MODE).
+  // telegram: the order is saved as 'new' WITHOUT any stock change; an authorised admin accepts (atomic deduction)
+  // or rejects it from Telegram. Requires the webhook secret, the chat id and the allowed Telegram user ids.
+  const approvalMode = oneOf(env.APPROVAL_MODE, ['off', 'telegram'], 'off');
+  if (!approvalMode) errors.push('APPROVAL_MODE must be off|telegram');
+  const webhookSecret = str(env.TELEGRAM_WEBHOOK_SECRET);
+  const adminUserIdsRaw = str(env.TELEGRAM_ADMIN_USER_IDS).split(',').map((s) => s.trim()).filter(Boolean);
+  const adminUserIds = adminUserIdsRaw.filter((s) => /^[1-9]\d{0,19}$/.test(s));
+  if (approvalMode === 'telegram') {
+    if (!str(env.TELEGRAM_BOT_TOKEN)) errors.push('APPROVAL_MODE=telegram requires TELEGRAM_BOT_TOKEN');
+    if (!/^-?\d{1,20}$/.test(str(env.TELEGRAM_CHAT_ID))) errors.push('APPROVAL_MODE=telegram requires a numeric TELEGRAM_CHAT_ID');
+    // Telegram allows 1-256 chars of A-Z a-z 0-9 _ - for secret_token; we require a strong one
+    if (!/^[A-Za-z0-9_-]{32,256}$/.test(webhookSecret)) errors.push('APPROVAL_MODE=telegram requires TELEGRAM_WEBHOOK_SECRET (32-256 chars of A-Z a-z 0-9 _ -)');
+    if (adminUserIds.length === 0 || adminUserIds.length !== adminUserIdsRaw.length) errors.push('APPROVAL_MODE=telegram requires TELEGRAM_ADMIN_USER_IDS (comma-separated numeric Telegram user ids)');
+    if (stockMode !== 'apply') errors.push('APPROVAL_MODE=telegram requires STOCK_MODE=apply (stock is deducted on acceptance)');
+  }
+  const currency = str(env.CURRENCY) || 'JOD';
+  if (!/^[A-Z]{3}$/.test(currency)) errors.push('CURRENCY must be an ISO 4217 code (e.g. JOD)');
+
   return {
     ok: errors.length === 0,
     errors,
@@ -208,7 +228,9 @@ export function loadConfig(env = {}) {
     workerAuthToken: str(env.WORKER_AUTH_TOKEN),
     // staging only (read nowhere else): secret for the x-staging-access gate; empty = every gated route refused
     stagingAccessToken: isStaging ? str(env.STAGING_ACCESS_TOKEN) : '',
-    telegram: { token: str(env.TELEGRAM_BOT_TOKEN), chatId: str(env.TELEGRAM_CHAT_ID) },
+    telegram: { token: str(env.TELEGRAM_BOT_TOKEN), chatId: str(env.TELEGRAM_CHAT_ID), webhookSecret, adminUserIds: new Set(adminUserIds) },
+    approvalMode,
+    currency,
     email: {
       apiKey: str(env.SENDGRID_API_KEY),
       to: str(env.ADMIN_EMAIL),

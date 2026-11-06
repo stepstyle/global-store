@@ -452,7 +452,21 @@ const AdminDashboard: React.FC = () => {
   // 🚀 [تعديل 1]: تحسين تحديث حالة الطلب ليكون احترافي ومحمي من التعليق
   const handleUpdateOrderStatus = async (id: string, newStatus: any) => {
     const actionNames: any = { processing: 'قبول الطلب', shipped: 'شحن الطلب', delivered: 'تسليم الطلب', cancelled: 'إلغاء الطلب' };
-    
+
+    // Telegram-approval orders (set by the order Worker): accept / reject / cancel happen in Telegram so the stock is
+    // deducted or returned exactly once. The Firestore rules enforce the same; this only explains it up front.
+    const approval: any = (orders.find((o: any) => o.id === id) as any)?.approval;
+    if (approval?.policy === 'telegram') {
+      if (approval.state === 'pending') {
+        showToast('هذا الطلب بانتظار قرار تيليجرام (قبول/رفض) — لا يُغيَّر من هنا حتى لا يتجاوز خصم المخزون.', 'error');
+        return;
+      }
+      if (approval.state !== 'accepted' || !['processing', 'shipped', 'delivered'].includes(newStatus)) {
+        showToast('إلغاء طلب مقبول يتم من رسالة تيليجرام (إلغاء الطلب) حتى يُعاد المخزون مرة واحدة.', 'error');
+        return;
+      }
+    }
+
     // تأكيد قبل العملية لتجنب الخطأ
     if (!window.confirm(`هل أنت متأكد من ${actionNames[newStatus] || newStatus}؟`)) return;
 

@@ -31,6 +31,8 @@ export async function startMockServices(port = 0) {
   const state = {
     calls: [],
     unexpected: [],
+    tgUi: [],
+    tgUiFail: false,
     failNext: { telegram: 0, email: 0 },
     failAlways: { telegram: false, email: false },
     // per-order failure (order ids), connection drop (socket destroyed, no answer) and hang (request received, never
@@ -109,6 +111,13 @@ export async function startMockServices(port = 0) {
         const reply = () => (failed ? send(500, { ok: false }) : send(200, { ok: true, result: { message_id: state.calls.length } }));
         return lateReply('telegram', failed, reply);
       }
+      // Telegram decision UI (order approval): recorded separately; can be made to fail (tgUiFail) to prove that a
+      // failed message edit never changes the data
+      const ui = req.url.match(/^\/telegram\/bot[^/]+\/(answerCallbackQuery|editMessageText|editMessageReplyMarkup)$/);
+      if (req.method === 'POST' && ui) {
+        state.tgUi.push({ method: ui[1], body: JSON.parse(body || '{}') });
+        return state.tgUiFail ? send(500, { ok: false }) : send(200, { ok: true, result: true });
+      }
       if (req.method === 'POST' && req.url === '/sendgrid/v3/mail/send') {
         if (broken('email')) return;
         const failed = channelFail('email');
@@ -141,6 +150,8 @@ export async function startMockServices(port = 0) {
     attempts: (ch) => state.calls.filter((c) => c.channel === ch).length,
     reset() {
       state.calls.length = 0;
+      state.tgUi.length = 0;
+      state.tgUiFail = false;
       state.failNext = { telegram: 0, email: 0 };
       state.failAlways = { telegram: false, email: false };
       state.failOrder = { telegram: new Set(), email: new Set() };

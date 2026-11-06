@@ -179,3 +179,55 @@ export function planInventory(lines, products, stockMode) {
 
   return { lineInfo, deductions, warnings, writes };
 }
+
+/**
+ * Stock restoration for a cancelled order: adds back EXACTLY the deductions recorded as applied for it (nothing
+ * else). Same rules as the deduction: a variant line goes back to the one variant with that id; a product line to
+ * the top-level stock. A line whose product / variant is gone, ambiguous, or whose stock is not a number is NOT
+ * restored (warning RESTOCK_SKIPPED) — never guessed. Pure; writes carry the read updateTime (precondition).
+ * @param applied  [{ productId, variantId, qty }]  (ledger.stockDeductions with applied === true)
+ * @param products Map<productId, {exists, fields, updateTime}>
+ */
+export function planRestock(applied, products) {
+  const warnings = [];
+  const restored = [];
+  const work = new Map();
+  const workFor = (pid, doc) => {
+    if (!work.has(pid)) {
+      const raw = doc.fields?.variants?.arrayValue?.values;
+      work.set(pid, { doc, variants: Array.isArray(raw) ? structuredClone(raw) : [], stock: undefined, dirtyVariants: false });
+    }
+    return work.get(pid);
+  };
+  for (const d of applied) {
+    const doc = products.get(d.productId);
+    const qty = Number(d.qty);
+    if (!doc?.exists || !Number.isInteger(qty) || qty <= 0) { warnings.push({ code: 'RESTOCK_SKIPPED', productId: d.productId, reason: 'product_missing' }); continue; }
+    const w = workFor(d.productId, doc);
+    if (d.variantId) {
+      const idx = w.variants.map((v, i) => (variantId(v) === d.variantId ? i : -1)).filter((i) => i >= 0);
+      if (idx.length !== 1) { warnings.push({ code: 'RESTOCK_SKIPPED', productId: d.productId, variantId: d.variantId, reason: idx.length ? 'variant_ambiguous' : 'variant_missing' }); continue; }
+      const vf = w.variants[idx[0]].mapValue.fields || {};
+      const s = rawNumber(vf.stock);
+      if (s.value === null) { warnings.push({ code: 'RESTOCK_SKIPPED', productId: d.productId, variantId: d.variantId, reason: 'stock_untracked' }); continue; }
+      vf.stock = encodeNumber(s.value + qty);
+      w.variants[idx[0]].mapValue.fields = vf;
+      w.dirtyVariants = true;
+      restored.push({ productId: d.productId, variantId: d.variantId, qty, before: s.value, after: s.value + qty });
+      continue;
+    }
+    const cur = w.stock !== undefined ? { value: w.stock } : rawNumber(doc.fields?.stock);
+    if (cur.value === null) { warnings.push({ code: 'RESTOCK_SKIPPED', productId: d.productId, reason: 'stock_untracked' }); continue; }
+    w.stock = cur.value + qty;
+    restored.push({ productId: d.productId, variantId: null, qty, before: cur.value, after: w.stock });
+  }
+  const writes = [];
+  for (const [productId, w] of work) {
+    const fields = {};
+    const mask = [];
+    if (w.dirtyVariants) { fields.variants = { arrayValue: { values: w.variants } }; mask.push('variants'); }
+    if (w.stock !== undefined) { fields.stock = encodeNumber(w.stock); mask.push('stock'); }
+    if (mask.length) writes.push({ productId, fields, mask, updateTime: w.doc.updateTime });
+  }
+  return { restored, warnings, writes };
+}
