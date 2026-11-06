@@ -167,6 +167,10 @@ export function loadConfig(env = {}) {
   }
 
   const stockMode = oneOf(env.STOCK_MODE, ['off', 'log', 'apply'], 'log');
+  const stockOnApproval = bool(env.STOCK_ON_APPROVAL, false);
+  if (isProd && stockOnApproval && stockMode !== 'apply') errors.push('approval workflow requires STOCK_MODE=apply');
+  if (isProd && stockOnApproval && !/^[A-Za-z0-9_-]{32,128}$/.test(str(env.TELEGRAM_WEBHOOK_SECRET))) errors.push('approval workflow requires TELEGRAM_WEBHOOK_SECRET (32-128 safe characters)');
+  if (isProd && stockOnApproval && !/^\d{5,18}$/.test(str(env.TELEGRAM_CHAT_ID))) errors.push('approval workflow requires a private Telegram admin chat id');
   // log (default, unchanged): a price difference is recorded (PRICE_MISMATCH) and the order is saved as before.
   // enforce: an order whose numbers differ from the server's is refused (422 PRICE_CHANGED) before ANY write.
   const priceCheckMode = oneOf(env.PRICE_CHECK_MODE, ['log', 'enforce'], 'log');
@@ -187,6 +191,7 @@ export function loadConfig(env = {}) {
     urls,
     authJwksUrl,
     stockMode,
+    stockOnApproval,
     priceCheckMode,
     turnstileMode,
     allowedOrigins,
@@ -208,7 +213,7 @@ export function loadConfig(env = {}) {
     workerAuthToken: str(env.WORKER_AUTH_TOKEN),
     // staging only (read nowhere else): secret for the x-staging-access gate; empty = every gated route refused
     stagingAccessToken: isStaging ? str(env.STAGING_ACCESS_TOKEN) : '',
-    telegram: { token: str(env.TELEGRAM_BOT_TOKEN), chatId: str(env.TELEGRAM_CHAT_ID) },
+    telegram: { token: str(env.TELEGRAM_BOT_TOKEN), chatId: str(env.TELEGRAM_CHAT_ID), webhookSecret: str(env.TELEGRAM_WEBHOOK_SECRET) },
     email: {
       apiKey: str(env.SENDGRID_API_KEY),
       to: str(env.ADMIN_EMAIL),
