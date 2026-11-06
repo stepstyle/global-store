@@ -15,6 +15,7 @@ import { allowRequest } from './ratelimit.js';
 import { createOrder, orderStatus, orderSummary, reconcileOrphans } from './orders.js';
 import { processNotifications, retryPendingNotifications } from './notify.js';
 import { ORDER_ID_RE } from './validate.js';
+import { handleTelegramWebhook } from './telegram-actions.js';
 import { AuthError, bearerToken, verifyFirebaseIdToken } from './auth.js';
 
 const STATUS_PATH = /^\/orders\/([^/]+)\/status$/;
@@ -53,6 +54,12 @@ async function handle(request, env, ctx, cfg) {
   }
 
   const fs = new Firestore(cfg);
+  // Telegram does not send browser CORS headers. This endpoint uses a webhook secret
+  // plus a private chat/user allowlist, not the public order authentication mechanism.
+  if (url.pathname === '/telegram/webhook') {
+    if (request.method !== 'POST') return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    return handleTelegramWebhook(request, fs, cfg, cfg.maxBodyBytes);
+  }
   const ip = clientIp(request);
 
   if (url.pathname === '/') return reply({ ok: true, service: 'order-worker', version: WORKER_VERSION });
