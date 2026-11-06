@@ -80,12 +80,12 @@ export function buildMessage(order, ledger, cfg) {
 /** A send may not outlive the claim's lease: aborted well before it expires (then marked failed, never sent). */
 const sendSignal = (cfg) => AbortSignal.timeout(Math.max(1_000, Math.min(cfg.notifySendTimeoutMs ?? 15_000, Math.floor(cfg.leaseMs / 2))));
 
-async function sendTelegram(cfg, text, orderId) {
+async function sendTelegram(cfg, text, orderId, canDecide = false) {
   const res = await fetch(`${cfg.urls.telegram.replace(/\/+$/, '')}/bot${cfg.telegram.token}/sendMessage`, {
     signal: sendSignal(cfg),
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: cfg.telegram.chatId, text, ...(orderId ? { reply_markup: { inline_keyboard: [[{ text: '✅ قبول الطلب', callback_data: `accept:${orderId}` }, { text: '❌ رفض الطلب', callback_data: `reject:${orderId}` }]] } } : {}) }),
+    body: JSON.stringify({ chat_id: cfg.telegram.chatId, text, ...(orderId && canDecide ? { reply_markup: { inline_keyboard: [[{ text: '✅ قبول الطلب', callback_data: `accept:${orderId}` }, { text: '❌ رفض الطلب', callback_data: `reject:${orderId}` }]] } } : {}) }),
   });
   return { ok: res.ok, status: res.status };
 }
@@ -134,7 +134,7 @@ export async function processNotifications(fs, cfg, orderId) {
       const orderDoc = await fs.get(`orders/${orderId}`);
       const order = orderDoc.exists ? decodeFields(orderDoc.fields) : { id: orderId };
       const text = buildMessage(order, L, cfg);
-      result = ch === 'telegram' ? await sendTelegram(cfg, text, orderId) : await sendEmail(cfg, orderId, text);
+      result = ch === 'telegram' ? await sendTelegram(cfg, text, orderId, L.inventoryWorkflow === 'approval-v1' && L.stockDecision === 'pending') : await sendEmail(cfg, orderId, text);
     } catch (e) {
       result = { ok: false, status: 0 };
     }
