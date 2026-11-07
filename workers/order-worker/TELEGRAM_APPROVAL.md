@@ -83,28 +83,68 @@ Check with `getWebhookInfo`: `url` must match, `last_error_message` must be empt
 | Unit + emulator (18 scenarios) | `npm run test:integration` (includes `test/telegram-approval.test.mjs`) | nothing external |
 | Real Worker runtime (A01–A16) | `E2E_SUITE=approval E2E_RULES=final node test/local-e2e/run.mjs` | nothing external: workerd + notify sink + Firestore emulator on 127.0.0.1, network jail |
 | Staging (A01–A16) | `node staging/run-tests.mjs --config staging/staging.config.json --suite approval` | **approval**: deploy the staging Workers (sink + order) with `APPROVAL_MODE=telegram` and TEST ids |
-| Real TEST bot, by hand | `test/local-e2e/telegram-bridge.mjs` + `E2E_SUITE=approval-live` | **approval**: a new TEST bot and a TEST group; contacts api.telegram.org for that bot only |
+| Real TEST bot, by hand | `test/local-e2e/telegram-bridge.mjs --expect-bot-id <test bot id>` + `E2E_SUITE=approval-live` | **approval**: a new TEST bot and a TEST group; contacts api.telegram.org for that one allow-listed bot only |
 
 - If port 9152 is held by another program, set `E2E_EMULATOR_WS_PORT=<free port>`.
 - A01–A16 press the buttons exactly as Telegram does: `POST /telegram/webhook` with the secret header and a `callback_query` update. The sink plays Telegram and records the method, the message id, the callback data, the decision line and the answer, but no personal data.
 
 ### Real TEST bot (no webhook is set, changed or removed on any bot)
 
-1. In BotFather, create a new bot whose username contains `test`. Create a test group and add the bot to it. Save the token in `workers/order-worker/.secrets/test-bot.token` (git-ignored).
-2. Run `node test/local-e2e/telegram-bridge.mjs --check --token-file .secrets/test-bot.token --forbid-bot-id <real store bot id>`.
-   - The real store bot's id is the number before `:` in its token.
-   - The bridge refuses a bot without "test" in its name, a bot that has a webhook, and the forbidden id.
-3. Terminal 1, the local stack:
+All commands run from `workers/order-worker`. Placeholders in `<…>` are yours to fill in; none of them is a secret except the token file, which is never passed on the command line.
+
+1. **Bot and group.**
+   - In BotFather, create a new bot whose username contains `test`.
+   - Create a test group and add only that bot to it (never the store bot).
+   - Save the token as one line in `.secrets/test-bot.token`. The folder is git-ignored (`workers/order-worker/.gitignore`).
+2. **Ids** (none of these is secret):
+   - Test bot id: the number before `:` in the test token. `getMe` returns the same id.
+   - Test group id: a negative number. A basic group is like `-55…`, a supergroup `-100…`. It changes if Telegram converts the group, so don't change group settings during a test.
+     - With privacy mode on, send `/start@<test bot username>` in the group.
+     - Then read `chat.id` from `getUpdates` of the TEST bot, without `offset`, so nothing is acknowledged.
+   - Your Telegram user id: from @userinfobot. This is the only user allowed to press the buttons.
+3. **Read-only check:**
    ```
-   E2E_SUITE=approval-live E2E_TG_LOCAL_SECRET=<random 40 chars> E2E_TG_CHAT_ID=<test group id> E2E_TG_ADMIN_IDS=<your Telegram user id> node test/local-e2e/run.mjs
+   node test/local-e2e/telegram-bridge.mjs --check --token-file .secrets/test-bot.token --expect-bot-id <test bot id>
    ```
-4. Terminal 2, once the stack prints that it is up:
+   - `--expect-bot-id` is **required**. It is an allow-list of exactly one bot, compared with the id inside the token file **before any request**. A token of any other bot, the store bot included, is never sent anywhere.
+   - The bridge also refuses a bot whose username lacks `test`, and a bot that has a webhook. It never sets, changes or removes a webhook.
+   - `--forbid-bot-id <real store bot id>` is an optional extra block.
+4. **Shared local secret:** one random value of 32–256 characters `[A-Za-z0-9_-]`, kept only for this run. It is NOT the bot token. For example:
    ```
-   E2E_TG_LOCAL_SECRET=<same> node test/local-e2e/telegram-bridge.mjs --run --token-file .secrets/test-bot.token --chat-id <test group id> --confirm <test bot username> --forbid-bot-id <real store bot id>
+   node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
    ```
-5. In the test group, accept, reject, cancel and press buttons twice. The run checks that the stock matches the decisions.
-   - The bridge forwards only `sendMessage`, `editMessageText`, `editMessageReplyMarkup` and `answerCallbackQuery`, all forced to the test group.
-   - It receives button presses with `getUpdates` (long polling).
+5. **Terminal 1, the bridge FIRST.** Order messages are sent as soon as the stack is up; with no bridge yet they would be lost, because the local cron is not triggered during this run.
+   ```
+   E2E_TG_LOCAL_SECRET=<secret> node test/local-e2e/telegram-bridge.mjs --run --token-file .secrets/test-bot.token \
+     --chat-id <test group id> --confirm <test bot username without @> --expect-bot-id <test bot id> [--forbid-bot-id <real store bot id>]
+   ```
+   Wait for `bridge on 127.0.0.1:8790`.
+6. **Terminal 2, the local stack:** order Worker under `wrangler dev --local`, notify sink, Firestore emulator with synthetic products; nothing deployed.
+   ```
+   E2E_SUITE=approval-live E2E_TG_LOCAL_SECRET=<same secret> E2E_TG_CHAT_ID=<test group id> E2E_TG_ADMIN_IDS=<your user id> \
+     [E2E_TG_WAIT_MIN=20] [E2E_TG_REPEAT_SEC=120] [E2E_EMULATOR_WS_PORT=<free port if 9152 is taken>] node test/local-e2e/run.mjs
+   ```
+7. **Press the buttons in the test group.** When terminal 1 shows `→ sendMessage 200` three times, three messages are in the group. Each one says in its `📝 ملاحظة` line what to do:
+
+   | Order | Action | Expected stock afterwards |
+   |---|---|---|
+   | 1 (notebook ×2) | accept | notebook 10 → 8 |
+   | 2 (red pen + notebook) | reject | unchanged |
+   | 3 (last piece) | accept, then cancel, then confirm | 1 → 0 → 1 |
+
+   - The run waits up to `E2E_TG_WAIT_MIN` minutes and does not stop at a different decision.
+   - After the planned decisions it watches `E2E_TG_REPEAT_SEC` more seconds. Press old or remaining buttons again in that window to test repeats.
+8. **Result.** The run prints PASS / FAIL for:
+   - status and admin of each order;
+   - one deduction for #1, no deduction for #2;
+   - #3 taken then restored once;
+   - final stock 8 / 5 / 1;
+   - nothing changed during the repeat window;
+   - stock equal to the decisions actually taken.
+
+   The emulator is stopped and erased at the end. Stop the bridge with Ctrl+C, and don't press the old messages' buttons afterwards.
+- The bridge forwards only `sendMessage`, `editMessageText`, `editMessageReplyMarkup` and `answerCallbackQuery`, all forced to `--chat-id`. It receives presses with `getUpdates` (long polling).
+- Its first `getUpdates` acknowledges pending updates of the TEST bot, and sets `allowed_updates` to `callback_query` for that bot only.
 
 ## Duplicate Telegram messages (3 per order): what the code shows
 
