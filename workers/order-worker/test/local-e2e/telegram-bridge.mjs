@@ -7,12 +7,14 @@
 // Refuses to start unless:
 //   - the token file holds a bot token whose bot USERNAME contains "test" and that you confirm by name (--confirm),
 //   - the bot has NO webhook (getWebhookInfo url empty — getUpdates would fail otherwise; we never remove a webhook),
-//   - the bot id is not --forbid-bot-id (put your REAL store bot's numeric id there: the part of its token before ':'),
+//   - the token's bot id equals --expect-bot-id: an ALLOW-list of exactly one test bot, checked BEFORE any request
+//     (a token of any other bot — the store bot included — is never sent anywhere),
+//   - optional extra: the bot id is not --forbid-bot-id (a known real store bot id),
 //   - the chat id is a numeric group id; every outgoing message is forced to that chat.
 //
-//   node test/local-e2e/telegram-bridge.mjs --check --token-file <path> [--forbid-bot-id <id>]
+//   node test/local-e2e/telegram-bridge.mjs --check --token-file <path> --expect-bot-id <test bot id>
 //   E2E_TG_LOCAL_SECRET=<same as the Worker run> node test/local-e2e/telegram-bridge.mjs --run \
-//        --token-file <path> --chat-id -100… --confirm <test_bot_username> --forbid-bot-id <real store bot id>
+//        --token-file <path> --chat-id -… --confirm <test_bot_username> --expect-bot-id <test bot id> [--forbid-bot-id <id>]
 //
 // The token file is read, never printed; keep it under workers/order-worker/.secrets/ (git-ignored).
 import http from 'node:http';
@@ -32,7 +34,7 @@ export class BridgeRefused extends Error {
 }
 
 /** pure checks (unit-tested): token shape, bot identity, webhook, chat id, confirmation */
-export function assertBridgeAllowed({ token, me, webhookInfo, chatId, confirm, forbidBotId, mode = 'run' }) {
+export function assertBridgeAllowed({ token, me, webhookInfo, chatId, confirm, forbidBotId, expectBotId, mode = 'run' }) {
   const p = [];
   const m = /^(\d{5,20}):[A-Za-z0-9_-]{30,}$/.exec(String(token || ''));
   if (!m) p.push('token file does not hold a Telegram bot token');
@@ -41,10 +43,11 @@ export function assertBridgeAllowed({ token, me, webhookInfo, chatId, confirm, f
   const username = String(me?.username || '');
   if (!/test/i.test(username)) p.push(`bot username must contain "test" (got "${username || '?'}") — use a separate TEST bot, never the store bot`);
   if (forbidBotId && String(forbidBotId) === botId) p.push('this is the forbidden (real store) bot');
+  if (!/^\d{5,20}$/.test(String(expectBotId || ''))) p.push('--expect-bot-id <test bot id> is required (only that exact bot may be used)');
+  else if (String(expectBotId) !== botId) p.push('the token belongs to another bot than --expect-bot-id');
   if (webhookInfo?.url) p.push('the bot has a webhook set — refusing (this bridge never changes or removes webhooks)');
   if (mode === 'run') {
     if (!/^-\d{5,20}$/.test(String(chatId || ''))) p.push('--chat-id must be the numeric id of the TEST group (negative)');
-    if (!forbidBotId) p.push('--forbid-bot-id <real store bot id> is required (protects the real bot)');
     if (confirm !== username) p.push(`--confirm must equal the test bot username "${username}"`);
     if (!/^[A-Za-z0-9_-]{32,256}$/.test(String(process.env.E2E_TG_LOCAL_SECRET || ''))) p.push('E2E_TG_LOCAL_SECRET (32+ chars, same value as the local Worker run) is required');
   }
@@ -70,11 +73,14 @@ const tg = async (token, method, payload = {}, timeoutMs = 15_000) => {
 async function main(argv) {
   const arg = (k) => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1] : undefined; };
   const mode = argv.includes('--run') ? 'run' : 'check';
-  const token = readFileSync(arg('token-file') || '', 'utf8').trim();
+  const token = readFileSync(arg('token-file') || '', 'utf8').replace(/^﻿/, '').trim();
+  // allow-list BEFORE any request: a token of another bot is never sent anywhere
+  const tokenBotId = (/^(\d{5,20}):/.exec(token) || [])[1];
+  if (!tokenBotId || tokenBotId !== String(arg('expect-bot-id') || '')) throw new BridgeRefused(['the token file does not belong to --expect-bot-id (nothing was sent)']);
   const me = (await tg(token, 'getMe')).data?.result;
   const webhookInfo = (await tg(token, 'getWebhookInfo')).data?.result;
   const chatId = arg('chat-id');
-  const { username } = assertBridgeAllowed({ token, me, webhookInfo, chatId, confirm: arg('confirm'), forbidBotId: arg('forbid-bot-id'), mode });
+  const { username } = assertBridgeAllowed({ token, me, webhookInfo, chatId, confirm: arg('confirm'), forbidBotId: arg('forbid-bot-id'), expectBotId: arg('expect-bot-id'), mode });
   console.log(`test bot @${username}: OK (no webhook)`);
   if (mode === 'check') return;
 

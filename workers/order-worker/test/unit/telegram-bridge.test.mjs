@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { assertBridgeAllowed, rewriteOutgoing, BridgeRefused } from '../local-e2e/telegram-bridge.mjs';
 
 const TOKEN = `123456789:${'A'.repeat(35)}`;
-const ok = { token: TOKEN, me: { id: 123456789, username: 'dairsharaf_test_bot' }, webhookInfo: { url: '' }, chatId: '-1001112223334', confirm: 'dairsharaf_test_bot', forbidBotId: '987654321' };
+const ok = { token: TOKEN, me: { id: 123456789, username: 'dairsharaf_test_bot' }, webhookInfo: { url: '' }, chatId: '-1001112223334', confirm: 'dairsharaf_test_bot', forbidBotId: '987654321', expectBotId: '123456789' };
 const SECRET = 's'.repeat(40);
 
 test('bridge: a confirmed TEST bot without webhook, a test group and the real bot id excluded -> allowed', () => {
@@ -13,12 +13,18 @@ test('bridge: a confirmed TEST bot without webhook, a test group and the real bo
   assert.deepEqual(assertBridgeAllowed(ok), { botId: '123456789', username: 'dairsharaf_test_bot' });
 });
 
+test('bridge: with the exact test bot allow-listed, the store bot id is an optional extra', () => {
+  process.env.E2E_TG_LOCAL_SECRET = SECRET;
+  assert.doesNotThrow(() => assertBridgeAllowed({ ...ok, forbidBotId: undefined }));
+});
+
 test('bridge: every unsafe setup is refused', () => {
   process.env.E2E_TG_LOCAL_SECRET = SECRET;
   const bad = {
     'username without "test" (the store bot)': { me: { id: 123456789, username: 'dairsharaf_bot' }, confirm: 'dairsharaf_bot' },
     'the forbidden real bot id': { forbidBotId: '123456789' },
-    'no forbidden id given': { forbidBotId: undefined },
+    'no allow-listed test bot id': { expectBotId: undefined },
+    'token of another bot than the allow-listed one': { expectBotId: '555555555' },
     'bot with a webhook': { webhookInfo: { url: 'https://example.invalid/hook' } },
     'not confirmed': { confirm: 'other_test_bot' },
     'private chat / bad chat id': { chatId: '12345' },

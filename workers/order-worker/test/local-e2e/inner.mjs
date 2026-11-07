@@ -335,18 +335,23 @@ async function runLiveApproval() {
     return vid ? (p?.variants || []).find((v) => v.id === vid)?.stock : p?.stock;
   };
   await reseed();
+  // the order note (shown in the Telegram message) names the test order and the action asked for — no guessing which is which
   const orders = [
-    checkoutOrder({ items: [line('p-simple', 2)] }),
-    checkoutOrder({ items: [line('p-variants', 1, { variantId: 'var_red' }), line('p-simple', 1)] }),
-    checkoutOrder({ items: [line('p-last-one', 1)] }),
+    checkoutOrder({ items: [line('p-simple', 2)], overrides: { note: 'طلب تجريبي رقم 1 — المطلوب: قبول' } }),
+    checkoutOrder({ items: [line('p-variants', 1, { variantId: 'var_red' }), line('p-simple', 1)], overrides: { note: 'طلب تجريبي رقم 2 — المطلوب: رفض' } }),
+    checkoutOrder({ items: [line('p-last-one', 1)], overrides: { note: 'طلب تجريبي رقم 3 — المطلوب: قبول ثم إلغاء مع التأكيد' } }),
   ];
   for (const o of orders) {
     const r = await fetch(`${URLS.order}/create-order`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ order: o, turnstileToken: TURNSTILE_PASS_TOKEN }) });
     console.log(`[live] order ${o.id}: ${r.status}`);
   }
-  const waitMin = Math.min(30, Math.max(1, Number(process.env.E2E_TG_WAIT_MIN || 10)));
-  console.log(`[live] 3 synthetic orders created. In the TEST group: accept / reject / cancel, press twice, etc. Watching for ${waitMin} min…`);
-  const seen = new Map();
+  // the test plan: #1 accept, #2 reject, #3 accept then cancel (with confirmation)
+  const EXPECT = ['accepted', 'rejected', 'cancelled'];
+  const waitMin = Math.min(30, Math.max(1, Number(process.env.E2E_TG_WAIT_MIN || 20)));
+  orders.forEach((o, i) => console.log(`[live] order #${i + 1} ${o.id} -> please ${['ACCEPT', 'REJECT', 'ACCEPT, then CANCEL + CONFIRM'][i]}`));
+  console.log(`[live] waiting up to ${waitMin} min for the presses in the TEST group…`);
+  const seen = new Map(orders.map((o) => [o.id, 'pending']));
+  let lastOneWhileAccepted = null; // p-last-one observed while #3 was accepted (deducted once?)
   const end = Date.now() + waitMin * 60_000;
   while (Date.now() < end) {
     for (const o of orders) {
@@ -357,26 +362,45 @@ async function runLiveApproval() {
         console.log(`[live] ${o.id} -> ${d}${l?.decidedBy?.userId ? ` (by ${l.decidedBy.userId})` : ''}`);
       }
     }
-    if ([...seen.values()].filter((d) => d !== 'pending' && d !== 'accepted').length === orders.length) break;
+    if (seen.get(orders[2].id) === 'accepted') lastOneWhileAccepted = await stockOf('p-last-one');
+    if (orders.every((o, i) => seen.get(o.id) === EXPECT[i])) break;
+    // a decision different from the plan is NOT a reason to stop: keep watching until the plan is done or time is up
     await sleep(2000);
   }
-  // invariant: stock = initial − (what accepted, not cancelled, orders took)
-  const taken = { 'p-simple': 0, 'var_red': 0, 'p-last-one': 0 };
-  for (const o of orders) {
-    if (seen.get(o.id) !== 'accepted') continue;
-    for (const it of o.items) taken[it.selectedVariant?.id || it.productId] += it.quantity;
+  // repeated presses: stock and states must not move any more
+  const snapshot = async () => JSON.stringify([await stockOf('p-simple'), await stockOf('p-variants', 'var_red'), await stockOf('p-last-one'), ...(await Promise.all(orders.map(async (o) => (await getDoc(`orders/${o.id}`))?.status)))]);
+  const repeatSec = Math.min(600, Math.max(10, Number(process.env.E2E_TG_REPEAT_SEC || 120)));
+  const before = await snapshot();
+  console.log(`[live] decisions done. NOW press the remaining buttons again / old buttons (repeat test) — watching ${repeatSec}s…`);
+  let moved = null;
+  for (const stop = Date.now() + repeatSec * 1000; Date.now() < stop;) {
+    const now = await snapshot();
+    if (now !== before) { moved = now; break; }
+    await sleep(2000);
   }
-  const checks = [
-    ['p-simple', null, 10 - taken['p-simple']],
-    ['p-variants', 'var_red', 5 - taken.var_red],
-    ['p-last-one', null, 1 - taken['p-last-one']],
-  ];
+
   const out = [];
-  for (const [pid, vid, want] of checks) {
-    const got = await stockOf(pid, vid);
-    out.push({ id: `LIVE-${vid || pid}`, name: `stock of ${vid || pid} matches the decisions (${want})`, ok: got === want, ...(got === want ? {} : { error: `stock ${got}, expected ${want}` }) });
-  }
-  for (const o of orders) out.push({ id: `LIVE-${o.id}`, name: `final decision: ${seen.get(o.id)}`, ok: true });
+  const check = (id, name, ok, error) => out.push({ id, name, ok: !!ok, ...(ok ? {} : { error }) });
+  const [o1, o2, o3] = await Promise.all(orders.map((o) => getDoc(`orders/${o.id}`)));
+  const [l1, l2, l3] = await Promise.all(orders.map((o) => getDoc(`orderLedger/${o.id}`)));
+  const admins = String(process.env.E2E_TG_ADMIN_IDS || '').split(',');
+  check('LIVE-1', '#1 accepted: status processing, decided by the admin', l1?.decision === 'accepted' && o1?.status === 'processing' && o1?.approval?.state === 'accepted' && admins.includes(String(l1?.decidedBy?.userId)), `decision ${l1?.decision}, status ${o1?.status}`);
+  check('LIVE-2', '#2 rejected: status cancelled, nothing deducted', l2?.decision === 'rejected' && o2?.status === 'cancelled' && !(l2?.stockDeductions || []).some((d) => d.applied), `decision ${l2?.decision}, status ${o2?.status}`);
+  check('LIVE-3', '#3 accepted then cancelled: status cancelled, restored once', l3?.decision === 'cancelled' && o3?.status === 'cancelled' && (l3?.stockRestored || []).length === 1, `decision ${l3?.decision}, status ${o3?.status}, restored ${(l3?.stockRestored || []).length}`);
+  check('LIVE-3b', '#3 while accepted: the last piece was taken (stock 0)', lastOneWhileAccepted === 0, `observed ${lastOneWhileAccepted} (null = the cancel came before a 2 s poll; see the ledger check above)`);
+  const appliedQty = (l) => (l?.stockDeductions || []).filter((d) => d.applied).reduce((s, d) => s + Number(d.quantity || d.qty || 0), 0);
+  check('LIVE-1b', '#1 deducted exactly once in the ledger (2 pieces)', appliedQty(l1) === 2, `applied ${appliedQty(l1)}`);
+  check('LIVE-S1', 'stock p-simple = 10 − 2 (only #1)', (await stockOf('p-simple')) === 8, `stock ${await stockOf('p-simple')}`);
+  check('LIVE-S2', 'stock var_red unchanged (#2 rejected)', (await stockOf('p-variants', 'var_red')) === 5, `stock ${await stockOf('p-variants', 'var_red')}`);
+  check('LIVE-S3', 'stock p-last-one back to 1 (#3 cancelled, restored once)', (await stockOf('p-last-one')) === 1, `stock ${await stockOf('p-last-one')}`);
+  check('LIVE-R', `repeated presses for ${repeatSec}s changed nothing`, moved === null, `changed to ${moved}`);
+  // whatever was pressed: stock = initial − what the orders that are accepted NOW took (rejected / cancelled took nothing)
+  const ledgers = [l1, l2, l3];
+  const taken = { 'p-simple': 0, var_red: 0, 'p-last-one': 0 };
+  orders.forEach((o, i) => { if (ledgers[i]?.decision === 'accepted') for (const it of o.items) taken[it.selectedVariant?.id || it.productId] += it.quantity; });
+  const inv = [await stockOf('p-simple'), await stockOf('p-variants', 'var_red'), await stockOf('p-last-one')];
+  const want = [10 - taken['p-simple'], 5 - taken.var_red, 1 - taken['p-last-one']];
+  check('LIVE-INV', `stock matches the decisions actually taken (${want.join('/')})`, JSON.stringify(inv) === JSON.stringify(want), `stock ${inv.join('/')}`);
   for (const r of out) console.log(`${r.ok ? '✔' : '✖'} ${r.id} ${r.name}${r.error ? ` — ${r.error}` : ''}`);
   return out;
 }
