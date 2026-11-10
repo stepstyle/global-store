@@ -229,6 +229,15 @@ export function loadConfig(env = {}) {
   const currency = str(env.CURRENCY) || 'JOD';
   if (!/^[A-Z]{3}$/.test(currency)) errors.push('CURRENCY must be an ISO 4217 code (e.g. JOD)');
 
+  // Smart auto-approval (src/autoapproval.js, src/autoreview.js). The SERVER CEILING: 'off' (default) = no order is
+  // ever assessed, whatever the dashboard switch says. 'on' only works on top of Telegram approval.
+  const autoApprovalMode = oneOf(env.AUTO_APPROVAL_MODE, ['off', 'on'], 'off');
+  if (!autoApprovalMode) errors.push('AUTO_APPROVAL_MODE must be off|on');
+  if (autoApprovalMode === 'on' && approvalMode !== 'telegram') errors.push('AUTO_APPROVAL_MODE=on requires APPROVAL_MODE=telegram');
+  // HMAC key for the phone fingerprint (same-phone check). Missing = that check is "unavailable" = manual review.
+  const autoHashSecret = str(env.AUTO_APPROVAL_HASH_SECRET);
+  if (autoHashSecret && autoHashSecret.length < 32) errors.push('AUTO_APPROVAL_HASH_SECRET must be at least 32 characters');
+
   return {
     ok: errors.length === 0,
     errors,
@@ -284,6 +293,16 @@ export function loadConfig(env = {}) {
     // ...and its FIRST order (created in time) must be delivered within this many hours of its creation (7 days)
     wheelFirstDeliveryHours: Math.max(1, Math.min(2160, num(env.WHEEL_FIRST_DELIVERY_HOURS, 168))),
     currency,
+    autoApprovalMode,
+    autoApproval: {
+      hashSecret: autoHashSecret,
+      // dashboard switch / limits are re-read at most this often (a switch-off applies within this time)
+      settingsCacheMs: Math.min(Math.max(num(env.AUTO_APPROVAL_CACHE_MS, 30 * 1000), 0), 5 * 60 * 1000),
+      // a review still 'queued' after this is finished by the cron (the request that started it stopped)
+      recoverAfterMs: num(env.AUTO_APPROVAL_RECOVER_AFTER_MS, 60 * 1000),
+      // a review that cannot be finished for this long is closed as manual review (the order is never stuck)
+      giveUpAfterMs: num(env.AUTO_APPROVAL_GIVE_UP_AFTER_MS, 30 * 60 * 1000),
+    },
     email: {
       apiKey: str(env.SENDGRID_API_KEY),
       to: str(env.ADMIN_EMAIL),

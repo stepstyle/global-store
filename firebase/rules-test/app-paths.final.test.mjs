@@ -217,3 +217,35 @@ test('APPROVAL: pending orders cannot be decided from the dashboard; accepted on
   // products: no client can change stock (the Worker does, with its service account)
   await assertFails(updateDoc(doc(as.alice(), 'products/p1'), { stock: 999 }));
 });
+
+// ------------------------------------------------------------------ smart auto-approval switch (config/autoApproval)
+test('AUTO-APPROVAL switch: admins read and set it (validated, who/when recorded); customers / guests can neither read nor change it', async () => {
+  const ok = (uid, extra = {}) => ({ enabled: true, maxLineQty: 5, maxTotalQty: 15, maxOrderTotal: 50, duplicateWindowHours: 24, allowCliq: false, updatedAt: serverTimestamp(), updatedBy: uid, ...extra });
+  const ref = (db) => doc(db, 'config/autoApproval');
+  await assertSucceeds(setDoc(ref(as.admin()), ok(ADMIN)), 'admin turns it on');
+  await assertSucceeds(getDoc(ref(as.admin())), 'admin reads it');
+  await assertSucceeds(setDoc(ref(as.admin()), { enabled: false, updatedAt: serverTimestamp(), updatedBy: ADMIN }), 'admin turns it off (limits fall back to the defaults)');
+  await assertSucceeds(setDoc(ref(as.owner()), ok(OWNER)), 'owner');
+  // customers and guests: no access at all
+  for (const who of ['alice', 'guest']) {
+    await assertFails(getDoc(ref(as[who]())), `${who} read`);
+    await assertFails(setDoc(ref(as[who]()), ok(who === 'alice' ? ALICE : 'x')), `${who} write`);
+  }
+  await assertFails(updateDoc(ref(as.alice()), { enabled: false }), 'customer switches it off');
+  // the admin cannot store an unsafe or forged value
+  for (const [label, bad] of [
+    ['CliQ allowed', ok(ADMIN, { allowCliq: true })],
+    ['limit 0', ok(ADMIN, { maxLineQty: 0 })],
+    ['limit too high', ok(ADMIN, { maxTotalQty: 100000 })],
+    ['limit as text', ok(ADMIN, { maxOrderTotal: '50' })],
+    ['enabled as text', ok(ADMIN, { enabled: 'yes' })],
+    ['unknown field', ok(ADMIN, { autoShip: true })],
+    ['someone else as author', ok(ADMIN, { updatedBy: OWNER })],
+    ['client clock', ok(ADMIN, { updatedAt: new Date() })],
+    ['no enabled', (() => { const x = ok(ADMIN); delete x.enabled; return x; })()],
+  ]) await assertFails(setDoc(ref(as.admin()), bad), label);
+  // the admin cannot delete it (only the owner can, through config/{doc})
+  await assertFails(deleteDoc(ref(as.admin())));
+  // config/sendgrid stays owner-only
+  await assertFails(getDoc(doc(as.admin(), 'config/sendgrid')));
+});

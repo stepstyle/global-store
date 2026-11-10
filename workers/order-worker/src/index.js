@@ -138,9 +138,13 @@ async function handle(request, env, ctx, cfg) {
     }
 
     // after the identity check, so a 401 (refresh + resend) never burns a single-use Turnstile token
+    // turnstileVerified: TRUE only when Cloudflare verified THIS request's token (auto-approval needs it; 'log' mode
+    // or a missing token = not verified = manual review)
+    let turnstileVerified = false;
     if (cfg.turnstileMode !== 'off') {
       const token = body?.turnstileToken || request.headers.get('cf-turnstile-response');
       const passed = await verifyTurnstile(cfg, token, ip);
+      turnstileVerified = passed === true;
       if (!passed) {
         if (cfg.turnstileMode === 'enforce') return reply({ ok: false, code: 'TURNSTILE_FAILED' }, 403);
         log('turnstile.missing_or_invalid', { mode: cfg.turnstileMode });
@@ -150,7 +154,7 @@ async function handle(request, env, ctx, cfg) {
     const rawOrder = body && typeof body === 'object' ? body.order ?? body : null;
     // tracking-key HASH chosen by the customer's browser (outside the order: not part of the payload hash)
     // wheelSpinId: a prize won on the wheel (WHEEL_MODE=test); re-checked server-side against the verified account
-    const r = await createOrder(fs, cfg, rawOrder, ctx, auth, { trackingKeyHash: body?.trackingKeyHash, wheelSpinId: body?.wheelSpinId ?? null });
+    const r = await createOrder(fs, cfg, rawOrder, ctx, auth, { trackingKeyHash: body?.trackingKeyHash, wheelSpinId: body?.wheelSpinId ?? null, turnstileVerified });
     return reply(r.body, r.status);
   }
 

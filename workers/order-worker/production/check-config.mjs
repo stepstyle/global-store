@@ -16,7 +16,7 @@ export const LOCAL_TOML = resolve(HERE, '../wrangler.production.local.toml');
 export const DEFAULT_TOML = existsSync(LOCAL_TOML) ? LOCAL_TOML : TEMPLATE_TOML;
 export const PROD_PROJECT = 'antastore1-82b50';
 export const PROD_ORIGINS = ['https://dairsharaf.com', 'https://www.dairsharaf.com'];
-const SECRET_NAMES = ['FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY', 'TURNSTILE_SECRET', 'TELEGRAM_BOT_TOKEN', 'SENDGRID_API_KEY', 'WORKER_AUTH_TOKEN', 'STAGING_ACCESS_TOKEN'];
+const SECRET_NAMES = ['FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY', 'TURNSTILE_SECRET', 'TELEGRAM_BOT_TOKEN', 'SENDGRID_API_KEY', 'WORKER_AUTH_TOKEN', 'STAGING_ACCESS_TOKEN', 'TELEGRAM_WEBHOOK_SECRET', 'AUTO_APPROVAL_HASH_SECRET'];
 
 /** minimal TOML reading for this file's flat shape: top-level keys, [define], [vars] (strings only) */
 export function parseToml(text) {

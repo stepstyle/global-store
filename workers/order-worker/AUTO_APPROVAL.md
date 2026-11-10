@@ -1,6 +1,25 @@
-# Smart auto-approval: design (phase 1 done: rules + unit tests only)
+# Smart auto-approval: design (phases 1 and 2 done, local + emulator; nothing deployed)
 
-Status: `src/autoapproval.js` (`assessOrder`) and `test/unit/autoapproval.test.mjs` exist. **Nothing calls them yet.** No order is assessed and nothing is deployed.
+## Status
+
+- **Phase 1:** `src/autoapproval.js` (`assessOrder`, pure) with 17 unit tests.
+- **Phase 2:**
+  - `src/autoreview.js` (runs the review, recovery);
+  - wired into `src/orders.js`, `src/notify.js`, `src/telegram.js`, `src/index.js` (Turnstile result) and `src/config.js`;
+  - `config/autoApproval` rules in `firebase/rules-test/firestore.rules.final`;
+  - the dashboard switch in `src/components/AutoApprovalSwitch.tsx`;
+  - B01–B15 tests in `test/auto-approval.test.mjs` (emulator).
+
+## Settings
+
+| Name | Where | Default | Meaning |
+|---|---|---|---|
+| `AUTO_APPROVAL_MODE` | Worker var | `off` | Server ceiling. `on` requires `APPROVAL_MODE=telegram` |
+| `AUTO_APPROVAL_HASH_SECRET` | Worker **secret**, ≥ 32 chars | none | HMAC key for the phone fingerprint. Without it every order goes to manual review (duplicate check unavailable) |
+| `AUTO_APPROVAL_CACHE_MS` | Worker var | 30000 | How often the dashboard switch is re-read; a switch-off applies within this time |
+| `AUTO_APPROVAL_RECOVER_AFTER_MS` | Worker var | 60000 | After this, the cron finishes a review still `queued` |
+| `AUTO_APPROVAL_GIVE_UP_AFTER_MS` | Worker var | 1800000 | A review that cannot finish is closed as manual review |
+| `config/autoApproval` | Firestore | absent = **OFF** | Dashboard switch + limits. Admins only (rules); CliQ cannot be allowed |
 
 ## Decisions (store owner, 2026-11)
 
@@ -77,7 +96,7 @@ Status: `src/autoapproval.js` (`assessOrder`) and `test/unit/autoapproval.test.m
 | # | Content | Where |
 |---|---|---|
 | 1 ✅ | `assessOrder` + unit tests (17) | local |
-| 2 | `config/autoApproval` + Firestore rules (admin-only write); ledger marker + phone fingerprint + index; integration in `orders.js` after the creation commit; recovery in the cron; Telegram text (🤖 / ⚠️ + reasons); dashboard switch | local + emulator |
-| 3 | B01–B15 in the real Worker runtime (local), then the TEST bot | local |
+| 2 ✅ | `config/autoApproval` + rules; ledger marker + phone fingerprint (single-field query, no composite index); integration after the creation commit; recovery through the notification queue; Telegram text (🤖 / ⚠️ + reasons); dashboard switch; B01–B15 (+B13b) on the emulator | local + emulator |
+| 3 | B-scenarios in the real Worker runtime (workerd), then the TEST bot | local |
 | 4 | Staging (`--suite auto`) | staging, needs approval |
 | 5 | Production | separate decision; `AUTO_APPROVAL_MODE=off` first |

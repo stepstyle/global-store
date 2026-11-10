@@ -9,6 +9,7 @@ import { planInventory } from './inventory.js';
 import { planReservation, reservationWrites } from './reservations.js';
 import { computeServerPricing, comparePricing, enforcePriceProblems } from './pricing.js';
 import { initialNotifications, processNotifications } from './notify.js';
+import { autoReviewCreationFields, runAutoReview, isTestStop } from './autoreview.js';
 import { WORKER_VERSION } from './config.js';
 import { log } from './http.js';
 import { loadGiftForOrder, openCampaign, phoneKey, prizeAdjustment, secondOrderWindowMs, firstDeliveryMs, accountSeqPath, accountSeqBump, accountSeqGuardedBump, GENERIC_GIFT_PRODUCT } from './wheel.js';
@@ -17,7 +18,7 @@ import { TRACKING_KEY_HASH_RE, normalizeTrackingKey, hashTrackingKey, sameHex, p
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const STATUS_ALLOWLIST = new Set(['new', 'processing', 'shipped', 'delivered', 'cancelled']);
 
-async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields, userIdWarning, verifiedUid = null, trackingKeyHash = null, wheel = null, accountSeq = null }) {
+async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields, userIdWarning, verifiedUid = null, trackingKeyHash = null, wheel = null, accountSeq = null, autoFields = null }) {
   const v = input;
   const lines = v.items.map((it, index) => ({ index, productId: it.productId, variantId: it.variantId, quantity: it.quantity }));
   // WHEEL_MODE=test: a prize won on the wheel travels as ONE extra line (index 1000, price 0) — reserved with the
@@ -166,6 +167,9 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
             index: l.index, productId: l.productId, variantId: l.variantId ?? null, quantity: l.quantity,
             unitPrice: l.serverUnitPrice, productName: l.productName, variantLabel: l.variantLabel,
           })),
+          // smart auto-approval: the review marker is part of THIS commit, so a saved order is never "forgotten"
+          // (finished by this request or, if it stops, by the cron — src/autoreview.js). Created orders only.
+          ...(autoFields && mode === 'created' ? autoFields : {}),
         }
       : {}),
     // WHEEL (test): which prize this order carries and whether its delivery earns a new chance (src/wheel.js)
@@ -343,6 +347,8 @@ export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {
   const input = parsed.value;
   const hash = await orderHash(input);
   const id = input.id;
+  // smart auto-approval: null unless AUTO_APPROVAL_MODE=on (+ APPROVAL_MODE=telegram); Turnstile as verified by index.js
+  const autoFields = await autoReviewCreationFields(cfg, input, { turnstileVerified: extra?.turnstileVerified === true });
 
   let waited = false;
   // stock contention (several orders on one product at once) is resolved by retrying the precondition commit; each
@@ -429,9 +435,21 @@ export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {
     }
 
     // Owner is decided ONCE, here, at creation. A replay (ledger exists, above) or an adoption never changes it.
-    const r = await buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields: parsed.strippedFields, userIdWarning, verifiedUid: mode === 'created' ? verifiedUid : null, trackingKeyHash, wheel, accountSeq });
+    const r = await buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields: parsed.strippedFields, userIdWarning, verifiedUid: mode === 'created' ? verifiedUid : null, trackingKeyHash, wheel, accountSeq, autoFields });
     if (r.ok) {
-      const p = processNotifications(fs, cfg, id).catch((e) => log('notify.error', { orderId: id, message: String(e?.message || e) }));
+      // auto-approval review FIRST (so the Telegram message shows the real state), then the notifications.
+      // A review that cannot finish leaves the marker 'queued': the notification waits and the cron finishes it.
+      const p = (async () => {
+        if (autoFields && mode === 'created') {
+          try {
+            await runAutoReview(fs, cfg, id);
+          } catch (e) {
+            if (isTestStop(e)) return; // test-only: behave like a Worker that stopped here (no notification either)
+            log('autoreview.error', { orderId: id, message: String(e?.message || e).slice(0, 120) });
+          }
+        }
+        await processNotifications(fs, cfg, id);
+      })().catch((e) => log('notify.error', { orderId: id, message: String(e?.message || e) }));
       if (ctx?.waitUntil) ctx.waitUntil(p);
       return { status: 200, body: { ok: true, orderId: id, replay: false } };
     }

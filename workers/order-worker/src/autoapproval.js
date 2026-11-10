@@ -64,6 +64,8 @@ export const REASON_AR = Object.freeze({
   PAYMENT_UNKNOWN: 'طريقة دفع غير معروفة',
   PHONE_BLOCKED: 'رقم في قائمة المراجعة',
   NOT_NEW: 'حالة الطلب ليست جديدة',
+  SETTINGS_UNAVAILABLE: 'تعذّر قراءة إعدادات القبول التلقائي',
+  AUTO_REVIEW_FAILED: 'تعذّر إكمال الفحص التلقائي',
 });
 
 /**

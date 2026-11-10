@@ -10,6 +10,7 @@
 import { encodeFields, decodeFields } from './firestore.js';
 import { log } from './http.js';
 import { approvalText, keyboardFor } from './telegram.js';
+import { settleAutoReview } from './autoreview.js';
 
 export const CHANNELS = ['telegram', 'email'];
 const MAX_TEXT = 3900; // Telegram hard limit is 4096
@@ -117,6 +118,12 @@ async function sendEmail(cfg, orderId, text) {
 
 export async function processNotifications(fs, cfg, orderId) {
   const ledgerPath = `orderLedger/${orderId}`;
+  // smart auto-approval: the message waits for the review (so it shows 🤖 accepted / ⚠️ needs review). A review that
+  // stayed 'queued' (the creating request stopped) is finished here by the cron, exactly once (src/autoreview.js).
+  const head = await fs.get(ledgerPath);
+  if (!head.exists) return;
+  const H = decodeFields(head.fields);
+  if (H.autoReview?.state === 'queued' && !(await settleAutoReview(fs, cfg, orderId, H))) return;
   for (const ch of CHANNELS) {
     const led = await fs.get(ledgerPath);
     if (!led.exists) return;

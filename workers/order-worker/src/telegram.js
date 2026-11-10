@@ -14,6 +14,7 @@ import { decodeFields } from './firestore.js';
 import { timingSafeEqual, readJsonBody, log } from './http.js';
 import { decideOrder } from './approval.js';
 import { ORDER_ID_RE } from './validate.js';
+import { reasonsText } from './autoapproval.js';
 
 const CB_RE = /^v1:(acc|rej|can|cfc|bck):(ORD-[A-Z0-9]{4,16}-[A-Z0-9]{4,16})$/; // ≤ 64 bytes (Telegram limit)
 const MAX_TEXT = 3900;
@@ -48,7 +49,15 @@ export function approvalText(order, ledger, cfg) {
   });
   if (lines.some((l) => l.gift === true)) items.push('🎁 يتضمن الطلب هدية من عجلة الجوائز: غلّفها مع الطلب (غير محسوبة في الإجمالي).');
   const decision = ledger.decision || 'pending';
-  const who = ledger.decidedBy?.userId ? ` — بواسطة ${ledger.decidedBy.userId}` : '';
+  const who = ledger.decidedBy?.source === 'auto' ? ' — تلقائيًا' : ledger.decidedBy?.userId ? ` — بواسطة ${ledger.decidedBy.userId}` : '';
+  // smart auto-approval: what the automatic review concluded (fixed texts + reason labels, no extra customer data)
+  const ar = ledger.autoReview;
+  const autoLines = ar?.state !== 'done' ? []
+    : ar.outcome === 'auto_accepted'
+      ? ['🤖 قُبل تلقائيًا: نجحت كل الفحوص', 'ℹ️ القبول التلقائي لا يثبت هوية صاحب رقم الهاتف — تواصل مع العميل قبل الشحن عند الشك']
+      : ar.outcome === 'manual_review'
+        ? [`⚠️ يحتاج مراجعة يدوية: ${reasonsText(ar.reasons) || '—'}`]
+        : [];
   const text = [
     '🛒 طلب جديد من مكتبة دير شرف العلمية',
     '',
@@ -71,6 +80,7 @@ export function approvalText(order, ledger, cfg) {
     ...(order.note ? ['', `📝 ملاحظة: ${order.note}`] : []),
     '',
     auto ? STATE_LINE.auto : `${STATE_LINE[decision] || STATE_LINE.pending}${decision === 'pending' ? '' : who}`,
+    ...autoLines,
     ...(auto && cfg.adminBaseUrl ? ['', `لوحة التحكم: ${cfg.adminBaseUrl.replace(/\/+$/, '')}/#/admin?orderId=${encodeURIComponent(order.id || ledger.orderId || '')}`] : []),
   ].join('\n');
   return text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT - 1)}…` : text;

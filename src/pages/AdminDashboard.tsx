@@ -32,6 +32,7 @@ import {
 import { useCart } from '../App';
 import Button from '../components/Button';
 import EditProductModal from '../components/EditProductModal';
+import AutoApprovalSwitch from '../components/AutoApprovalSwitch';
 import { Product, Category, Order } from '../types';
 import { db } from '../services/storage';
 import SEO from '../components/SEO';
@@ -1184,6 +1185,7 @@ const AdminDashboard: React.FC = () => {
         {/* ORDERS (🚀 التعديل الاحترافي هنا) */}
         {activeTab === 'orders' && (
           <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 animate-in fade-in">
+            <AutoApprovalSwitch />
             <h3 className="font-bold text-lg mb-6 flex items-center gap-3">
               {t('orderManagement')}
               {newOrdersCount > 0 && (

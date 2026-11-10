@@ -178,5 +178,27 @@ service cloud.firestore {
       allow read: if isOwner() || (isAdmin() && doc != 'sendgrid');
       allow write: if isOwner();
     }
+
+    // Smart auto-approval switch + limits (the order Worker reads it with its service account; the server ceiling
+    // AUTO_APPROVAL_MODE stays off unless deployed on). Store admins only — customers can neither read nor change it.
+    // CliQ is never automatic (store decision); limits stay inside the Worker's own bounds; who / when are recorded.
+    function validAutoApproval() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['enabled', 'maxLineQty', 'maxTotalQty', 'maxOrderTotal', 'duplicateWindowHours',
+                               'allowCliq', 'blockedPhoneHashes', 'updatedAt', 'updatedBy'])
+        && d.enabled is bool
+        && (!('maxLineQty' in d) || (d.maxLineQty is int && d.maxLineQty >= 1 && d.maxLineQty <= 99))
+        && (!('maxTotalQty' in d) || (d.maxTotalQty is int && d.maxTotalQty >= 1 && d.maxTotalQty <= 500))
+        && (!('maxOrderTotal' in d) || (d.maxOrderTotal is number && d.maxOrderTotal >= 1 && d.maxOrderTotal <= 10000))
+        && (!('duplicateWindowHours' in d) || (d.duplicateWindowHours is int && d.duplicateWindowHours >= 1 && d.duplicateWindowHours <= 720))
+        && (!('allowCliq' in d) || d.allowCliq == false)
+        && (!('blockedPhoneHashes' in d) || (d.blockedPhoneHashes is list && d.blockedPhoneHashes.size() <= 5000))
+        && d.updatedBy == request.auth.uid
+        && d.updatedAt == request.time;
+    }
+    match /config/autoApproval {
+      allow get: if isAdmin();
+      allow create, update: if isAdmin() && validAutoApproval();
+    }
   }
 }
