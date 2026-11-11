@@ -37,7 +37,9 @@ test('production identifiers are read locally from src/services/firebase.ts', ()
 });
 
 test('the inline production config in firebase.ts is byte-identical to the last commit', () => {
-  const block = (src) => (src.match(/const cfg: Partial<FirebaseWebConfig> = \{[\s\S]*?\};/) || [])[0];
+  // line endings are normalised first: `git show` returns the stored text (LF) while a checkout with
+  // core.autocrlf=true writes CRLF (e.g. a fresh `git worktree`). Every other byte must still be identical.
+  const block = (src) => (src.replace(/\r\n/g, '\n').match(/const cfg: Partial<FirebaseWebConfig> = \{[\s\S]*?\};/) || [])[0];
   const head = execFileSync('git', ['show', 'HEAD:src/services/firebase.ts'], { cwd: ROOT, encoding: 'utf8' });
   const now = readFileSync(join(ROOT, 'src/services/firebase.ts'), 'utf8');
   assert.ok(block(head) && block(now));

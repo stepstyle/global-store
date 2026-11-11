@@ -26,8 +26,13 @@ export const __test = { stopAt: null, afterAssess: null, settingsUnavailable: fa
 class TestStop extends Error {}
 /** true for the simulated stop: the caller then behaves like a stopped Worker (no notification either) */
 export const isTestStop = (e) => e instanceof TestStop;
-const testHook = (cfg, point) => {
-  if (cfg.environment === 'local' && __test.stopAt === point) throw new TestStop(`test stop at ${point}`);
+/**
+ * local only: __test.stopAt (in-process tests) or an order note "__e2e_stop:<point>" (real-runtime e2e, wrangler dev).
+ * The note stays on the order, so it only stops the CREATING request — the recovery must be able to finish.
+ */
+const testHook = (cfg, point, order, recovery) => {
+  if (cfg.environment !== 'local') return;
+  if (__test.stopAt === point || (!recovery && order?.note === `__e2e_stop:${point}`)) throw new TestStop(`test stop at ${point}`);
 };
 
 // ------------------------------------------------------------------ settings (dashboard switch + limits)
@@ -145,13 +150,13 @@ export async function runAutoReview(fs, cfg, orderId, { recovery = false, now = 
       version = a.version;
       reasons = a.reasons;
       if (cfg.environment === 'local' && typeof __test.afterAssess === 'function') await __test.afterAssess(orderId, a);
-      testHook(cfg, 'after_assess');
+      testHook(cfg, 'after_assess', O, recovery);
       if (a.decision !== 'auto_accept') {
         outcome = a.decision; // manual_review | disabled
       } else {
         // the ONLY way stock is taken: the same atomic, idempotent acceptance an admin's button uses
         const d = await decideOrder(fs, cfg, { orderId, action: 'accept', actor: AUTO_ACTOR });
-        testHook(cfg, 'after_decide');
+        testHook(cfg, 'after_decide', O, recovery);
         if (d.result === 'accepted') outcome = 'auto_accepted';
         else if (d.result === 'already_accepted') {
           // our own earlier attempt (recovery) — or an admin was faster

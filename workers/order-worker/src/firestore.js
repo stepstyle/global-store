@@ -112,6 +112,8 @@ export class Firestore {
   }
 
   async request(method, url, body) {
+    // subrequests made by this client (the cron stays inside the per-invocation budget, see notify.js)
+    this.requests = (this.requests || 0) + 1;
     const res = await fetch(url, {
       method,
       headers: { 'content-type': 'application/json', ...(await this.authHeaders()) },

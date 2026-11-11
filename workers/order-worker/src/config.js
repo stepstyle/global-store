@@ -270,6 +270,13 @@ export function loadConfig(env = {}) {
     notifySendTimeoutMs: num(env.NOTIFY_SEND_TIMEOUT_MS, 15 * 1000),
     // extra wait before an order whose notification failed is due again (0 = next cron run, behind every other due order)
     notifyRetryBaseMs: num(env.NOTIFY_RETRY_BASE_MS, 0),
+    // a Telegram message of an order still awaiting a decision is never given up: after notifyMaxAttempts it is
+    // retried every this often (the admin must always get the buttons)
+    notifyExhaustedRetryMs: num(env.NOTIFY_EXHAUSTED_RETRY_MS, 30 * 60 * 1000),
+    // cron: several due orders per run, inside a per-invocation subrequest budget (Workers Free: 50 -> 45 by default;
+    // raise CRON_SUBREQUEST_BUDGET only on a paid plan)
+    cronMaxOrders: Math.max(1, Math.min(num(env.CRON_MAX_ORDERS, 10), 50)),
+    cronSubrequestBudget: Math.max(25, Math.min(num(env.CRON_SUBREQUEST_BUDGET, 45), 950)),
     maxBodyBytes: num(env.MAX_BODY_BYTES, 32 * 1024),
     rateLimitCreatePerMin: num(env.RATE_LIMIT_CREATE_PER_MIN, 10),
     rateLimitStatusPerMin: num(env.RATE_LIMIT_STATUS_PER_MIN, 60),

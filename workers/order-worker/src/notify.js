@@ -24,10 +24,20 @@ export function initialNotifications(cfg) {
   };
 }
 
-function eligible(st, cfg, now) {
+/**
+ * A Telegram message of an order still WAITING for a decision must never be given up: without it the admin has no
+ * buttons and may not even know the order exists. After notifyMaxAttempts it keeps being retried, slowly
+ * (notifyExhaustedRetryMs), until it is sent or the order is decided (e.g. from another message / later).
+ */
+const persistentChannel = (L, ch) => ch === 'telegram' && L?.stockPolicy === 'on_approval' && (L?.decision || 'pending') === 'pending';
+const failedAtMs = (st) => (st?.failedAt instanceof Date ? st.failedAt.getTime() : 0);
+
+function eligible(st, cfg, now, persistent = false) {
   if (!st) return false;
   const attempts = Number(st.attempts || 0);
-  if (attempts >= cfg.notifyMaxAttempts) return false;
+  if (attempts >= cfg.notifyMaxAttempts) {
+    return persistent && st.state === 'failed' && now - failedAtMs(st) >= (cfg.notifyExhaustedRetryMs ?? 30 * 60_000);
+  }
   if (st.state === 'pending') return true;
   if (st.state === 'failed') return true;
   if (st.state === 'sending') {
@@ -37,11 +47,11 @@ function eligible(st, cfg, now) {
   return false;
 }
 
-const isDone = (st, cfg) =>
+const isDone = (st, cfg, persistent = false) =>
   !st ||
   st.state === 'sent' ||
   st.state === 'skipped' ||
-  (st.state === 'failed' && Number(st.attempts || 0) >= cfg.notifyMaxAttempts);
+  (!persistent && st.state === 'failed' && Number(st.attempts || 0) >= cfg.notifyMaxAttempts);
 
 const fmt = (n) => (typeof n === 'number' && Number.isFinite(n) ? `JOD ${n.toFixed(2)}` : '—');
 
@@ -130,7 +140,7 @@ export async function processNotifications(fs, cfg, orderId) {
     const L = decodeFields(led.fields);
     const st = L.notifications?.[ch];
     const now = Date.now();
-    if (!eligible(st, cfg, now)) continue;
+    if (!eligible(st, cfg, now, persistentChannel(L, ch))) continue;
 
     const attempts = Number(st.attempts || 0) + 1;
     // unique per claim: only the run that still holds THIS claim may record the result (see markOwned)
@@ -174,12 +184,20 @@ export async function processNotifications(fs, cfg, orderId) {
 
   const after = await fs.get(ledgerPath);
   if (!after.exists) return;
-  const N = decodeFields(after.fields).notifications || {};
-  const done = CHANNELS.every((c) => isDone(N[c], cfg));
+  const A = decodeFields(after.fields);
+  const N = A.notifications || {};
+  const done = CHANNELS.every((c) => isDone(N[c], cfg, persistentChannel(A, c)));
   // done: leave the queue. Otherwise: due again, BEHIND every order that is already due (failures never block
   // others). Precondition: a newer write by another run (e.g. "done") is never overwritten by this stale view.
   const maxTried = CHANNELS.map((c) => Number(N[c]?.attempts || 0)).reduce((a, b) => Math.max(a, b), 0);
-  const fields = done ? { notifyPending: false } : { notifyNextAt: new Date(Date.now() + retryDelay(cfg, maxTried)) };
+  let delay = retryDelay(cfg, maxTried);
+  for (const c of CHANNELS) {
+    // an exhausted message that must not be given up: next try only after the slow interval (not every cron run)
+    if (persistentChannel(A, c) && N[c]?.state === 'failed' && Number(N[c]?.attempts || 0) >= cfg.notifyMaxAttempts) {
+      delay = Math.max(delay, failedAtMs(N[c]) + (cfg.notifyExhaustedRetryMs ?? 30 * 60_000) - Date.now());
+    }
+  }
+  const fields = done ? { notifyPending: false } : { notifyNextAt: new Date(Date.now() + Math.max(0, delay)) };
   try {
     await fs.commit([
       {
@@ -236,24 +254,51 @@ function retryDelay(cfg, attempts) {
  * index, no composite index). Ledgers written before notifyNextAt existed (notifyPending true, no notifyNextAt) are
  * picked up when nothing is due. Nothing is ever deleted from the queue without all channels being done.
  */
-export async function retryPendingNotifications(fs, cfg) {
-  const now = new Date();
+/**
+ * Cron: SEVERAL due orders per run, oldest first, inside a fixed budget of subrequests per invocation (Cloudflare
+ * Workers Free allows 50: default budget 45, at most CRON_MAX_ORDERS orders). One order (notifications + a possible
+ * auto-approval recovery) costs up to ~ORDER_RESERVE subrequests, so a new order is only started when that much is
+ * left. An order is handled at most once per run. Overlapping runs are safe: every send is claimed (lease) and every
+ * stock change is a preconditioned, idempotent commit.
+ */
+const ORDER_RESERVE = 22;
+
+async function nextDueId(fs, skip) {
   const due = await fs.runQuery({
     from: [{ collectionId: 'orderLedger' }],
-    where: { fieldFilter: { field: { fieldPath: 'notifyNextAt' }, op: 'LESS_THAN_OR_EQUAL', value: { timestampValue: now.toISOString() } } },
+    where: { fieldFilter: { field: { fieldPath: 'notifyNextAt' }, op: 'LESS_THAN_OR_EQUAL', value: { timestampValue: new Date().toISOString() } } },
     orderBy: [{ field: { fieldPath: 'notifyNextAt' }, direction: 'ASCENDING' }],
-    limit: 1,
+    limit: skip.size + 1,
   });
-  let id = due[0]?.name.split('/').pop();
+  let id = due.map((d) => d.name.split('/').pop()).find((x) => !skip.has(x));
   if (!id) {
     const legacy = await fs.runQuery({
       from: [{ collectionId: 'orderLedger' }],
       where: { fieldFilter: { field: { fieldPath: 'notifyPending' }, op: 'EQUAL', value: { booleanValue: true } } },
       limit: 10,
     });
-    id = legacy.find((d) => d.fields?.notifyNextAt === undefined)?.name.split('/').pop();
+    id = legacy.filter((d) => d.fields?.notifyNextAt === undefined).map((d) => d.name.split('/').pop()).find((x) => !skip.has(x));
   }
-  if (!id) return 0;
-  await processNotifications(fs, cfg, id);
-  return 1;
+  return id || null;
+}
+
+export async function retryPendingNotifications(fs, cfg) {
+  const budget = cfg.cronSubrequestBudget ?? 45;
+  const maxOrders = cfg.cronMaxOrders ?? 10;
+  const start = fs.requests || 0;
+  const done = new Set();
+  // sends (Telegram / SendGrid) are counted as 2 per order on top of the Firestore requests the client counted
+  const used = () => (fs.requests || 0) - start + 2 * done.size;
+  while (done.size < maxOrders && used() + ORDER_RESERVE <= budget) {
+    const id = await nextDueId(fs, done);
+    if (!id) break;
+    done.add(id);
+    try {
+      await processNotifications(fs, cfg, id);
+    } catch (e) {
+      log('notify.cron_error', { orderId: id, message: String(e?.message || e).slice(0, 120) });
+    }
+  }
+  if (done.size) log('cron.notify', { orders: done.size, subrequests: used(), budget });
+  return done.size;
 }

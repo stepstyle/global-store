@@ -22,7 +22,8 @@ const env = (o = {}) => makeEnv(mock.url, {
 const RECOVER_NOW = { AUTO_APPROVAL_RECOVER_AFTER_MS: '0' };
 const origLog = console.log;
 
-before(async () => { mock = await startMockServices(); console.log = () => {}; });
+const logs = [];
+before(async () => { mock = await startMockServices(); console.log = (...a) => { logs.push(a.join(' ')); }; });
 after(async () => { console.log = origLog; await mock?.close(); });
 beforeEach(async () => {
   mock.reset(); await clearDb(); await seedProducts(); clearAutoSettingsCache();
@@ -309,4 +310,58 @@ test('B15 the switch is turned OFF before the recovery: no automatic acceptance,
   assert.equal((await ledger(o.id)).decision, 'pending');
   assert.equal(await productStock('p-simple'), 10);
   assert.deepEqual(buttons(tgSends(o.id)[0]), [`v1:acc:${o.id}`, `v1:rej:${o.id}`]);
+});
+
+test('B16 10 orders stuck at once: the cron finishes SEVERAL per run inside the subrequest budget (overlapping runs too) — each deducted once, ONE message each, none lost', async () => {
+  __test.stopAt = 'after_assess';
+  const orders = Array.from({ length: 10 }, () => makeOrder({ items: [line('p-hundred', 1)] }));
+  await Promise.all(orders.map((o) => create(o)));
+  __test.stopAt = null;
+  for (const o of orders) assert.equal((await outcome(o.id)).state, 'queued');
+  assert.equal(await productStock('p-hundred'), 100, 'nothing deducted yet');
+  for (const o of orders) await ageLedger(o.id, 120_000);
+  logs.length = 0;
+  let runs = 0;
+  // two cron invocations at the same time each round (Cloudflare may overlap them)
+  while (runs < 20) {
+    const left = (await Promise.all(orders.map((o) => outcome(o.id)))).filter((a) => a.state === 'queued').length;
+    if (!left) break;
+    await Promise.all([runCron(env()), runCron(env())]);
+    runs += 2;
+  }
+  const states = await Promise.all(orders.map((o) => outcome(o.id)));
+  assert.ok(states.every((a) => a.state === 'done' && a.outcome === 'auto_accepted' && a.recovered === true), JSON.stringify(states.map((a) => a.outcome)));
+  assert.equal(await productStock('p-hundred'), 90, 'exactly 10 pieces, one per order');
+  for (const o of orders) assert.equal(tgSends(o.id).length, 1, `one message for ${o.id}`);
+  const runLogs = logs.filter((l) => l.includes('"event":"cron.notify"')).map((l) => JSON.parse(l));
+  assert.ok(runLogs.length > 0);
+  assert.ok(runLogs.every((r) => r.subrequests <= r.budget), `budget respected: ${JSON.stringify(runLogs.map((r) => r.subrequests))}`);
+  assert.ok(runLogs.some((r) => r.orders > 1), 'several orders in one run');
+  assert.ok(runs <= 12, `bounded number of runs (${runs})`);
+});
+
+test('B17 a pending order\'s Telegram message is NEVER dropped: after the retries it is retried slowly, and sent once Telegram works again', async () => {
+  mock.state.failAlways.telegram = true;
+  const o = await create(makeOrder({ payment: 'cliq' }), env({ NOTIFY_MAX_ATTEMPTS: '2' })); // manual review, waits for an admin
+  for (let i = 0; i < 4; i++) {
+    await ageLedger(o.id, 120_000);
+    await runCron(env({ NOTIFY_MAX_ATTEMPTS: '2', NOTIFY_EXHAUSTED_RETRY_MS: '0' }));
+  }
+  let L = await ledger(o.id);
+  assert.equal(L.notifications.telegram.state, 'failed');
+  assert.ok(L.notifications.telegram.attempts >= 2);
+  assert.equal(L.notifyPending, true, 'still in the queue (an old behaviour would drop it after the attempts)');
+  // the slow interval: right after a failure it is NOT retried on every run
+  await runCron(env({ NOTIFY_MAX_ATTEMPTS: '2' }));
+  L = await ledger(o.id);
+  assert.ok(L.notifyNextAt.getTime() > Date.now() + 10 * 60_000, 'next try ~30 min later');
+  // Telegram is back: the message goes out once
+  mock.state.failAlways.telegram = false;
+  await ageLedger(o.id, 120_000);
+  await runCron(env({ NOTIFY_MAX_ATTEMPTS: '2', NOTIFY_EXHAUSTED_RETRY_MS: '0' }));
+  L = await ledger(o.id);
+  assert.equal(L.notifications.telegram.state, 'sent');
+  assert.equal(tgSends(o.id).filter((c) => c.ok).length, 1, 'delivered exactly once');
+  await runCron(env({ NOTIFY_MAX_ATTEMPTS: '2', NOTIFY_EXHAUSTED_RETRY_MS: '0' }));
+  assert.equal((await ledger(o.id)).notifications.telegram.state, 'sent', 'not sent again');
 });

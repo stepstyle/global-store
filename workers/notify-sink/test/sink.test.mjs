@@ -90,7 +90,7 @@ test('records only a summary: no personal data, no tokens, no headers, no recipi
     // giftMarked: boolean only (the order carries a prize-wheel gift line) — no personal data
     const base = ['at', 'channel', 'customerTotal', 'giftMarked', 'length', 'ok', 'orderId', 'priceMismatch', 'serverTotal', 'sha256', 'warningCodes'];
     // Telegram also records the approval fields: method, message id, button callback data, decision line (no PII)
-    assert.deepEqual(Object.keys(c).sort(), (c.channel === 'telegram' ? [...base, 'buttons', 'decision', 'messageId', 'method'] : base).sort());
+    assert.deepEqual(Object.keys(c).sort(), (c.channel === 'telegram' ? [...base, 'auto', 'buttons', 'decision', 'messageId', 'method'] : base).sort());
     assert.equal(c.orderId, 'ORD-ABCD1234-MZ0Q1X2Y');
     assert.equal(c.priceMismatch, true);
     assert.equal(c.serverTotal, 8.2);
@@ -200,4 +200,11 @@ test('giftMarked: true only for a message with the Worker gift line (Arabic or E
   assert.equal((await summarize('telegram', 'رقم الطلب: ORD-ABCD1234-MZ0Q1X2Y\n- 🎁 هدية عجلة الجوائز: جائزة\n  الكمية: 1 — مجانية')).giftMarked, true);
   assert.equal((await summarize('email', 'Order ID: ORD-ABCD1234-MZ0Q1X2Y\n3) 🎁 GIFT (wheel) — FREE, do not charge: x x1')).giftMarked, true);
   assert.equal((await summarize('telegram', 'رقم الطلب: ORD-ABCD1234-MZ0Q1X2Y\n- دفتر هدية')).giftMarked, false);
+});
+
+test('auto-approval line: recorded as auto / review / null (fixed texts only)', async () => {
+  const { autoOf } = await import('../src/index.js');
+  assert.equal(autoOf('…\n🤖 قُبل تلقائيًا: نجحت كل الفحوص'), 'auto');
+  assert.equal(autoOf('…\n⚠️ يحتاج مراجعة يدوية: دفع CliQ يحتاج تحققًا'), 'review');
+  assert.equal(autoOf('⏳ حالة الطلب: بانتظار الموافقة'), null);
 });

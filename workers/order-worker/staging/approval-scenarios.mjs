@@ -359,6 +359,19 @@ export function buildApprovalScenarios(ctx) {
       assert.equal(s.decision, 'pending');
       assert.equal(await stock('p-simple'), 10, 'nothing "restored" either');
     }],
+
+    ['A17', 'smart auto-approval: the dashboard switch ON alone (server ceiling OFF) never accepts automatically', async () => {
+      if (!ctx.setAutoSwitch) return 'skipped (no switch access)';
+      await ctx.setAutoSwitch(true);
+      const { id, msg } = await newOrder();
+      const s = await state(id);
+      assert.equal(s.decision, 'pending');
+      assert.equal(s.status, 'new');
+      assert.equal(s.ledger.autoReview, undefined, 'not even assessed');
+      assert.equal(s.ledger.phoneHash, undefined);
+      assert.deepEqual(msg.buttons, [`v1:acc:${id}`, `v1:rej:${id}`]);
+      assert.equal(await stock('p-simple'), 10);
+    }],
   ];
 }
 

@@ -14,6 +14,7 @@ import { MARKER_PATH } from '../../staging/common.mjs';
 import { runScenarios } from '../../staging/scenarios.mjs';
 import { runSubmitScenarios } from './submit-scenarios.mjs';
 import { runApprovalScenarios } from '../../staging/approval-scenarios.mjs';
+import { runAutoScenarios } from '../../staging/auto-scenarios.mjs';
 import { makeTestSigner } from '../token-signer.mjs';
 import { launchChrome, openTab, attachTo, pageOpen } from './cdp.mjs';
 import { buildUiScenarios, runUiScenarios } from './ui-scenarios.mjs';
@@ -27,7 +28,7 @@ import { PLAN, PORTS, URLS, FILES, PROJECT_ID, TURNSTILE_PASS_TOKEN } from './pl
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const TMP = process.env.E2E_TMP;
 const CPU_MODE = process.env.E2E_MODE === 'cpu';
-const SUITE = process.env.E2E_SUITE || 'all'; // all | scenarios | submit | ui | delivery | wheel | approval | approval-live
+const SUITE = process.env.E2E_SUITE || 'all'; // all | scenarios | submit | ui | delivery | wheel | approval | approval-live | auto
 const children = [];
 
 function fail(msg) {
@@ -247,7 +248,9 @@ const mock = http.createServer((req, res) => {
 
 // ---------------------------------------------------------------- wrangler dev (local only)
 const token = () => randomBytes(24).toString('hex');
-const T = { tg: token(), sg: token(), read: token(), worker: token(), webhook: token() };
+const T = { tg: token(), sg: token(), read: token(), worker: token(), webhook: token(), autoHash: token() };
+// auto suite: a review still 'queued' after this is finished by the cron (short, so the recovery tests stay fast)
+const AUTO_RECOVER_MS = 3_000;
 // approval suite: Telegram order approval ON, with TEST-only ids (no real Telegram user / chat; the sink stands in)
 const APPROVAL = { chatId: '-1009990000001', adminIds: ['700000001', '700000002'], outsiderId: '700000999' };
 // approval-live (manual, see telegram-bridge.mjs): a REAL TEST bot through the local bridge on 127.0.0.1:8790.
@@ -316,6 +319,12 @@ async function loadCompatRules() {
     body: JSON.stringify({ rules: { files: [{ name: 'firestore.rules', content }] } }),
   });
   if (!r.ok) throw new Error(`loading compat rules into the emulator failed (${r.status})`);
+}
+
+/** the dashboard switch (config/autoApproval), written with the emulator's owner access like the admin dashboard would */
+async function setAutoSwitch(enabled) {
+  const r = await fs.commit([{ update: { name: fs.name('config/autoApproval'), fields: encodeFields({ enabled: enabled === true, updatedAt: new Date(), updatedBy: 'local-e2e-admin' }) } }]);
+  if (!r.ok) throw new Error(`setAutoSwitch failed (${r.status})`);
 }
 
 async function reseed() {
@@ -715,9 +724,14 @@ try {
     // prize wheel: TEST mode with a TEST campaign, a random per-run HMAC secret (never written anywhere), production
     // settings otherwise (except Turnstile: the local web app sends no token)
     ...(SUITE === 'wheel' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', ORDER_SIGN_IN: 'google', WHEEL_MODE: 'test', WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(36).toString('base64url') } : {}),
-    ...(SUITE === 'approval' ? {
+    ...(SUITE === 'approval' || SUITE === 'auto' ? {
       APPROVAL_MODE: 'telegram', TELEGRAM_CHAT_ID: APPROVAL.chatId, TELEGRAM_ADMIN_USER_IDS: APPROVAL.adminIds.join(','),
       TELEGRAM_WEBHOOK_SECRET: T.webhook, PRICE_CHECK_MODE: 'enforce',
+    } : {}),
+    // smart auto-approval: the server ceiling ON for this suite only (the approval suite keeps it OFF: A17)
+    ...(SUITE === 'auto' ? {
+      AUTO_APPROVAL_MODE: 'on', AUTO_APPROVAL_HASH_SECRET: T.autoHash, AUTO_APPROVAL_CACHE_MS: '0',
+      AUTO_APPROVAL_RECOVER_AFTER_MS: String(AUTO_RECOVER_MS),
     } : {}),
     ...(LIVE ? {
       APPROVAL_MODE: 'telegram', TELEGRAM_API_BASE: 'http://127.0.0.1:8790/telegram', TELEGRAM_BOT_TOKEN: LIVE.secret,
@@ -759,12 +773,27 @@ try {
     results = await runWheelSuite();
   } else if (SUITE === 'approval-live') {
     results = await runLiveApproval();
+  } else if (SUITE === 'auto') {
+    const getDoc = async (path) => {
+      const d = await fs.get(path);
+      return d.exists ? decodeFields(d.fields) : null;
+    };
+    results = await runAutoScenarios({
+      label: 'local-e2e auto-approval', projectId: PROJECT_ID, W: URLS.order, S: URLS.sink, sinkAuth: { 'x-sink-auth': T.read },
+      turnstileToken: TURNSTILE_PASS_TOKEN, get: getDoc, reseed, setAutoSwitch,
+      only: process.env.E2E_ONLY ? new Set(process.env.E2E_ONLY.split(',')) : null,
+      webhookSecret: T.webhook, ...APPROVAL,
+      createBudget: { limit: 18, windowMs: 61_000 },
+      triggerCron: async () => { await fetch(`${URLS.order}/__scheduled?cron=*+*+*+*+*`); },
+      recoverWaitMs: AUTO_RECOVER_MS + 500,
+    });
   } else if (SUITE === 'approval') {
     const getDoc = async (path) => {
       const d = await fs.get(path);
       return d.exists ? decodeFields(d.fields) : null;
     };
     results = await runApprovalScenarios({
+      setAutoSwitch, // A17: the dashboard switch alone (server ceiling off) never auto-accepts
       label: 'local-e2e approval', projectId: PROJECT_ID, W: URLS.order, S: URLS.sink, sinkAuth: { 'x-sink-auth': T.read },
       turnstileToken: TURNSTILE_PASS_TOKEN, get: getDoc, reseed,
       only: process.env.E2E_ONLY ? new Set(process.env.E2E_ONLY.split(',')) : null,

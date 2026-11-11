@@ -384,7 +384,7 @@ export function buildScenarios(ctx) {
       assert.equal(tg.filter((c) => c.channel === 'telegram' && !c.ok).length, 1, 'one failed attempt recorded');
       assert.equal(tg.filter((c) => c.channel === 'telegram' && c.ok).length, 1, 'exactly one successful telegram');
     }]);
-    scenarios.push(['S46', `cron: failed notifications are handled ONE order per run, OLDEST first; e-mail never resent; queue left only when done (${ctx.triggerCron ? 'triggered locally' : 'real cron'})`, async () => {
+    scenarios.push(['S46', `cron: failed notifications are retried OLDEST first (several per run within the subrequest budget); e-mail never resent; queue left only when done (${ctx.triggerCron ? 'triggered locally' : 'real cron'})`, async () => {
       await fetch(`${S}/control`, { method: 'POST', headers: { ...sinkAuth, 'content-type': 'application/json' }, body: JSON.stringify({ failNext: { telegram: 2 } }) });
       const older = checkoutOrder();
       assert.equal((await create(older)).status, 200);
@@ -409,22 +409,23 @@ export function buildScenarios(ctx) {
         return { lo, ln, o: tg(lo)?.state === 'sent', n: tg(ln)?.state === 'sent' };
       };
       if (ctx.triggerCron) {
-        // local: each trigger is ONE cron run
+        // local: each trigger is ONE cron run; a run handles several due orders, the OLDEST first (a newer one is never
+        // handled before an older one), as many as fit in its subrequest budget
         await ctx.triggerCron();
         const one = await waitFor(async () => { const s = await sentNow(); return s.o || s.n ? s : null; }, ctx.cronWaitMs ?? 30_000, 250);
         assert.ok(one, 'the first run handled an order');
-        assert.deepEqual([one.o, one.n], [true, false], 'run 1: ONLY the oldest');
-        await ctx.triggerCron();
+        assert.equal(one.o, true, 'run 1: the oldest is never skipped');
+        if (!one.n) await ctx.triggerCron(); // did not fit into run 1: the next run
         const two = await waitFor(async () => { const s = await sentNow(); return s.n ? s : null; }, ctx.cronWaitMs ?? 30_000, 250);
-        assert.ok(two, 'run 2: the newer one');
+        assert.ok(two, 'the newer one follows');
+        assert.ok(new Date(tg(two.lo).sentAt).getTime() <= new Date(tg(two.ln).sentAt).getTime(), 'oldest first');
       } else {
-        // real cron (every 5 min, one order per run): both end up sent, the older first, in DIFFERENT runs
+        // real cron (every 5 min, several orders per run within the budget): both end up sent, the older first
         const both = await waitFor(async () => { const s = await sentNow(); return s.o && s.n ? s : null; }, ctx.cronWaitMs ?? 720_000, ctx.cronStepMs ?? 15_000);
         assert.ok(both, 'both sent by cron within the wait limit');
         const tOld = new Date(tg(both.lo).sentAt).getTime();
         const tNew = new Date(tg(both.ln).sentAt).getTime();
-        assert.ok(tOld < tNew, 'oldest first');
-        assert.ok(tNew - tOld >= 60_000, `not in the same run (${Math.round((tNew - tOld) / 1000)} s apart)`);
+        assert.ok(tOld <= tNew, 'oldest first');
       }
       for (const o of [older, newer]) {
         const l = await get(`orderLedger/${o.id}`);

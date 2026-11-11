@@ -57,6 +57,13 @@ export function buttonsOf(replyMarkup) {
   return rows.flat().map((b) => String(b?.callback_data || '')).filter((d) => CALLBACK_RE.test(d));
 }
 /** the order message's decision line (fixed texts of the Worker, no personal data) */
+/** smart auto-approval line of the order message (fixed Worker texts): 'auto' | 'review' | null */
+export function autoOf(text) {
+  const t = String(text || '');
+  if (t.includes('قُبل تلقائيًا')) return 'auto';
+  if (t.includes('يحتاج مراجعة يدوية')) return 'review';
+  return null;
+}
 export function decisionOf(text) {
   const t = String(text || '');
   if (t.includes('بانتظار الموافقة')) return 'pending';
@@ -141,7 +148,7 @@ export default {
       if (method === 'sendMessage') {
         const failed = await shouldFail(kv, 'telegram');
         const messageId = failed ? null : nextMessageId();
-        await record(kv, { ...(await summarize('telegram', body.text)), method, messageId, buttons: buttonsOf(body.reply_markup), decision: decisionOf(body.text), ok: !failed });
+        await record(kv, { ...(await summarize('telegram', body.text)), method, messageId, buttons: buttonsOf(body.reply_markup), decision: decisionOf(body.text), auto: autoOf(body.text), ok: !failed });
         return failed ? json({ ok: false, error_code: 500 }, 500) : json({ ok: true, result: { message_id: messageId } });
       }
       const failed = await shouldFail(kv, 'tgui');
@@ -149,7 +156,7 @@ export default {
         await record(kv, { channel: 'telegram-ui', method, at: new Date().toISOString(), callbackQueryId: String(body.callback_query_id || '').slice(0, 64), answer: String(body.text || '').slice(0, 200), alert: body.show_alert === true, ok: !failed });
       } else {
         const text = method === 'editMessageText' ? body.text : '';
-        await record(kv, { channel: 'telegram-ui', method, at: new Date().toISOString(), orderId: method === 'editMessageText' ? (String(text).match(ORDER_ID_RE) || [])[0] || null : (buttonsOf(body.reply_markup)[0] || '').slice(7) || null, messageId: Number.isInteger(body.message_id) ? body.message_id : null, buttons: buttonsOf(body.reply_markup), decision: decisionOf(text), ok: !failed });
+        await record(kv, { channel: 'telegram-ui', method, at: new Date().toISOString(), orderId: method === 'editMessageText' ? (String(text).match(ORDER_ID_RE) || [])[0] || null : (buttonsOf(body.reply_markup)[0] || '').slice(7) || null, messageId: Number.isInteger(body.message_id) ? body.message_id : null, buttons: buttonsOf(body.reply_markup), decision: decisionOf(text), auto: autoOf(text), ok: !failed });
       }
       return failed ? json({ ok: false, error_code: 400, description: 'sink failure' }, 400) : json({ ok: true, result: true });
     }

@@ -38,6 +38,18 @@ const SUMMARY_PATH = /^\/orders\/([^/]+)\/summary$/;
 const CLAIM_PATH = /^\/orders\/([^/]+)\/claim$/;
 const RATINGS_PATH = /^\/products\/([^/]+)\/ratings$/;
 
+/**
+ * Server-side Turnstile check (the secret never leaves the Worker). false on: no token, invalid / reused token,
+ * Cloudflare unreachable or slow (bounded wait), or — in production — a token issued for ANOTHER hostname than the
+ * store's (Cloudflare's recommended hostname check). false never auto-accepts an order (enforce: refused; log: manual).
+ */
+export function turnstileResultOk(data, cfg) {
+  if (data?.success !== true) return false;
+  if (!cfg.isProd) return true; // test keys answer with a placeholder hostname
+  const allowed = new Set((cfg.allowedOrigins || []).map((o) => { try { return new URL(o).hostname; } catch { return ''; } }).filter(Boolean));
+  return typeof data.hostname === 'string' && allowed.has(data.hostname);
+}
+
 async function verifyTurnstile(cfg, token, ip) {
   if (!token || !cfg.turnstileSecret) return false;
   try {
@@ -45,9 +57,12 @@ async function verifyTurnstile(cfg, token, ip) {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ secret: cfg.turnstileSecret, response: String(token), remoteip: ip }),
+      signal: AbortSignal.timeout(5_000),
     });
     const data = await res.json().catch(() => ({}));
-    return data.success === true;
+    const ok = turnstileResultOk(data, cfg);
+    if (!ok && data?.success === true) log('turnstile.hostname_mismatch', {});
+    return ok;
   } catch {
     return false;
   }

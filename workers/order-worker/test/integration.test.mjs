@@ -1304,7 +1304,9 @@ describe('order summary (tracking key)', () => {
 });
 
 // ===========================================================================
-describe('cron: ONE order per run, oldest due first, channels independent, no duplicates', () => {
+describe('cron (CRON_MAX_ORDERS=1): ONE order per run, oldest due first, channels independent, no duplicates', () => {
+  // the queue order is easiest to see with one order per run; several per run: test/auto-approval.test.mjs (B16, B17)
+  const env1 = (o = {}) => env({ CRON_MAX_ORDERS: '1', ...o });
   const sentFor = (ch, id) => mock.state.calls.filter((c) => c.channel === ch && c.ok && c.orderId === id).length;
   const triesFor = (ch, id) => mock.state.calls.filter((c) => c.channel === ch && c.orderId === id).length;
   /** n orders whose inline notifications BOTH failed (created in this order: oldest first) */
@@ -1331,11 +1333,11 @@ describe('cron: ONE order per run, oldest due first, channels independent, no du
       assert.equal(l.notifyPending, true);
       assert.ok(l.notifyNextAt instanceof Date, 'queued with a due time');
     }
-    assert.equal((await runCron(env())).retried, 1);
+    assert.equal((await runCron(env1())).retried, 1);
     assert.deepEqual([a, b, c].map((id) => sentFor('telegram', id) + sentFor('email', id)), [2, 0, 0], 'run 1: the oldest only');
-    await runCron(env());
+    await runCron(env1());
     assert.deepEqual([a, b, c].map((id) => sentFor('telegram', id) + sentFor('email', id)), [2, 2, 0], 'run 2: the next oldest');
-    await runCron(env());
+    await runCron(env1());
     assert.deepEqual([a, b, c].map((id) => sentFor('telegram', id) + sentFor('email', id)), [2, 2, 2]);
     for (const id of [a, b, c]) {
       const l = await getDecoded(`orderLedger/${id}`);
@@ -1344,13 +1346,13 @@ describe('cron: ONE order per run, oldest due first, channels independent, no du
     }
     // more runs: nothing is sent again
     const before = mock.state.calls.length;
-    for (let i = 0; i < 4; i++) assert.equal((await runCron(env())).retried, 0);
+    for (let i = 0; i < 4; i++) assert.equal((await runCron(env1())).retried, 0);
     assert.equal(mock.state.calls.length, before, 'no unintended duplicates');
   });
 
   test('a permanently failing (older) order never blocks the others; its working channel is sent once; it stops after NOTIFY_MAX_ATTEMPTS', async () => {
     await fresh();
-    const e = env({ NOTIFY_MAX_ATTEMPTS: '3' });
+    const e = env1({ NOTIFY_MAX_ATTEMPTS: '3' });
     const [bad, b, c] = await failedOrders(3, e);
     mock.state.failOrder.telegram.add(bad);
     await runCron(e); // bad: telegram fails again, email sent; moved behind the others
@@ -1371,12 +1373,12 @@ describe('cron: ONE order per run, oldest due first, channels independent, no du
   test('two cron runs AT THE SAME TIME: no message sent twice; every order completes', async () => {
     await fresh();
     const ids = await failedOrders(3);
-    for (let round = 0; round < 3; round++) await Promise.all([runCron(env()), runCron(env())]);
+    for (let round = 0; round < 3; round++) await Promise.all([runCron(env1()), runCron(env1())]);
     for (const id of ids) {
       assert.equal(sentFor('telegram', id), 1, `${id}: one telegram`);
       assert.equal(sentFor('email', id), 1, `${id}: one e-mail`);
     }
-    await Promise.all([runCron(env()), runCron(env())]);
+    await Promise.all([runCron(env1()), runCron(env1())]);
     for (const id of ids) assert.equal(sentFor('telegram', id) + sentFor('email', id), 2);
   });
 
@@ -1387,8 +1389,8 @@ describe('cron: ONE order per run, oldest due first, channels independent, no du
     await createOrderReq(env(), o);
     let l = await getDecoded(`orderLedger/${o.id}`);
     assert.deepEqual([l.notifications.telegram.state, l.notifications.email.state], ['failed', 'sent']);
-    await runCron(env());
-    await runCron(env());
+    await runCron(env1());
+    await runCron(env1());
     l = await getDecoded(`orderLedger/${o.id}`);
     assert.deepEqual([l.notifications.telegram.state, l.notifications.email.state], ['sent', 'sent']);
     assert.equal(sentFor('telegram', o.id), 1);
@@ -1402,8 +1404,8 @@ describe('cron: ONE order per run, oldest due first, channels independent, no du
     await createOrderReq(env(), o);
     let l = await getDecoded(`orderLedger/${o.id}`);
     assert.deepEqual([l.notifications.telegram.state, l.notifications.email.state], ['sent', 'failed']);
-    await runCron(env());
-    await runCron(env());
+    await runCron(env1());
+    await runCron(env1());
     l = await getDecoded(`orderLedger/${o.id}`);
     assert.deepEqual([l.notifications.telegram.state, l.notifications.email.state], ['sent', 'sent']);
     assert.equal(triesFor('telegram', o.id), 1, 'telegram not retried');
@@ -1418,7 +1420,7 @@ describe('cron: ONE order per run, oldest due first, channels independent, no du
     let l = await getDecoded(`orderLedger/${o.id}`);
     assert.equal(l.notifications.telegram.state, 'failed');
     assert.equal(l.notifications.telegram.lastStatus, 0);
-    await runCron(env());
+    await runCron(env1());
     l = await getDecoded(`orderLedger/${o.id}`);
     assert.equal(l.notifications.telegram.state, 'sent');
     assert.equal(sentFor('telegram', o.id), 1);
@@ -1511,7 +1513,7 @@ describe('cron: ONE order per run, oldest due first, channels independent, no du
     // drop the due time (as on a ledger written by an earlier version)
     assert.ok((await fs.commit([{ update: { name: fs.name(`orderLedger/${o.id}`), fields: {} }, updateMask: { fieldPaths: ['notifyNextAt'] } }])).ok);
     assert.equal('notifyNextAt' in (await getDecoded(`orderLedger/${o.id}`)), false);
-    assert.equal((await runCron(env())).retried, 1);
+    assert.equal((await runCron(env1())).retried, 1);
     const l = await getDecoded(`orderLedger/${o.id}`);
     assert.equal(l.notifications.telegram.state, 'sent');
     assert.equal(l.notifyPending, false);
