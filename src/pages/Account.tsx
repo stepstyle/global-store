@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { getAuth, sendPasswordResetEmail } from 'firebase/auth';
 import { getFirestoreDb } from '../services/firebase';
+import { requireLive } from '../config/deployEnv';
 import { 
   User, Package, LogOut, Settings, ChevronRight, 
   Mail, Phone, Lock, ShieldCheck, Edit2, Clock, 
@@ -93,6 +94,7 @@ const Account: React.FC = () => {
     if (!user?.email) return;
     setIsResettingPassword(true);
     try {
+      requireLive('password-reset-email');
       const auth = getAuth();
       await sendPasswordResetEmail(auth, user.email);
       showToast(tt('resetSent', 'تم إرسال رابط تغيير كلمة المرور إلى بريدك بنجاح!', 'Password reset link sent to your email!'), 'success');

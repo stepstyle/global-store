@@ -3,9 +3,10 @@ import { MessageSquare, X, Send, Bot, User } from 'lucide-react';
 import { sendMessageToGemini } from '../services/geminiService';
 import { ChatMessage } from '../types';
 import { useCart } from '../App';
+import { IS_LIVE } from '../config/deployEnv';
 
 const ChatBot: React.FC = () => {
-  const apiKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined);
+  const apiKey = IS_LIVE ? (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) : undefined;
   const geminiEnabled = !!apiKey && apiKey.trim() !== "" && apiKey !== "PLACEHOLDER_API_KEY";
 
   const [isOpen, setIsOpen] = useState(false);

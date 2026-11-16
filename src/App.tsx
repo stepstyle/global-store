@@ -1,5 +1,5 @@
 // src/App.tsx
-import React, { useState, createContext, useContext, Suspense, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, createContext, useContext, Suspense, useEffect, useCallback, useMemo, useRef } from 'react';
 import { HashRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 
 // Components
@@ -9,6 +9,7 @@ import CartDrawer from './components/CartDrawer';
 import QuickViewModal from './components/QuickViewModal';
 import CookieBanner from './components/CookieBanner';
 import AdminGuard from './components/AdminGuard';
+import { ToastContainer } from './components/Toast';
 
 // Types & Services
 import { Product, CartItem, ToastMessage, ToastType, Language, User } from './types';
@@ -111,6 +112,7 @@ const App: React.FC = () => {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [quickViewProduct, setQuickViewProduct] = useState<Product | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const toastSeq = useRef(0);
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [orderNote, setOrderNoteState] = useState('');
@@ -120,8 +122,13 @@ const App: React.FC = () => {
 
   // --- Helpers ---
   const showToast = useCallback((message: string, type: ToastType) => {
-    const id = Date.now().toString();
-    setToasts((prev) => [...prev, { id, message, type }]);
+    if (!message) return;
+    const id = `${Date.now()}-${++toastSeq.current}`;
+    setToasts((prev) => {
+      // the same message already on screen is not stacked again; at most 4 toasts are kept
+      if (prev.some((x) => x.message === message && x.type === type)) return prev;
+      return [...prev, { id, message, type }].slice(-4);
+    });
   }, []);
 
   const removeToast = useCallback((id: string) => {
@@ -346,6 +353,7 @@ const App: React.FC = () => {
           <CartDrawer />
           <QuickViewModal product={quickViewProduct} isOpen={!!quickViewProduct} onClose={() => setQuickViewProduct(null)} />
           <CookieBanner />
+          <ToastContainer toasts={toasts} onClose={removeToast} />
 
           <main className="flex-grow">
             <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-10 h-10 border-4 border-t-blue-600 rounded-full animate-spin" /></div>}>

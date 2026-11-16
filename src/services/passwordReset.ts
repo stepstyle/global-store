@@ -1,5 +1,6 @@
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { getFirebaseAuth } from './firebase';
+import { requireLive } from '../config/deployEnv';
 
 // ✅ دالة مساعدة للتحقق من صحة صيغة البريد الإلكتروني
 const isValidEmail = (email: string): boolean => {
@@ -15,6 +16,8 @@ const isValidEmail = (email: string): boolean => {
  * @throws {Error} رسالة خطأ واضحة في حال فشل الإرسال أو خطأ في الإدخال.
  */
 export const sendResetEmail = async (email: string): Promise<void> => {
+  // 🛡️ Deploy guard: no password-reset e-mail from a sandbox build.
+  requireLive('password-reset-email');
   const sanitizedEmail = email?.trim();
 
   // 1. التحقق من المدخلات (Validation)

@@ -2,6 +2,9 @@
 import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
 import { initializeFirestore, type Firestore } from 'firebase/firestore';
 import { getAuth, type Auth } from 'firebase/auth';
+import { requireLive } from '../config/deployEnv';
+
+declare const __DEPLOY_ENV__: 'production' | 'sandbox';
 
 type FirebaseWebConfig = {
   apiKey: string;
@@ -81,6 +84,10 @@ const normalizeConfig = (cfg: Partial<FirebaseWebConfig>): FirebaseWebConfig | n
  * For now you already hardcoded your config here — it works.
  */
 const getEnvConfig = (): FirebaseWebConfig | null => {
+  // 🛡️ Deploy guard: the production project config exists ONLY in the production build. In a sandbox build
+  // (Preview / Development / local) this check is the constant `false`, so the bundler removes the config below.
+  if (__DEPLOY_ENV__ !== 'production') return null;
+
   // Option A: Use VITE_* env (production best practice)
   // const cfg: Partial<FirebaseWebConfig> = {
   //   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -155,6 +162,13 @@ export const initFirebase = () => {
     return;
   }
 
+  // 🛡️ Deploy guard (fail-closed): a sandbox build never connects to ANY Firebase project, and never reads the
+  // localStorage override (it could point back at production). It runs in Mock Mode (LocalStorage) only.
+  if (__DEPLOY_ENV__ !== 'production') {
+    resetToMock('sandbox build');
+    return;
+  }
+
   try {
     const localCfg = getLocalConfig();
     if (localCfg) {
@@ -193,6 +207,7 @@ export const firebaseReady = () => isFirebaseInitialized && !!db && !!auth;
  * NOTE: per-device. For production, use VITE_* env.
  */
 export const setFirebaseConfig = (config: unknown) => {
+  requireLive('firebase-config-override');
   if (!isBrowser()) throw new Error('Cannot set Firebase config outside browser');
 
   const normalized = normalizeConfig((config ?? {}) as Partial<FirebaseWebConfig>);

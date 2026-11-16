@@ -24,3 +24,12 @@ dist-ssr
 *.sw?
 
 .vercel
+
+# Secrets — never commit (tokens, keys, local env files)
+.env
+.env.*
+!.env.example
+.secrets/
+*.pem
+*.p12
+service-account*.json

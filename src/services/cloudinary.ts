@@ -1,4 +1,5 @@
 // src/services/cloudinary.ts
+import { requireLive } from '../config/deployEnv';
 
 const CLOUD_NAME = "dixhf2p3j";
 const UPLOAD_PRESET = "anta_unsigned";
@@ -14,6 +15,8 @@ interface CloudinaryResponse {
 }
 
 export const uploadToCloudinary = async (file: File): Promise<string> => {
+  // 🛡️ Deploy guard: no upload to the store's Cloudinary account from a sandbox build.
+  requireLive('cloudinary-upload');
   if (!file) throw new Error("لم يتم اختيار أي ملف للرفع.");
 
   const isImage = file.type.startsWith("image/");

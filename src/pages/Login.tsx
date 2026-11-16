@@ -27,6 +27,7 @@ import { useCart } from '../App';
 import { db } from '../services/storage';
 import { User } from '../types';
 import { sendResetEmail } from '../services/passwordReset';
+import { IS_LIVE, requireLive } from '../config/deployEnv';
 
 const { useNavigate } = ReactRouterDOM as any;
 
@@ -93,8 +94,13 @@ const Login: React.FC = () => {
 
   // 🚀 🚀 الرادار (The Catcher): التعديل السحري لضمان عمل سفاري
   useEffect(() => {
+    // 🛡️ Deploy guard: a sandbox build has no Firebase app (Mock Mode); getAuth() would throw here.
+    if (!IS_LIVE) {
+      setIsLoading(false);
+      return;
+    }
     const auth = getAuth();
-    
+
     getRedirectResult(auth)
       .then((result) => {
         if (result && result.user) {
@@ -192,6 +198,7 @@ const Login: React.FC = () => {
   const handleResendVerification = async () => {
     setIsResendingEmail(true);
     try {
+      requireLive('email-verification');
       const auth = getAuth();
       if (auth.currentUser) {
         await sendEmailVerification(auth.currentUser);
@@ -219,12 +226,13 @@ const Login: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const auth = getAuth();
+      // 🛡️ Deploy guard: sandbox = Mock Mode (LocalStorage users only), no Firebase Auth.
+      const auth = IS_LIVE ? getAuth() : null;
 
       if (isLoginMode) {
         const user = await db.users.login(formData.email, formData.password);
-        
-        if (auth.currentUser && !auth.currentUser.emailVerified) {
+
+        if (auth?.currentUser && !auth.currentUser.emailVerified) {
           throw { code: 'auth/unverified-email' }; 
         }
 
@@ -249,8 +257,8 @@ const Login: React.FC = () => {
         
         await db.users.register(newUser);
         
-        if (auth.currentUser) {
-          await signOut(auth); 
+        if (auth?.currentUser) {
+          await signOut(auth);
         }
 
         setFormAlert({
@@ -324,7 +332,11 @@ const Login: React.FC = () => {
   // 🚀 دالة الدخول الذكية المُحسنة لحل مشاكل سفاري (نفس هيكلك بالملي)
   const handleSocialAuth = (providerType: 'google' | 'facebook') => {
     if (isLoading) return;
-    
+    if (!IS_LIVE) {
+      setFormAlert({ type: 'error', message: 'نسخة اختبار: تسجيل الدخول عبر Google وFacebook معطّل.' });
+      return;
+    }
+
     const auth = getAuth();
     const provider = providerType === 'google' ? googleProvider : facebookProvider;
 

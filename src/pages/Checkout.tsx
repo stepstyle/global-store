@@ -23,6 +23,7 @@ import { db } from '../services/storage';
 import { Order, Product } from '../types';
 import SEO from '../components/SEO';
 import LazyImage from '../components/LazyImage';
+import { IS_LIVE } from '../config/deployEnv';
 
 const { useNavigate } = ReactRouterDOM as any;
 
@@ -474,8 +475,9 @@ const Checkout: React.FC = () => {
       };
 
       // 🚨 الرجوع للكود الأصلي للـ Worker (عشان المتصفح ما يعمل بلوك CORS)
-      const workerUrl = import.meta.env.VITE_WORKER_URL;
-      if (workerUrl && workerUrl.trim() !== '') {
+      // 🛡️ Deploy guard: a sandbox build never calls any Worker (and has no VITE_WORKER_URL in its bundle).
+      const workerUrl = IS_LIVE ? import.meta.env.VITE_WORKER_URL : '';
+      if (IS_LIVE && workerUrl && workerUrl.trim() !== '') {
         fetch(`${workerUrl}/create-order`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -494,9 +496,14 @@ const Checkout: React.FC = () => {
       clearCart();
       if (typeof clearOrderNote === 'function') clearOrderNote();
       
-      showToast(tt('alertSet', 'تم استلام طلبك بنجاح', 'Order placed successfully.'), 'success');
+      if (IS_LIVE) {
+        showToast(tt('alertSet', 'تم استلام طلبك بنجاح', 'Order placed successfully.'), 'success');
+      } else {
+        showToast('نسخة اختبار: حُفظ الطلب في هذا المتصفح فقط ولم يُرسل إلى المتجر.', 'success');
+      }
 
-      if (paymentMethod === 'cliq') {
+      // 🛡️ Deploy guard: no WhatsApp hand-off from a sandbox build.
+      if (IS_LIVE && paymentMethod === 'cliq') {
         const waMsg = `مرحباً متجر دير شرف 👋\nتم الدفع عبر CliQ، وهذا طلبي الجديد.\n\n*الاسم:* ${normalizeName(formData.fullName)}\n*رقم الطلب:* #${orderId}\n*الرقم المرجعي للتحويل:* ${safeTrim(cliqRef)}\n\n(يرجى إرفاق صورة إيصال التحويل مع هذه الرسالة لتأكيد طلبك ✅)`;
         const waUrl = `https://wa.me/${STORE_WHATSAPP}?text=${encodeURIComponent(waMsg)}`;
         window.open(waUrl, '_blank');

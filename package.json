@@ -6,7 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:hosting": "node scripts/build-hosting.mjs",
+    "check:guard": "node scripts/check-guard.mjs dist",
+    "test:guard": "node tests/deploy-guard/guard.test.mjs",
+    "test:guard:full": "node tests/deploy-guard/build-browser.test.mjs",
+    "test:notify": "node --test tests/unit/notifyCustomer.test.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.31.0",

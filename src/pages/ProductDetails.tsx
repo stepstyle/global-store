@@ -419,8 +419,8 @@ const ProductDetails: React.FC = () => {
       const safeQ = clampInt(q, 1, st);
       const fnAny = addToCart as any;
       if (typeof fnAny === 'function') {
+        // App.addToCart() shows the single result toast itself (success, or the stock-limit error)
         fnAny({ ...p, selectedVariant }, safeQ);
-        showToast(tt('addedToCart', 'تمت الإضافة للسلة', 'Added to cart'), 'success');
       }
     },
     [addToCart, showToast, language, selectedVariant]

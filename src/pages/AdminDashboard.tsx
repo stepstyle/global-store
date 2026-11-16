@@ -1,6 +1,6 @@
 // src/pages/AdminDashboard.tsx
 import { collection, query, where, orderBy, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
-import { getFirestoreDb, firebaseReady as fbReady } from '../services/firebase';
+import { getFirestoreDb, firebaseReady as fbReady, getFirebaseAuth } from '../services/firebase';
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import Papa from 'papaparse';
 import { useNavigate } from 'react-router-dom';
@@ -38,6 +38,7 @@ import SEO from '../components/SEO';
 import LazyImage from '../components/LazyImage';
 import { isFirebaseInitialized, setFirebaseConfig, removeFirebaseConfig } from '../services/firebase';
 import { uploadToCloudinary } from '../services/cloudinary';
+import { IS_LIVE } from '../config/deployEnv';
 
 const PAGE_SIZE = 100;
 
@@ -478,17 +479,37 @@ const AdminDashboard: React.FC = () => {
 
       // إرسال إيميل التنبيه بالخفاء بدون انتظار (عشان ما يعلّق الموقع أبدًا)
       const orderToNotify: any = orders.find((o: any) => o.id === id);
-      if (orderToNotify && orderToNotify.customerEmail) {
-        fetch('/api/notify-customer', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: orderToNotify.customerEmail,
-            name: orderToNotify.address?.fullName || 'عميلنا العزيز',
-            orderId: id,
-            status: newStatus
-          })
-        }).catch(err => console.error('Silent email error:', err));
+      // 🛡️ Deploy guard: no customer e-mail from a sandbox build (the API refuses in sandbox as well).
+      if (IS_LIVE && orderToNotify && orderToNotify.customerEmail) {
+        // the e-mail function only acts for a VERIFIED admin: send this admin's Firebase ID token.
+        // The status change itself is already saved; an e-mail failure is reported to the admin, not hidden.
+        const sendsEmail = newStatus === 'accepted' || newStatus === 'shipped';
+        const warn = (why: string) =>
+          showToast(`تم تحديث حالة الطلب، لكن لم يُرسل البريد للزبون (${why}).`, 'error');
+        (async () => {
+          const idToken = await getFirebaseAuth()?.currentUser?.getIdToken().catch(() => null);
+          if (!idToken) {
+            if (sendsEmail) warn('انتهت جلسة الدخول، سجّل الدخول من جديد');
+            return;
+          }
+          const r = await fetch('/api/notify-customer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+            body: JSON.stringify({
+              email: orderToNotify.customerEmail,
+              name: orderToNotify.address?.fullName || 'عميلنا العزيز',
+              orderId: id,
+              status: newStatus
+            })
+          });
+          if (!r.ok) {
+            const code = await r.json().then((b: any) => b?.code).catch(() => null);
+            warn(code || `HTTP ${r.status}`);
+          }
+        })().catch((err) => {
+          console.error('Customer e-mail error:', err);
+          if (sendsEmail) warn('تعذر الاتصال بخدمة البريد');
+        });
       }
     } catch (e: any) {
       console.error(e);
@@ -695,6 +716,10 @@ const AdminDashboard: React.FC = () => {
   };
 
   const handleConnectFirebase = () => {
+    if (!IS_LIVE) {
+      showToast('نسخة اختبار: ربط Firebase معطّل.', 'error');
+      return;
+    }
     try {
       const config = JSON.parse(firebaseConfigInput);
       setFirebaseConfig(config);
