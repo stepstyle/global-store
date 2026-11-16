@@ -6,6 +6,7 @@ import { useCart } from '../App';
 import SEO from '../components/SEO';
 import CartItemCard from '../components/CartItemCard';
 import { Product } from '../types';
+import { ORDER_LIMITS } from '../services/orderLimits';
 
 const { useNavigate } = ReactRouterDOM as any;
 
@@ -239,6 +240,7 @@ const Cart: React.FC = () => {
               <textarea
                 value={orderNote}
                 onChange={(e) => setOrderNote(e.target.value)}
+                maxLength={ORDER_LIMITS.noteMax}
                 placeholder={L('أضف تعليمات خاصة بالتوصيل، أو تفاصيل تغليف الهدية...', 'Add special delivery instructions, or gift wrapping details...')}
                 className="w-full min-h-[110px] resize-none p-3.5 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20 text-sm text-slate-700 transition-all placeholder:text-slate-400"
               />

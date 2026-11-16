@@ -1,5 +1,6 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
+const { isWorkerV2Order } = require('./workerOrders');
 
 // تفعيل الصلاحيات الكاملة للسيرفر
 admin.initializeApp();
@@ -12,6 +13,14 @@ exports.secureOrderPrices = functions.firestore
     const orderData = snap.data();
     const items = orderData.items || [];
     const orderId = context.params.orderId;
+
+    // Worker v2 orders: prices (incl. variant prices) are already enforced by the Worker before saving — never
+    // re-flag or overwrite them here (this check compares with product.price only and would mark variant orders
+    // 'fraud'). Old / browser-written orders: unchanged.
+    if (await isWorkerV2Order(orderData, async () => (await db.doc(`orderLedger/${orderId}`).get()).exists)) {
+      console.log(`طلب Worker v2 (${orderId}): تم التحقق من أسعاره في الخادم — لا تعديل هنا.`);
+      return null;
+    }
 
     let isFraud = false;
     let fraudDetails = '';

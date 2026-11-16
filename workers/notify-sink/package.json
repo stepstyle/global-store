@@ -1,0 +1,9 @@
+{
+  "name": "dairsharaf-notify-sink",
+  "private": true,
+  "type": "module",
+  "description": "Staging-only notification sink (stands in for Telegram/SendGrid). No deploy script on purpose.",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}

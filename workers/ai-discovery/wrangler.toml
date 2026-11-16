@@ -1,0 +1,36 @@
+# STAGING ONLY — AI intent helper for product discovery (POST /ai/intent). NOT deployed.
+# ⛔ No routes / custom domains / account_id here. Deploy only after an explicit approval, to the STAGING account,
+#    with the KV id filled in and a reviewed daily limit.
+#
+# Default provider = "fake" (deterministic, no model, no network). The real model is used ONLY when
+#   AI_PROVIDER = "workers-ai"  AND  AI_ENABLED = "true"  AND  the [ai] binding below is enabled  AND  ENVIRONMENT = "staging".
+# The service holds NO secret: a variable whose name looks like a key/token/secret makes it refuse to run.
+
+name = "anta-ai-discovery-staging"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = true
+
+# Enabled in a later, approved step only (a Workers AI binding talks to Cloudflare even under `wrangler dev`):
+# [ai]
+# binding = "AI"
+
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "41201"
+simple = { limit = 10, period = 60 }
+
+# cache of VALIDATED intents (keyed by a hash, never the text) + the soft daily counter
+[[kv_namespaces]]
+binding = "AI_KV"
+id = "REPLACE_WITH_STAGING_AI_KV_NAMESPACE_ID"
+
+[vars]
+ENVIRONMENT = "staging"
+AI_PROVIDER = "fake"
+AI_ENABLED = "false"
+AI_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+AI_TIMEOUT_MS = "2500"
+DAILY_AI_LIMIT = "200"
+RATE_LIMIT_PER_MIN = "10"
+ALLOWED_ORIGINS = "http://127.0.0.1:3000"

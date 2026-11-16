@@ -1,0 +1,8 @@
+# LOCAL E2E ONLY — CPU probe for the service-account signing step (RS256 JWT) in the real Workers runtime.
+# Uses a throw-away RSA key generated locally per run (passed with --var); no Google, no network.
+# Never deployed: no account_id, no routes, workers_dev = false.
+
+name = "anta-cpu-probe-local-e2e"
+main = "cpu-probe.js"
+compatibility_date = "2026-03-07"
+workers_dev = false

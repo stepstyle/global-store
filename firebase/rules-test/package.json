@@ -1,0 +1,13 @@
+{
+  "name": "dairsharaf-firestore-rules-tests",
+  "private": true,
+  "type": "module",
+  "description": "Emulator-only Firestore security rules tests. Never points at a real Firebase project.",
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore --project demo-dairsharaf-rules --config firebase.json \"node --test rules.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^11.10.0"
+  }
+}

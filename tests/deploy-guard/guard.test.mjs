@@ -82,6 +82,31 @@ await t('U01', 'resolveDeployEnv: only VERCEL_ENV="production" (or explicit off-
   for (const [env, want] of cases) assert.equal(resolveDeployEnv(env).deployEnv, want, JSON.stringify(env));
 });
 
+await t('U01b', 'local-test: only OFF Vercel with an explicit VITE_FIREBASE_TARGET=emulator|staging; never on Vercel, never over production', async () => {
+  const P = 'production', S = 'sandbox', L = 'local-test';
+  const cases = [
+    [{}, 'emulator', L],
+    [{}, 'staging', L],
+    [{}, undefined, S],
+    [{}, '', S],
+    [{}, 'production', S],
+    [{}, 'Emulator', S],
+    [{}, 'emulator ', S],
+    [{}, 'demo', S],
+    // on Vercel the local target is ignored: Preview / unknown => sandbox, Production => production
+    [{ VERCEL: '1', VERCEL_ENV: 'preview' }, 'emulator', S],
+    [{ VERCEL: '1', VERCEL_ENV: 'preview' }, 'staging', S],
+    [{ VERCEL: '1' }, 'emulator', S],
+    [{ VERCEL_ENV: 'development' }, 'staging', S],
+    [{ VERCEL: '1', VERCEL_ENV: 'production' }, 'emulator', P],
+    // an explicit off-Vercel production build stays production (build:hosting then requires the production markers)
+    [{ STORE_BUILD_TARGET: 'production' }, 'emulator', P],
+  ];
+  for (const [env, firebaseTarget, want] of cases) {
+    assert.equal(resolveDeployEnv(env, { firebaseTarget }).deployEnv, want, JSON.stringify({ env, firebaseTarget }));
+  }
+});
+
 await t('U02', 'sandbox env prefix is not a prefix of any VITE_* name', async () => {
   assert.ok(!'VITE_WORKER_URL'.startsWith(SANDBOX_ENV_PREFIX) && SANDBOX_ENV_PREFIX.length > 8);
 });
@@ -121,19 +146,16 @@ await t('X15', 'spoofed request headers (x-vercel-env, host, origin) cannot open
   assert.equal(outbound.length, 0);
 });
 
-await t('X14a', 'PRODUCTION /api/create-order unchanged: forwards to the v1 Worker with x-worker-auth, CORS *, status passthrough', async () => {
-  const r = await withEnv({ VERCEL: '1', VERCEL_ENV: 'production', WORKER_AUTH_TOKEN: 'FAKE-WORKER-TOKEN' }, () => call(createOrder, { body: { order: { id: 'T-2' } } }));
-  assert.equal(r.code, 200);
-  assert.equal(r.headers['access-control-allow-origin'], '*');
-  assert.equal(r.headers['x-deploy-env'], undefined);
-  assert.equal(outbound.length, 1);
-  const u = new URL(outbound[0].url);
-  assert.ok(u.hostname.endsWith('.workers.dev') && u.pathname === '/create-order');
-  assert.equal(outbound[0].headers['x-worker-auth'], 'FAKE-WORKER-TOKEN');
-  const o = await withEnv({ VERCEL: '1', VERCEL_ENV: 'production' }, () => call(createOrder, { method: 'OPTIONS' }));
-  assert.equal(o.code, 204);
-  const g = await withEnv({ VERCEL: '1', VERCEL_ENV: 'production' }, () => call(createOrder, { method: 'GET' }));
-  assert.equal(g.code, 405);
+await t('X14a', 'PRODUCTION /api/create-order is retired: every method -> 410 GONE, nothing forwarded, no secret used, no CORS grant', async () => {
+  for (const method of ['POST', 'GET', 'OPTIONS']) {
+    const r = await withEnv({ VERCEL: '1', VERCEL_ENV: 'production', WORKER_AUTH_TOKEN: 'FAKE-WORKER-TOKEN' }, () => call(createOrder, { method, body: { order: { id: 'T-2' } } }));
+    assert.equal(r.code, 410, method);
+    assert.equal(r.body?.code, 'GONE');
+    assert.equal(r.headers['access-control-allow-origin'], undefined);
+    assert.equal(r.headers['x-deploy-env'], undefined);
+    assert.ok(!JSON.stringify(r.body).includes('FAKE-WORKER-TOKEN'));
+  }
+  assert.equal(outbound.length, 0);
 });
 
 // ================= /api/notify-customer (X09, X14) =================

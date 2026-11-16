@@ -1,18 +1,20 @@
 import React, { useEffect } from 'react';
 import { CheckCircle, XCircle, Info, X } from 'lucide-react';
 import { ToastMessage } from '../types';
+import { toastDurationMs } from '../services/toastQueue';
 
 interface ToastProps {
   toast: ToastMessage;
   onClose: (id: string) => void;
+  closeLabel?: string;
 }
 
-// errors stay longer so the customer / admin can read them
-const DURATION_MS: Record<ToastMessage['type'], number> = { success: 3500, info: 4000, error: 7000 };
-
-const Toast: React.FC<ToastProps> = ({ toast, onClose }) => {
+// Restored from the project history (removed together with its container in 1bf3d27), same design.
+// Auto-closes (errors stay longer, see services/toastQueue.ts) and can be closed by the customer. Under
+// React.StrictMode the effect runs twice in development: the first timer is cleared by the cleanup.
+const Toast: React.FC<ToastProps> = ({ toast, onClose, closeLabel = 'إغلاق' }) => {
   useEffect(() => {
-    const timer = window.setTimeout(() => onClose(toast.id), DURATION_MS[toast.type] ?? 4000);
+    const timer = window.setTimeout(() => onClose(toast.id), toastDurationMs(toast.type));
     return () => window.clearTimeout(timer);
   }, [toast.id, toast.type, onClose]);
 
@@ -31,7 +33,10 @@ const Toast: React.FC<ToastProps> = ({ toast, onClose }) => {
   return (
     <div
       role={toast.type === 'error' ? 'alert' : 'status'}
+      aria-live={toast.type === 'error' ? 'assertive' : 'polite'}
       data-toast-type={toast.type}
+      data-testid="toast"
+      data-type={toast.type}
       className="group pointer-events-auto flex items-center gap-3.5 p-3 sm:p-4 rounded-2xl bg-white border border-slate-100 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] max-w-sm w-full animate-in slide-in-from-top-5 zoom-in-95 fade-in duration-300"
     >
       {/* أيقونة الحالة */}
@@ -40,7 +45,7 @@ const Toast: React.FC<ToastProps> = ({ toast, onClose }) => {
       </div>
 
       {/* نص الإشعار */}
-      <p className="flex-1 text-sm font-bold text-slate-800 leading-relaxed">
+      <p className="flex-1 text-sm font-bold text-slate-800 leading-relaxed" data-testid="toast-message">
         {toast.message}
       </p>
 
@@ -49,7 +54,8 @@ const Toast: React.FC<ToastProps> = ({ toast, onClose }) => {
         type="button"
         onClick={() => onClose(toast.id)}
         className="shrink-0 p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-slate-100"
-        aria-label="إغلاق"
+        aria-label={closeLabel}
+        data-testid="toast-close"
       >
         <X size={16} strokeWidth={2.5} />
       </button>
@@ -58,14 +64,15 @@ const Toast: React.FC<ToastProps> = ({ toast, onClose }) => {
 };
 
 /** Fixed stack under the header; above page content and the mobile checkout bar. */
-export const ToastContainer: React.FC<{ toasts: ToastMessage[]; onClose: (id: string) => void }> = ({ toasts, onClose }) => (
+export const ToastContainer: React.FC<{ toasts: ToastMessage[]; onClose: (id: string) => void; closeLabel?: string }> = ({ toasts, onClose, closeLabel }) => (
   <div
     aria-live="polite"
     data-toast-container=""
+    data-testid="toast-region"
     className="pointer-events-none fixed inset-x-0 top-20 z-[1000] flex flex-col items-center gap-2 px-4"
   >
     {toasts.map((t) => (
-      <Toast key={t.id} toast={t} onClose={onClose} />
+      <Toast key={t.id} toast={t} onClose={onClose} closeLabel={closeLabel} />
     ))}
   </div>
 );

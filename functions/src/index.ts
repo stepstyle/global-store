@@ -5,6 +5,7 @@ import * as logger from "firebase-functions/logger";
 
 import * as admin from "firebase-admin";
 import * as sgMail from "@sendgrid/mail";
+import { isWorkerV2Order } from "./workerOrders.js";
 
 admin.initializeApp();
 setGlobalOptions({ maxInstances: 10 });
@@ -42,6 +43,14 @@ export const sendOrderEmail = onDocumentCreated("orders/{orderId}", async (event
     const order = event.data?.data();
     if (!order) {
       logger.error("Order data is missing");
+      return;
+    }
+
+    // Worker v2 orders are notified by the Worker itself (Telegram + e-mail): no second e-mail from here.
+    // Old / browser-written orders: unchanged.
+    const ledgerExists = async () => (await admin.firestore().doc(`orderLedger/${event.params.orderId}`).get()).exists;
+    if (await isWorkerV2Order(order, ledgerExists)) {
+      logger.info("worker-v2 order: notified by the Worker, no e-mail here", { orderId: event.params.orderId });
       return;
     }
 

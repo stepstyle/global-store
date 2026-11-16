@@ -1,0 +1,19 @@
+# STAGING ONLY — notification sink standing in for Telegram + SendGrid.
+# ⛔ Deploy only through workers/order-worker/staging/deploy-workers.mjs (verifies name + placeholders).
+#
+# Secrets (`wrangler secret put <NAME> --config wrangler.toml`), random values >= 24 chars, all different:
+#   SINK_TELEGRAM_TOKEN   (also set as TELEGRAM_BOT_TOKEN on anta-order-notify-staging)
+#   SINK_SENDGRID_KEY     (also set as SENDGRID_API_KEY on anta-order-notify-staging)
+#   SINK_READ_TOKEN       (used only by the staging test scripts)
+
+name = "anta-notify-sink-staging"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "SINK_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[vars]
+SINK_ENVIRONMENT = "staging"

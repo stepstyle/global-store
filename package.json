@@ -5,13 +5,25 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:staging": "vite --mode staging",
+    "staging:proxy": "node workers/order-worker/staging/proxy.mjs --config workers/order-worker/staging/staging.config.json",
     "build": "vite build",
     "preview": "vite preview",
     "build:hosting": "node scripts/build-hosting.mjs",
     "check:guard": "node scripts/check-guard.mjs dist",
     "test:guard": "node tests/deploy-guard/guard.test.mjs",
     "test:guard:full": "node tests/deploy-guard/build-browser.test.mjs",
-    "test:notify": "node --test tests/unit/notifyCustomer.test.mjs"
+    "test:notify": "node --test tests/unit/notifyCustomer.test.mjs",
+    "emulators:dev": "firebase emulators:start --only firestore,auth --project demo-dairsharaf-dev --config firebase/dev-emulator.firebase.json",
+    "test:firebase-guard": "node --test tools/firebase-guard.test.mjs",
+    "test:order-submit": "node --test tests/unit/orderSubmit.test.mjs",
+    "test:cart-storage": "node --test tests/unit/cartStorage.test.mjs",
+    "test:order-limits": "node --test tests/unit/orderLimits.test.mjs",
+    "test:attempt-recovery": "node --test tests/unit/attemptRecovery.test.mjs",
+    "test:toast-queue": "node --test tests/unit/toastQueue.test.mjs",
+    "test:ai-discovery": "node --test tests/unit/aiDiscovery.test.mjs",
+    "test:ai-discovery-worker": "node --test workers/ai-discovery/test/ai-intent.test.mjs",
+    "test:dev-rules": "firebase emulators:exec --only firestore,auth --project demo-dairsharaf-dev --config firebase/dev-emulator.firebase.json \"node --test tools/dev-emulator.rules.test.mjs\""
   },
   "dependencies": {
     "@google/genai": "^1.31.0",

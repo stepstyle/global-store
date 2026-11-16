@@ -29,10 +29,11 @@ const t = async (id, desc, fn) => {
 // ---------------------------------------------------------------- builds
 const FAKE = {
   VITE_WORKER_URL: 'https://fake-order-worker.example-guard.workers.dev\n',
-  VITE_GEMINI_API_KEY: 'FAKE-GEMINI-KEY-0123456789abcdef',
-  VITE_WORKER_AUTH_TOKEN: 'FAKE-VITE-WORKER-TOKEN-0123456789',
   VITE_TURNSTILE_SITE_KEY: 'FAKE-TURNSTILE-0123456789',
 };
+// secret-looking VITE_* names (Gemini key, tokens) are refused by tools/firebase-env-guard.ts in EVERY build —
+// production and sandbox alike — so they can never reach a bundle (X21 below proves the refusal)
+const SECRET_LIKE = { VITE_GEMINI_API_KEY: 'FAKE-GEMINI-KEY-0123456789abcdef', VITE_WORKER_AUTH_TOKEN: 'FAKE-VITE-WORKER-TOKEN-0123456789' };
 const baseEnv = () => {
   const e = { ...process.env };
   for (const k of Object.keys(e)) if (/^(VERCEL|VITE_|STORE_BUILD_TARGET)/.test(k)) delete e[k];
@@ -70,6 +71,19 @@ const VARIANTS = [
 ];
 for (const [name, vars] of VARIANTS) builds[name] = build(name, vars);
 const SANDBOX = VARIANTS.map((v) => v[0]).filter((n) => n !== 'prod');
+
+await t('X21', 'a secret-looking VITE_* variable (Gemini key, *_TOKEN) makes EVERY build fail: production, preview, local', async () => {
+  for (const [name, vars] of [['prod', { VERCEL: '1', VERCEL_ENV: 'production' }], ['preview', { VERCEL: '1', VERCEL_ENV: 'preview' }], ['local', {}]]) {
+    for (const [k, v] of Object.entries(SECRET_LIKE)) {
+      const out = join(OUT, `refused-${name}`);
+      const r = spawnSync(process.execPath, [join(ROOT, 'node_modules/vite/bin/vite.js'), 'build', '--outDir', out, '--emptyOutDir', '--logLevel', 'warn'],
+        { cwd: ROOT, env: { ...baseEnv(), ...FAKE, ...vars, [k]: v }, encoding: 'utf8' });
+      assert.notEqual(r.status, 0, `${name} + ${k}: build must fail`);
+      assert.match(r.stderr + r.stdout, /FIREBASE ENV GUARD REFUSED/, `${name} + ${k}`);
+      assert.ok(!(r.stderr + r.stdout).includes(v), `${name} + ${k}: the value is never echoed`);
+    }
+  }
+});
 
 await t('X01', 'production build keeps production behaviour: Firebase config, Worker URL, GA + Pixel tags verbatim, no sandbox strip', async () => {
   const b = builds.prod;
@@ -251,29 +265,34 @@ if (!CHROME || !existsSync(CHROME)) {
       }
       await ev(`(() => { [...document.querySelectorAll('input[type=checkbox]')].forEach((c) => { if (!c.checked) c.click(); }); return true; })()`);
       await clickText('/^تأكيد وإتمام الطلب$/');
-      const ok = await waitFor(`location.hash.startsWith('#/order-success/')`, 15000);
-      const state = await ev(`({ hash: location.hash.slice(0, 30), orders: JSON.parse(localStorage.getItem('anta_orders') || '[]').map((o) => ({ id: o.id, status: o.status, pm: o.paymentMethod, total: o.total })), body: document.body.innerText.includes('نسخة اختبار') })`);
-      assert.ok(ok, `no order-success page ${JSON.stringify(state)} ${exceptions.join('|')}`);
-      assert.equal(state.orders.length, 1, 'order not stored locally');
-      assert.equal(state.orders[0].pm, method);
+      // sandbox: no order Worker exists in the bundle, so the order is REFUSED before anything is sent (orderSubmit
+      // 'misconfigured'): the customer sees "not sent", stays on the checkout page, and keeps the cart
+      const refused = await waitFor(`document.body.innerText.includes('لم يُرسل الطلب')`, 15000);
+      await sleep(800);
+      const state = await ev(`({ hash: location.hash.slice(0, 30), orders: JSON.parse(localStorage.getItem('anta_orders') || '[]').length, cart: JSON.parse(localStorage.getItem('anta_cart') || '[]').length, banner: !!document.getElementById('sandbox-banner') })`);
+      assert.ok(refused, `no "order not sent" message ${JSON.stringify(state)} ${exceptions.join('|')}`);
+      assert.ok(!state.hash.startsWith('#/order-success/'), 'must not reach the order-success page');
+      assert.equal(state.orders, 0, 'no order is stored anywhere');
+      assert.ok(state.cart > 0, 'the cart is kept');
+      assert.ok(state.banner, 'test banner shown');
       assert.deepEqual(writes(), [], JSON.stringify(writes()));
       assert.equal(apiHits.length, 0, apiHits.join(','));
       assert.deepEqual(nodeOutbound, []);
       assert.deepEqual(exceptions, []);
       return state;
     };
-    await t('X04', 'full COD checkout through the UI: order saved in this browser only, zero outbound requests, zero API calls', async () => {
+    await t('X04', 'full COD checkout through the UI: refused before sending ("not sent" shown), nothing stored, cart kept, zero outbound / API calls', async () => {
       const s = await checkout('cod');
-      return `order ${s.orders[0].status} total ${s.orders[0].total}`;
+      return `stayed on ${s.hash}, cart items ${s.cart}`;
     });
 
-    await t('X06', 'after the sandbox order: Firestore never initialised (no request to any Google API), local stock only', async () => {
+    await t('X06', 'after the sandbox order attempt: Firestore never initialised (no request to any Google API), stock untouched', async () => {
       const prods = await ev(`JSON.parse(localStorage.getItem('anta_products') || '[]').map((p) => p.stock)`);
       assert.ok(!net.some((r) => /googleapis|firebase|gstatic/.test(r.host) && r.type !== 'Stylesheet' && r.type !== 'Font'), JSON.stringify(net));
       return `local stock now ${JSON.stringify(prods)}`;
     });
 
-    await t('X11', 'CliQ checkout: no WhatsApp hand-off (no window.open, no dialog), zero outbound', async () => {
+    await t('X11', 'CliQ checkout: refused before sending, no WhatsApp hand-off (no window.open, no dialog), zero outbound', async () => {
       await checkout('cliq');
       assert.deepEqual(windowOpens, []); assert.deepEqual(dialogs, []);
     });
@@ -405,14 +424,13 @@ if (!CHROME || !existsSync(CHROME)) {
       return `auto-dismissed after ${((Date.now() - t0) / 1000).toFixed(1)} s`;
     });
 
-    await t('T-UI3', 'successful (sandbox) order: success toast visible on the order-success page, not hidden behind the page', async () => {
+    await t('T-UI3', 'order not sent (sandbox): the customer sees the "not sent" message on screen, not hidden behind the page, and no success toast', async () => {
       await checkout('cod');
       const list = await toasts();
-      const ok = list.find((x) => x.type === 'success');
-      assert.ok(ok && /نسخة اختبار/.test(ok.text), JSON.stringify(list));
-      const onTop = await ev(`(() => { const el = document.querySelector('[data-toast-type="success"]'); const r = el.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return el.contains(hit); })()`);
-      assert.ok(onTop, 'toast is covered by another element');
-      return ok.text;
+      assert.ok(!list.some((x) => x.type === 'success'), `no success message for an order that was not sent ${JSON.stringify(list)}`);
+      const seen = await ev(`(() => { const el = [...document.querySelectorAll('h1,h2,h3,h4,p,div')].filter((x) => x.offsetParent && x.children.length === 0 && x.innerText.includes('لم يُرسل الطلب'))[0]; if (!el) return null; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { onTop: el.contains(hit) || hit?.contains(el), text: el.innerText.trim().slice(0, 80) }; })()`);
+      assert.ok(seen && seen.onTop, `message missing or covered ${JSON.stringify(seen)}`);
+      return seen.text;
     });
 
     await t('T-UI4', 'product page add-to-cart: success toast for the customer', async () => {
@@ -442,7 +460,7 @@ if (!CHROME || !existsSync(CHROME)) {
     await t('X13', 'ChatBot / Gemini: no chat widget, no Google AI request (key absent from the sandbox bundle)', async () => {
       await seed(); reset(); await go('/');
       assert.ok(!net.some((r) => /generativelanguage|aiplatform/.test(r.host)));
-      assert.ok(!allText(DIST).includes(FAKE.VITE_GEMINI_API_KEY));
+      assert.ok(!allText(DIST).includes(SECRET_LIKE.VITE_GEMINI_API_KEY));
     });
   } finally {
     try { ws?.close(); } catch {}

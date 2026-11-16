@@ -25,11 +25,17 @@ dist-ssr
 
 .vercel
 
-# Secrets — never commit (tokens, keys, local env files)
+# Secrets — never commit (tokens, keys, service account keys, local env files)
 .env
 .env.*
 !.env.example
 .secrets/
 *.pem
 *.p12
-service-account*.json
+*service-account*.json
+*.key.json
+dairsharaf-*-order-worker.json
+
+# Filled-in wrangler configs (real account ids, KV ids, subdomains, chat ids, e-mails) stay LOCAL.
+# The tracked wrangler*.toml files are placeholder templates; copy one to wrangler*.local.toml and fill it in.
+**/wrangler*.local.toml

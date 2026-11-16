@@ -27,7 +27,8 @@ import { useCart } from '../App';
 import { db } from '../services/storage';
 import { User } from '../types';
 import { sendResetEmail } from '../services/passwordReset';
-import { IS_LIVE, requireLive } from '../config/deployEnv';
+import { IS_LIVE, BACKEND_ENABLED, requireLive } from '../config/deployEnv';
+import { firebaseReady } from '../services/firebase';
 
 const { useNavigate } = ReactRouterDOM as any;
 
@@ -95,6 +96,7 @@ const Login: React.FC = () => {
   // 🚀 🚀 الرادار (The Catcher): التعديل السحري لضمان عمل سفاري
   useEffect(() => {
     // 🛡️ Deploy guard: a sandbox build has no Firebase app (Mock Mode); getAuth() would throw here.
+    // local-test: Firebase Auth of the Emulator / Staging target only (no redirect providers there either).
     if (!IS_LIVE) {
       setIsLoading(false);
       return;
@@ -227,7 +229,8 @@ const Login: React.FC = () => {
 
     try {
       // 🛡️ Deploy guard: sandbox = Mock Mode (LocalStorage users only), no Firebase Auth.
-      const auth = IS_LIVE ? getAuth() : null;
+      // local-test: the Emulator / Staging Firebase Auth, only when firebase.ts actually connected to that target.
+      const auth = IS_LIVE || (BACKEND_ENABLED && firebaseReady()) ? getAuth() : null;
 
       if (isLoginMode) {
         const user = await db.users.login(formData.email, formData.password);
