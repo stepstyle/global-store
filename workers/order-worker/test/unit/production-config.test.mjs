@@ -14,15 +14,15 @@ const FILLED = DRAFT
   .replace('REPLACE_WITH_PRODUCTION_CLOUDFLARE_ACCOUNT_ID', '0123456789abcdef0123456789abcdef')
   .replace('REPLACE_WITH_TELEGRAM_CHAT_ID', '-1001234567890')
   .replace('REPLACE_WITH_ADMIN_NOTIFICATION_EMAIL', 'admin@example.com')
-  .replace('REPLACE_WITH_VERIFIED_SENDGRID_SENDER', 'orders@example.com')
-  .replace('REPLACE_WITH_NUMERIC_TELEGRAM_USER_IDS', '123456789');
+  .replace('REPLACE_WITH_VERIFIED_SENDGRID_SENDER', 'orders@example.com');
 afterEach(() => { delete globalThis.__DEPLOY_TARGET__; });
 
 test('the draft breaks no rule but is BLOCKED by its unfilled production values (nothing invented)', async () => {
   const r = await checkProductionConfig(DRAFT);
   assert.deepEqual(r.violations, []);
-  assert.deepEqual(r.placeholders.sort(), ['ADMIN_EMAIL', 'EMAIL_FROM', 'TELEGRAM_ADMIN_USER_IDS', 'TELEGRAM_CHAT_ID', 'account_id', 'name']);
-  assert.match(DRAFT, /^APPROVAL_MODE = "telegram"\r?$/m, 'Telegram approval is built into the production template');
+  assert.deepEqual(r.placeholders.sort(), ['ADMIN_EMAIL', 'EMAIL_FROM', 'TELEGRAM_CHAT_ID', 'account_id', 'name']);
+  assert.match(DRAFT, /^STOCK_POLICY = "on_delivery"\r?$/m, 'stock on delivery is built into the production template');
+  assert.match(DRAFT, /^APPROVAL_MODE = "off"\r?$/m, 'Telegram only notifies (no approval buttons)');
   assert.equal(r.deployable, false);
   assert.match(DRAFT, /^account_id = "REPLACE_WITH_/m, 'wrangler itself refuses a non-hex account id');
 });
@@ -49,11 +49,11 @@ test('every unsafe variant is a VIOLATION', async () => {
     'emulator': FILLED.replace('[vars]', '[vars]\nFIRESTORE_BASE_URL = "http://127.0.0.1:8080/v1"'),
     'no public endpoint (workers_dev=false, no routes)': FILLED.replace('workers_dev = true', 'workers_dev = false'),
     'no cron (notifications never retried)': FILLED.replace('crons = ["*/5 * * * *"]', 'crons = []'),
-    'telegram approval without admin ids': FILLED.replace('TELEGRAM_ADMIN_USER_IDS = "123456789"', 'TELEGRAM_ADMIN_USER_IDS = ""'),
-    'telegram admin ids not numeric': FILLED.replace('TELEGRAM_ADMIN_USER_IDS = "123456789"', 'TELEGRAM_ADMIN_USER_IDS = "@owner"'),
-    'approval off (stock deducted at creation)': FILLED.replace('APPROVAL_MODE = "telegram"', 'APPROVAL_MODE = "off"'),
-    'approval unset': FILLED.replace(/^APPROVAL_MODE = "telegram"\r?\n/m, ''),
-    'approval typo': FILLED.replace('APPROVAL_MODE = "telegram"', 'APPROVAL_MODE = "Telegram"'),
+    'stock policy on_creation (deducted at creation)': FILLED.replace('STOCK_POLICY = "on_delivery"', 'STOCK_POLICY = "on_creation"'),
+    'stock policy unset': FILLED.replace(/^STOCK_POLICY = "on_delivery"\r?\n/m, ''),
+    'stock policy typo': FILLED.replace('STOCK_POLICY = "on_delivery"', 'STOCK_POLICY = "on-delivery"'),
+    'telegram approval buttons': FILLED.replace('APPROVAL_MODE = "off"', 'APPROVAL_MODE = "telegram"'),
+    'leftover telegram admin ids': FILLED.replace('[vars]', '[vars]\nTELEGRAM_ADMIN_USER_IDS = "123456789"'),
     'chat id not numeric': FILLED.replace('TELEGRAM_CHAT_ID = "-1001234567890"', 'TELEGRAM_CHAT_ID = "@store_chat"'),
   };
   for (const [name, text] of Object.entries(bad)) {
@@ -69,8 +69,7 @@ test('config.js: a production Worker with any REPLACE_WITH_ value never runs (CO
     ENVIRONMENT: 'production', FIREBASE_PROJECT_ID: 'antastore1-82b50', FIRESTORE_AUTH: 'service-account',
     FIREBASE_CLIENT_EMAIL: 'sa@antastore1-82b50.iam.gserviceaccount.com', FIREBASE_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\nX\n-----END PRIVATE KEY-----',
     TURNSTILE_SECRET: '0x4AAAAAAAFAKE', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'enforce', ALLOWED_ORIGINS: 'https://dairsharaf.com',
-    APPROVAL_MODE: 'telegram', STOCK_MODE: 'apply', TELEGRAM_BOT_TOKEN: 'fake', TELEGRAM_CHAT_ID: '-1001234567890',
-    TELEGRAM_WEBHOOK_SECRET: 'f'.repeat(40), TELEGRAM_ADMIN_USER_IDS: '123456789',
+    STOCK_POLICY: 'on_delivery', STOCK_MODE: 'apply', TELEGRAM_BOT_TOKEN: 'fake', TELEGRAM_CHAT_ID: '-1001234567890',
   };
   assert.equal(loadConfig(env).ok, true);
   const c = loadConfig({ ...env, TELEGRAM_CHAT_ID: 'REPLACE_WITH_TELEGRAM_CHAT_ID' });
@@ -78,26 +77,27 @@ test('config.js: a production Worker with any REPLACE_WITH_ value never runs (CO
   assert.ok(c.errors.some((e) => e.includes('TELEGRAM_CHAT_ID')));
 });
 
-test('config.js: a production Worker without Telegram approval (unset / off / typo) or with incomplete approval settings never runs', () => {
+test('config.js: a production Worker that would deduct stock before delivery (policy unset / on_creation / typo, Telegram approval, stock not applied) never runs', () => {
   globalThis.__DEPLOY_TARGET__ = 'production';
   const env = {
     ENVIRONMENT: 'production', FIREBASE_PROJECT_ID: 'antastore1-82b50', FIRESTORE_AUTH: 'service-account',
     FIREBASE_CLIENT_EMAIL: 'sa@antastore1-82b50.iam.gserviceaccount.com', FIREBASE_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\nX\n-----END PRIVATE KEY-----',
     TURNSTILE_SECRET: '0x4AAAAAAAFAKE', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'enforce', ALLOWED_ORIGINS: 'https://dairsharaf.com',
-    APPROVAL_MODE: 'telegram', STOCK_MODE: 'apply', TELEGRAM_BOT_TOKEN: 'fake', TELEGRAM_CHAT_ID: '-1001234567890',
-    TELEGRAM_WEBHOOK_SECRET: 'f'.repeat(40), TELEGRAM_ADMIN_USER_IDS: '123456789',
+    STOCK_POLICY: 'on_delivery', APPROVAL_MODE: 'off', STOCK_MODE: 'apply', TELEGRAM_BOT_TOKEN: 'fake', TELEGRAM_CHAT_ID: '-1001234567890',
   };
   assert.equal(loadConfig(env).ok, true);
+  assert.equal(loadConfig({ ...env, APPROVAL_MODE: undefined }).ok, true, 'APPROVAL_MODE unset = off');
   for (const [name, override] of Object.entries({
-    unset: { APPROVAL_MODE: undefined }, off: { APPROVAL_MODE: 'off' }, typo: { APPROVAL_MODE: 'Telegram' },
-    'no admin ids': { TELEGRAM_ADMIN_USER_IDS: '' }, 'no webhook secret': { TELEGRAM_WEBHOOK_SECRET: '' },
-    'no chat id': { TELEGRAM_CHAT_ID: '' }, 'no bot token': { TELEGRAM_BOT_TOKEN: '' }, 'stock not applied': { STOCK_MODE: 'log' },
+    'policy unset': { STOCK_POLICY: undefined }, 'policy on_creation': { STOCK_POLICY: 'on_creation' }, 'policy typo': { STOCK_POLICY: 'on-delivery' },
+    'telegram approval': { APPROVAL_MODE: 'telegram', TELEGRAM_WEBHOOK_SECRET: 'f'.repeat(40), TELEGRAM_ADMIN_USER_IDS: '123456789' },
+    'stock not applied': { STOCK_MODE: 'log' },
   })) {
     assert.equal(loadConfig({ ...env, ...override }).ok, false, name);
   }
-  assert.ok(loadConfig({ ...env, APPROVAL_MODE: 'off' }).errors.includes('production requires APPROVAL_MODE=telegram'));
-  // staging / local runs keep both modes (the approval and the legacy scenarios are tested there)
+  assert.ok(loadConfig({ ...env, STOCK_POLICY: 'on_creation' }).errors.includes('production requires STOCK_POLICY=on_delivery'));
+  // staging / local runs keep every mode (the legacy policies are still tested there)
   delete globalThis.__DEPLOY_TARGET__;
+  assert.equal(loadConfig({ ENVIRONMENT: 'local', FIREBASE_PROJECT_ID: 'demo-x', STOCK_POLICY: 'on_delivery', STOCK_MODE: 'log' }).errors.includes('STOCK_POLICY=on_delivery requires STOCK_MODE=apply'), true);
 });
 
 // ------------------------------------------------------------------ no real identifiers in git

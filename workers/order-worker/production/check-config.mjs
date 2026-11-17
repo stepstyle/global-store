@@ -61,19 +61,18 @@ export async function checkProductionConfig(text) {
   for (const k of ['TELEGRAM_API_BASE', 'SENDGRID_API_BASE', 'FIRESTORE_BASE_URL', 'OAUTH_TOKEN_URL', 'TURNSTILE_VERIFY_URL', 'AUTH_JWKS_URL']) if (vars[k] !== undefined) v.push(`${k} must not be set (official endpoints only)`);
   for (const k of SECRET_NAMES) if (vars[k] !== undefined) v.push(`${k} is a SECRET — never in [vars] (wrangler secret put)`);
   const blob = text.replace(/^\s*#.*$/gm, '');
-  // reachability: the storefront AND the Telegram webhook need a public URL — workers.dev or a route/custom domain
+  // reachability: the storefront AND the admin dashboard need a public URL — workers.dev or a route/custom domain
   const workersDev = (blob.match(/^\s*workers_dev\s*=\s*(true|false)/m) || [])[1];
   const hasRoutes = /^\s*routes?\s*=/m.test(blob) || /^\s*\[\[routes\]\]/m.test(blob);
-  if (workersDev === 'false' && !hasRoutes) v.push('no public endpoint: workers_dev = false and no routes / custom domain — the storefront and the Telegram webhook could not reach the Worker');
-  // the cron retries failed notifications (and, with Telegram approval, a lost order message would leave the
-  // order pending with no button to decide it)
+  if (workersDev === 'false' && !hasRoutes) v.push('no public endpoint: workers_dev = false and no routes / custom domain — the storefront and the admin dashboard could not reach the Worker');
+  // the cron retries failed notifications
   const crons = (blob.match(/^\s*crons\s*=\s*\[([^\]]*)\]/m) || [])[1];
   if (crons === undefined || !/"[^"]+"/.test(crons)) v.push('crons is empty: failed Telegram / e-mail notifications would never be retried (use e.g. ["*/5 * * * *"])');
-  // Telegram approval is mandatory in production, and its non-secret settings must be complete (the secret
-  // TELEGRAM_WEBHOOK_SECRET is a `wrangler secret`). "off" or unset would deduct stock at creation: refused.
-  if (vars.APPROVAL_MODE !== 'telegram') v.push(`APPROVAL_MODE must be telegram (got ${vars.APPROVAL_MODE === undefined ? 'unset' : JSON.stringify(vars.APPROVAL_MODE)})`);
-  const adminIds = String(vars.TELEGRAM_ADMIN_USER_IDS || '');
-  if (!adminIds.includes('REPLACE_WITH_') && !/^[1-9]\d{0,19}(,[1-9]\d{0,19})*$/.test(adminIds.replace(/\s/g, ''))) v.push('TELEGRAM_ADMIN_USER_IDS must list the numeric Telegram user ids allowed to accept/reject orders');
+  // owner's decision: orders are accepted automatically, stock reserved at creation and deducted on delivery.
+  // Unset / on_creation would deduct at creation; the Telegram approval-button flow is not used in production.
+  if (vars.STOCK_POLICY !== 'on_delivery') v.push(`STOCK_POLICY must be on_delivery (got ${vars.STOCK_POLICY === undefined ? 'unset' : JSON.stringify(vars.STOCK_POLICY)})`);
+  if (vars.APPROVAL_MODE !== undefined && vars.APPROVAL_MODE !== 'off') v.push(`APPROVAL_MODE must be off or unset — Telegram only notifies (got ${JSON.stringify(vars.APPROVAL_MODE)})`);
+  if (vars.TELEGRAM_ADMIN_USER_IDS !== undefined) v.push('TELEGRAM_ADMIN_USER_IDS is not used any more (no approval buttons) — remove it');
   const chatId = String(vars.TELEGRAM_CHAT_ID || '');
   if (!chatId.includes('REPLACE_WITH_') && !/^-?\d{1,20}$/.test(chatId)) v.push('TELEGRAM_CHAT_ID must be the numeric id of the admin chat/group');
   if (/dairsharaf-staging|-staging\.[a-z0-9-]+\.workers\.dev|anta-notify-sink|127\.0\.0\.1|localhost|demo-|example\.invalid/i.test(blob)) v.push('staging / local / test value present');
@@ -84,8 +83,6 @@ export async function checkProductionConfig(text) {
   const { loadConfig } = await import(pathToFileURL(resolve(HERE, '../src/config.js')).href);
   const env = Object.fromEntries(Object.entries(vars).map(([k, val]) => [k, val.includes('REPLACE_WITH_') ? (k.includes('EMAIL') || k === 'EMAIL_FROM' ? 'filled@example.com' : 'filled-value') : val]));
   Object.assign(env, {
-    ...(vars.APPROVAL_MODE === 'telegram' ? { TELEGRAM_WEBHOOK_SECRET: 'f'.repeat(40) } : {}),
-    ...(String(vars.TELEGRAM_ADMIN_USER_IDS || '').includes('REPLACE_WITH_') ? { TELEGRAM_ADMIN_USER_IDS: '123456789' } : {}),
     ...(String(vars.TELEGRAM_CHAT_ID || '').includes('REPLACE_WITH_') ? { TELEGRAM_CHAT_ID: '-1001234567890' } : {}),
     FIREBASE_CLIENT_EMAIL: `fake-sa@${PROD_PROJECT}.iam.gserviceaccount.com`,
     FIREBASE_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n',

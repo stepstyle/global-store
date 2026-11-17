@@ -62,7 +62,8 @@ interface CartContextType {
   refreshProducts: () => Promise<void>;
   addProducts: (newProducts: Product[]) => Promise<void>;
   deleteProduct: (id: string) => Promise<void>;
-  updateProduct: (p: Product) => Promise<void>;
+  /** baseline = the product as the editor was opened with (protects stock changed meanwhile, see stockMerge.ts) */
+  updateProduct: (p: Product, baseline?: Product | null) => Promise<void>;
   cart: CartItem[];
   wishlist: Set<string>;
   addToCart: (product: Product, quantity?: number) => Promise<void>;
@@ -176,9 +177,9 @@ const App: React.FC = () => {
     }
   }, [refreshProducts]);
 
-  const updateProduct = useCallback(async (p: Product) => {
+  const updateProduct = useCallback(async (p: Product, baseline?: Product | null) => {
     try {
-      await storageDb.products.update(p);
+      await storageDb.products.update(p, baseline);
       await refreshProducts();
     } catch (e) {
       console.error('Error updating product:', e);

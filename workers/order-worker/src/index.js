@@ -3,6 +3,7 @@
 // Routes
 //   POST /create-order          create / adopt an order (idempotent, atomic stock)
 //   GET  /orders/:id/status     { exists, status } only — no personal data
+//   POST /admin/orders/:id/status  dashboard status change; stock deducted on delivery (Firebase ID token of an admin)
 //   GET  /test                  Telegram test message      (x-worker-auth required)
 //   POST /notify-order          resend notifications        (x-worker-auth required)
 //   OPTIONS *                   CORS preflight (allow-listed origins only)
@@ -17,8 +18,11 @@ import { processNotifications, retryPendingNotifications } from './notify.js';
 import { ORDER_ID_RE } from './validate.js';
 import { AuthError, bearerToken, verifyFirebaseIdToken } from './auth.js';
 import { handleTelegramWebhook } from './telegram.js';
+import { requireAdmin } from './admin.js';
+import { changeOrderStatus } from './fulfilment.js';
 
 const STATUS_PATH = /^\/orders\/([^/]+)\/status$/;
+const ADMIN_STATUS_PATH = /^\/admin\/orders\/([^/]+)\/status$/;
 const SUMMARY_PATH = /^\/orders\/([^/]+)\/summary$/;
 
 async function verifyTurnstile(cfg, token, ip) {
@@ -139,6 +143,28 @@ async function handle(request, env, ctx, cfg) {
       if (!(e instanceof AuthError)) throw e;
     }
     const r = await orderSummary(fs, id, { key: request.headers.get('x-tracking-key'), authUid });
+    return reply(r.body, r.status);
+  }
+
+  // ---------------- admin: order status (STOCK_POLICY=on_delivery orders) ----------------
+  const am = url.pathname.match(ADMIN_STATUS_PATH);
+  if (am) {
+    if (request.method !== 'POST') return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    if (!(await allowRequest(env, cfg, 'status', ip))) return reply({ ok: false, code: 'RATE_LIMITED' }, 429);
+    let id;
+    try {
+      id = decodeURIComponent(am[1]);
+    } catch {
+      return reply({ ok: false, code: 'INVALID_ID' }, 400);
+    }
+    if (!ORDER_ID_RE.test(id)) return reply({ ok: false, code: 'INVALID_ID' }, 400);
+    // identity BEFORE the body is even read
+    const who = await requireAdmin(request, fs, cfg);
+    if (!who.ok) return reply({ ok: false, code: who.code }, who.status);
+    const { body, error } = await readJsonBody(request, 4 * 1024);
+    if (error === 413) return reply({ ok: false, code: 'PAYLOAD_TOO_LARGE' }, 413);
+    if (error || !body || typeof body !== 'object') return reply({ ok: false, code: 'INVALID_JSON' }, 400);
+    const r = await changeOrderStatus(fs, cfg, { orderId: id, status: String(body.status || ''), confirmReturn: body.confirmReturn === true, actor: { uid: who.uid } });
     return reply(r.body, r.status);
   }
 

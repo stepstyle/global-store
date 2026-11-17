@@ -139,8 +139,10 @@ export async function processNotifications(fs, cfg, orderId) {
       const order = orderDoc.exists ? decodeFields(orderDoc.fields) : { id: orderId };
       // Telegram-approval orders: the Arabic message from the ledger's SERVER prices + the buttons for the order's
       // CURRENT decision (a late retry after a decision carries no stale buttons). The e-mail stays informational.
+      // on_delivery orders: the same Arabic message from server data, WITHOUT any button (followed up in the dashboard)
       const approval = L.stockPolicy === 'on_approval';
-      const text = approval && ch === 'telegram' ? approvalText(order, L, cfg) : buildMessage(order, L, cfg);
+      const arabic = approval || L.stockPolicy === 'on_delivery';
+      const text = arabic && ch === 'telegram' ? approvalText(order, L, cfg) : buildMessage(order, L, cfg);
       result = ch === 'telegram'
         ? await sendTelegram(cfg, text, approval ? keyboardFor(L.decision || 'pending', orderId) : undefined)
         : await sendEmail(cfg, orderId, text);

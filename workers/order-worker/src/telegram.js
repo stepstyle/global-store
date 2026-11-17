@@ -27,6 +27,9 @@ export const STATE_LINE = {
   accepted: '✅ تم قبول الطلب وخصم المخزون',
   rejected: '❌ تم رفض الطلب (لم يُخصم أي مخزون)',
   cancelled: '↩️ تم إلغاء الطلب بعد القبول وإرجاع المخزون',
+  // STOCK_POLICY=on_delivery: no decision in Telegram — the order is accepted automatically and followed up from the
+  // admin dashboard; the stock is only reserved now and deducted when the order is marked delivered
+  auto: '✅ تم استلام الطلب وقبوله تلقائيًا — الكمية محجوزة وتُخصم من المخزون عند التسليم',
 };
 
 /** Arabic order message from TRUSTED data: server prices / names from the ledger; delivery details from the order. */
@@ -35,7 +38,8 @@ export function approvalText(order, ledger, cfg) {
   const meta = order.addressMeta || {};
   const cur = cfg.currency || 'JOD';
   const sp = ledger.serverPricing || {};
-  const lines = Array.isArray(ledger.approvalLines) ? ledger.approvalLines : [];
+  const lines = Array.isArray(ledger.approvalLines) ? ledger.approvalLines : Array.isArray(ledger.orderLines) ? ledger.orderLines : [];
+  const auto = ledger.stockPolicy === 'on_delivery';
   const items = lines.map((l) => {
     const variant = l.variantLabel && l.variantLabel !== '.' ? ` (${l.variantLabel})` : '';
     return `- ${l.productName || l.productId}${variant}\n  الكمية: ${l.quantity} × ${money(l.unitPrice, cur)}`;
@@ -63,7 +67,8 @@ export function approvalText(order, ledger, cfg) {
     ...(ledger.priceMismatch ? ['⚠️ اختلاف بين سعر العميل وسعر النظام — المعتمد سعر النظام أعلاه'] : []),
     ...(order.note ? ['', `📝 ملاحظة: ${order.note}`] : []),
     '',
-    `${STATE_LINE[decision] || STATE_LINE.pending}${decision === 'pending' ? '' : who}`,
+    auto ? STATE_LINE.auto : `${STATE_LINE[decision] || STATE_LINE.pending}${decision === 'pending' ? '' : who}`,
+    ...(auto && cfg.adminBaseUrl ? ['', `لوحة التحكم: ${cfg.adminBaseUrl.replace(/\/+$/, '')}/#/admin?orderId=${encodeURIComponent(order.id || ledger.orderId || '')}`] : []),
   ].join('\n');
   return text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT - 1)}…` : text;
 }

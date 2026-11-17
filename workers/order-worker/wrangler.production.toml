@@ -26,7 +26,7 @@ name = "REPLACE_WITH_PRODUCTION_WORKER_NAME"
 account_id = "REPLACE_WITH_PRODUCTION_CLOUDFLARE_ACCOUNT_ID"
 main = "src/index.js"
 compatibility_date = "2025-06-01"
-# Public endpoint (REQUIRED: the storefront calls it and Telegram posts button presses to /telegram/webhook).
+# Public endpoint (REQUIRED: the storefront creates orders and the admin dashboard changes their status through it).
 # Default: https://<name>.<account-subdomain>.workers.dev. Alternative (zone dairsharaf.com on Cloudflare):
 #   workers_dev = false
 #   routes = [{ pattern = "orders.dairsharaf.com", custom_domain = true }]
@@ -38,7 +38,7 @@ preview_urls = false
 __DEPLOY_TARGET__ = "'production'"
 
 [triggers]
-# REQUIRED: retries failed Telegram / e-mail notifications (and re-sends a lost approval message). Never empty.
+# REQUIRED: retries failed Telegram / e-mail notifications. Never empty.
 crons = ["*/5 * * * *"]
 
 [[ratelimits]]
@@ -66,9 +66,9 @@ TURNSTILE_MODE = "enforce"
 PRICE_CHECK_MODE = "enforce"
 STOCK_MODE = "apply"
 RECONCILE_ENABLED = "false"
-# Telegram order approval — REQUIRED in production (config.js refuses to run otherwise). Orders are saved as 'new'
-# without any stock change; an allowed admin accepts (atomic deduction) or rejects from Telegram.
-# Secrets (wrangler secret put): TELEGRAM_BOT_TOKEN (exists), TELEGRAM_WEBHOOK_SECRET (new, 32-256 [A-Za-z0-9_-]).
-APPROVAL_MODE = "telegram"
-TELEGRAM_ADMIN_USER_IDS = "REPLACE_WITH_NUMERIC_TELEGRAM_USER_IDS"
+# Stock moves on DELIVERY — REQUIRED in production (config.js refuses to run otherwise). Orders are accepted
+# automatically ('new'), the quantities are reserved (stockReservations), Telegram only notifies (no buttons), and the
+# stock is deducted once when the admin marks the order delivered in the dashboard.
+STOCK_POLICY = "on_delivery"
+APPROVAL_MODE = "off"
 CURRENCY = "JOD"

@@ -67,12 +67,31 @@ test('notify-customer: no CORS grant (same-origin only); admin list parsing', ()
   assert.deepEqual([...adminUids({ NOTIFY_ADMIN_UIDS: ` ${ADMIN} , bad uid!, ${OTHER}` })], [ADMIN, OTHER]);
 });
 
-test('create-order (retired): 410, never forwards, never uses WORKER_AUTH_TOKEN', async () => {
-  const r = res();
-  createOrder({ method: 'POST', body: { order: {} } }, r);
-  assert.equal(r.code, 410);
-  const src = readFileSync(new URL('../../api/create-order.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(src, /fetch\(|process\.env|Access-Control-Allow-Origin/);
+// (merged with the deploy guard of main: sandbox / preview answers 403 SANDBOX_DISABLED before anything else)
+test('create-order (retired): 410 in production, 403 SANDBOX_DISABLED elsewhere; never forwards, never uses WORKER_AUTH_TOKEN', async () => {
+  const resH = () => Object.assign(res(), { setHeader() {} });
+  const prev = process.env.VERCEL_ENV;
+  try {
+    process.env.VERCEL_ENV = 'production';
+    const r = resH();
+    createOrder({ method: 'POST', body: { order: {} } }, r);
+    assert.equal(r.code, 410);
+    for (const v of ['preview', 'development', undefined]) {
+      if (v === undefined) delete process.env.VERCEL_ENV;
+      else process.env.VERCEL_ENV = v;
+      const s = resH();
+      createOrder({ method: 'POST', body: { order: {} } }, s);
+      assert.equal(s.code, 403, String(v));
+    }
+  } finally {
+    if (prev === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = prev;
+  }
+  // code lines only (the header comment explains what the old function did)
+  const src = readFileSync(new URL('../../api/create-order.js', import.meta.url), 'utf8').split(/\r?\n/).filter((l) => !l.trim().startsWith('//')).join('\n');
+  assert.doesNotMatch(src, /fetch\(|WORKER_AUTH_TOKEN|Access-Control-Allow-Origin/);
+  // the only environment value it reads is the deploy guard's VERCEL_ENV
+  assert.deepEqual([...new Set(src.match(/process\.env\.[A-Z_]+/g))], ['process.env.VERCEL_ENV']);
 });
 
 test('reviews.ts: no silent local save when Firebase is active; no e-mail written into public reviews', () => {

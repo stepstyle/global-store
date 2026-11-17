@@ -292,6 +292,21 @@ test('trackingKeys store: validated entries only, newest first, max 30', () => {
   assert.equal(keys.get('ORD-AAAA1111-BBBB'), null);
 });
 
+test('OUT_OF_STOCK (Worker on_delivery, 422 — e.g. the last piece just reserved by another order): rejected once, cart kept, clear Arabic message', async () => {
+  const f = fakeFetch([{ status: 422, body: { ok: false, code: 'OUT_OF_STOCK', lines: [{ index: 0, available: 0 }] } }]);
+  const { p } = run(f);
+  const r = await p();
+  assert.equal(r.status, 'rejected');
+  assert.equal(r.code, 'OUT_OF_STOCK');
+  assert.equal(f.creates().length, 1, 'never resent automatically');
+  assert.equal(shouldClearCart(r), false, 'cart kept');
+  const m = messageFor(r);
+  assert.match(m.bodyAr, /لم تعد كميته المطلوبة متوفرة/);
+  assert.match(m.bodyAr, /لم يُنشأ أي طلب، وسلّتك محفوظة/);
+  assert.equal(m.showOrderId, false);
+  assert.deepEqual(m.actions, ['fix_form']);
+});
+
 test('PRICE_CHANGED (Worker enforce, 422): clear Arabic message, nothing created, no order number shown', () => {
   const m = messageFor({ status: 'rejected', orderId: 'ORD-ABCD1234-XYZ1', code: 'PRICE_CHANGED' });
   assert.equal(m.bodyAr, 'تغيّر سعر أحد المنتجات أو رسوم التوصيل. يرجى مراجعة الطلب قبل التأكيد. لم يُنشأ أي طلب.');

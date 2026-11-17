@@ -509,6 +509,11 @@ export function messageFor(r: CheckoutResult): UiMessage | null {
       if (r.code === 'PRICE_CHANGED') {
         return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'تغيّر السعر', titleEn: 'The price changed', bodyAr: 'تغيّر سعر أحد المنتجات أو رسوم التوصيل. يرجى مراجعة الطلب قبل التأكيد. لم يُنشأ أي طلب.', bodyEn: 'The price of an item or the delivery fee changed. Please review your order before confirming. No order was created.' };
       }
+      // Worker STOCK_POLICY=on_delivery: 422, the quantity is no longer available (reserved by other open orders —
+      // e.g. the last piece). Nothing was saved or reserved; the cart is kept so the customer can adjust it.
+      if (r.code === 'OUT_OF_STOCK') {
+        return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'نفدت الكمية المتاحة', titleEn: 'Not enough stock left', bodyAr: 'أحد المنتجات في سلتك لم تعد كميته المطلوبة متوفرة (طُلبت آخر القطع للتو). عدّل الكمية أو احذف المنتج ثم أكّد الطلب من جديد. لم يُنشأ أي طلب، وسلّتك محفوظة.', bodyEn: 'The requested quantity of an item in your cart is no longer available (the last pieces were just ordered). Adjust the quantity or remove the item, then confirm again. No order was created and your cart is kept.' };
+      }
       if (r.code === 'PAYLOAD_TOO_LARGE') {
         return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'الطلب كبير جدًا', titleEn: 'Order too large', bodyAr: 'قلّل عدد المنتجات أو طول الملاحظات ثم أعد المحاولة.', bodyEn: 'Reduce the items or the note length and try again.' };
       }

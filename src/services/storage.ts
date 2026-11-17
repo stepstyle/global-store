@@ -19,7 +19,9 @@ import {
   DocumentSnapshot,
   onSnapshot,
   serverTimestamp,
+  runTransaction,
 } from 'firebase/firestore';
+import { mergeStockForSave, StaleStockError } from './stockMerge';
 
 import {
   createUserWithEmailAndPassword,
@@ -304,25 +306,7 @@ export const db = {
       return products.find((p: Product) => p.id === id);
     },
 
-    updateStock: async (id: string, quantityToDeduct: number) => {
-      if (firebaseReady()) {
-        const docRef = doc(firestore, 'products', id);
-        const docSnap = await getDoc(docRef);
-
-        if (docSnap.exists()) {
-          const currentStock = (docSnap.data() as any).stock ?? 0;
-          await updateDoc(docRef, { stock: Math.max(0, currentStock - quantityToDeduct) });
-        }
-        return;
-      }
-
-      const products = JSON.parse(localStorage.getItem(KEYS.PRODUCTS) || '[]');
-      const index = products.findIndex((p: Product) => p.id === id);
-      if (index !== -1) {
-        products[index].stock = Math.max(0, products[index].stock - quantityToDeduct);
-        localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(products));
-      }
-    },
+    // (no browser-side stock deduction exists: the order Worker deducts stock only when an order is delivered)
 
     add: async (newProducts: Product[]): Promise<Product[]> => {
       if (firebaseReady()) {
@@ -352,12 +336,22 @@ export const db = {
       return updated;
     },
 
-    update: async (updatedProduct: Product): Promise<Product[]> => {
+    /**
+     * @param baseline the product as the editor was OPENED with. Stock numbers the admin did not touch keep their
+     *                 CURRENT Firestore value (a delivery deducted meanwhile is never undone); a stock the admin changed
+     *                 while Firestore also changed it -> StaleStockError, nothing saved (stockMerge.ts). Read + write in
+     *                 one Firestore transaction (retried by the SDK if the product changes in between).
+     */
+    update: async (updatedProduct: Product, baseline?: Product | null): Promise<Product[]> => {
       if (firebaseReady()) {
         const enriched = ensureProductSearchFields(updatedProduct);
-        const safeProduct = cleanForFirestore(enriched);
-
-        await setDoc(doc(firestore, 'products', (enriched as any).id), safeProduct as any, { merge: true });
+        const ref = doc(firestore, 'products', (enriched as any).id);
+        await runTransaction(firestore, async (tx) => {
+          const snap = await tx.get(ref);
+          const merged = mergeStockForSave(enriched as any, baseline as any, snap.exists() ? (snap.data() as any) : null);
+          if (!merged.ok) throw new StaleStockError((merged as { conflicts: string[] }).conflicts);
+          tx.set(ref, cleanForFirestore((merged as { product: any }).product) as any, { merge: true });
+        });
         return db.products.getAll();
       }
 
@@ -490,10 +484,7 @@ export const db = {
     updatedAt: new Date().toISOString(),
   });
   localStorage.setItem(KEYS.ORDERS, JSON.stringify(orders));
-
-  (anyOrder.items || []).forEach((item: any) => {
-    db.products.updateStock(item.productId, item.quantity);
-  });
+  // no stock change here: the store deducts stock only when an order is DELIVERED (order Worker, STOCK_POLICY=on_delivery)
 
   return new Promise((resolve) => setTimeout(() => resolve(order), 800));
 },

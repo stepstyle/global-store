@@ -16,7 +16,7 @@
 import { GOOGLE_SECURETOKEN_JWKS_URL } from './auth.js';
 
 export const PROD_PROJECT_ID = 'antastore1-82b50';
-export const WORKER_VERSION = 'v2.0.0-phase1';
+export const WORKER_VERSION = 'v2.1.0-on-delivery';
 export const STAGING_PROJECT_RE = /^[a-z][a-z0-9-]{2,22}-staging$/;
 export const SINK_HOST_RE = /^anta-notify-sink-staging\.[a-z0-9-]+\.workers\.dev$/;
 export const TURNSTILE_TEST_SECRETS = [
@@ -161,10 +161,12 @@ export function loadConfig(env = {}) {
     if (unfilled.length) errors.push(`production has unfilled placeholder value(s): ${unfilled.join(', ')}`);
     if (str(env.PRICE_CHECK_MODE) !== 'enforce') errors.push('production requires PRICE_CHECK_MODE=enforce');
     if (str(env.TURNSTILE_MODE) !== 'enforce') errors.push('production requires TURNSTILE_MODE=enforce');
-    // launch requirement: production orders are ALWAYS approved from Telegram (stock is deducted atomically on
-    // acceptance). A production Worker without it (unset, "off", typo) refuses to run instead of silently deducting
-    // stock at creation. The telegram block below then requires the bot token, chat id, webhook secret and admin ids.
-    if (str(env.APPROVAL_MODE) !== 'telegram') errors.push('production requires APPROVAL_MODE=telegram');
+    // launch requirement (owner's decision): orders are accepted automatically, the stock is RESERVED at creation and
+    // deducted only when the admin marks the order delivered (src/fulfilment.js). A production Worker without it
+    // (unset, typo, old on_creation) refuses to run instead of silently deducting stock at creation. Telegram only
+    // notifies: the approval-button flow is not allowed in production.
+    if (str(env.STOCK_POLICY) !== 'on_delivery') errors.push('production requires STOCK_POLICY=on_delivery');
+    if (!['', 'off'].includes(str(env.APPROVAL_MODE))) errors.push('production requires APPROVAL_MODE=off (Telegram notifies only)');
     // the staging access gate (src/http.js) has no meaning in production: a production Worker that carries the
     // variable is refused outright instead of silently ignoring it
     if (str(env.STAGING_ACCESS_TOKEN)) errors.push('production must not set STAGING_ACCESS_TOKEN (staging-only gate)');
@@ -195,6 +197,16 @@ export function loadConfig(env = {}) {
     if (!/^[A-Za-z0-9_-]{32,256}$/.test(webhookSecret)) errors.push('APPROVAL_MODE=telegram requires TELEGRAM_WEBHOOK_SECRET (32-256 chars of A-Z a-z 0-9 _ -)');
     if (adminUserIds.length === 0 || adminUserIds.length !== adminUserIdsRaw.length) errors.push('APPROVAL_MODE=telegram requires TELEGRAM_ADMIN_USER_IDS (comma-separated numeric Telegram user ids)');
     if (stockMode !== 'apply') errors.push('APPROVAL_MODE=telegram requires STOCK_MODE=apply (stock is deducted on acceptance)');
+  }
+  // ---- when the physical stock moves -----------------------------------------------------------------------
+  // on_creation (default, unchanged): deducted when the order is created (STOCK_MODE), or on Telegram acceptance.
+  // on_delivery: reserved at creation (stockReservations, src/reservations.js; an order that needs more than
+  //              stock - reserved is refused), deducted ONCE when the admin marks it delivered (src/fulfilment.js).
+  const stockPolicy = oneOf(env.STOCK_POLICY, ['on_creation', 'on_delivery'], 'on_creation');
+  if (!stockPolicy) errors.push('STOCK_POLICY must be on_creation|on_delivery');
+  if (stockPolicy === 'on_delivery') {
+    if (stockMode !== 'apply') errors.push('STOCK_POLICY=on_delivery requires STOCK_MODE=apply');
+    if (approvalMode === 'telegram') errors.push('STOCK_POLICY=on_delivery cannot be combined with APPROVAL_MODE=telegram');
   }
   const currency = str(env.CURRENCY) || 'JOD';
   if (!/^[A-Z]{3}$/.test(currency)) errors.push('CURRENCY must be an ISO 4217 code (e.g. JOD)');
@@ -234,6 +246,7 @@ export function loadConfig(env = {}) {
     stagingAccessToken: isStaging ? str(env.STAGING_ACCESS_TOKEN) : '',
     telegram: { token: str(env.TELEGRAM_BOT_TOKEN), chatId: str(env.TELEGRAM_CHAT_ID), webhookSecret, adminUserIds: new Set(adminUserIds) },
     approvalMode,
+    stockPolicy,
     currency,
     email: {
       apiKey: str(env.SENDGRID_API_KEY),

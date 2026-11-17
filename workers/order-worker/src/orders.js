@@ -6,6 +6,7 @@
 import { encodeFields, decodeFields, isConflict } from './firestore.js';
 import { validateOrderInput, orderHash, ORDER_ID_RE } from './validate.js';
 import { planInventory } from './inventory.js';
+import { planReservation, reservationWrites } from './reservations.js';
 import { computeServerPricing, comparePricing, enforcePriceProblems } from './pricing.js';
 import { initialNotifications, processNotifications } from './notify.js';
 import { WORKER_VERSION } from './config.js';
@@ -27,8 +28,11 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
   // when an authorised admin accepts. The ledger says which policy applied, so a later decision never deducts twice
   // and legacy orders (stock taken at creation, or no ledger at all) are never deducted again.
   const onApproval = cfg.approvalMode === 'telegram';
-  if (onApproval) {
-    for (const d of inv.deductions) { d.applied = false; d.skippedReason = d.skippedReason || 'AWAITING_APPROVAL'; }
+  // STOCK_POLICY=on_delivery: NOTHING is deducted now either — the quantities are only RESERVED (below, after the
+  // price check); src/fulfilment.js deducts once when the admin marks the order delivered.
+  const onDelivery = !onApproval && cfg.stockPolicy === 'on_delivery';
+  if (onApproval || onDelivery) {
+    for (const d of inv.deductions) { d.applied = false; d.skippedReason = d.skippedReason || (onApproval ? 'AWAITING_APPROVAL' : 'AWAITING_DELIVERY'); }
     inv.writes.length = 0;
   }
   const pricing = computeServerPricing(inv.lineInfo, v.addressMeta, v.shippingMethodId);
@@ -54,6 +58,20 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     if (problems.length) {
       log('order.price_rejected', { orderId: v.id, mode, problems });
       return { ok: false, conflict: false, priceRejected: { problems, serverPricing } };
+    }
+  }
+  // on_delivery: reserve against stock - (already reserved). Refused BEFORE any write when a line needs more than is
+  // available — two orders racing for the last piece: the reservation documents carry their read version as a
+  // precondition, so only one commit succeeds; the other re-reads (createOrder retry) and is refused here.
+  let reservation = null;
+  let reservationDocs = null;
+  if (onDelivery) {
+    const resDocs = await fs.batchGet(productIds.map((pid) => `stockReservations/${pid}`));
+    reservationDocs = new Map(productIds.map((pid, i) => [pid, resDocs[i]]));
+    reservation = planReservation(lines, products, reservationDocs);
+    if (reservation.shortfalls.length) {
+      log('order.out_of_stock', { orderId: v.id, mode, lines: reservation.shortfalls.length });
+      return { ok: false, conflict: false, outOfStock: reservation.shortfalls };
     }
   }
   const workerCheck = { version: WORKER_VERSION, mode, serverPricing, priceMismatch, warnings };
@@ -87,7 +105,20 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     //   on_creation: deducted (or not, see stockDeductions) right here, as before;
     //   on_approval: nothing deducted; src/approval.js deducts exactly once when an admin accepts.
     // Ledgers written before this field existed are treated as on_creation (legacy: never deducted again).
-    stockPolicy: onApproval ? 'on_approval' : 'on_creation',
+    //   on_delivery: reserved here (reservations / inventory); src/fulfilment.js deducts once on delivery.
+    stockPolicy: onApproval ? 'on_approval' : onDelivery ? 'on_delivery' : 'on_creation',
+    ...(onDelivery
+      ? {
+          // the server-validated lines the delivery will deduct (never re-read from the browser-written order)
+          orderLines: inv.lineInfo.map((l) => ({
+            index: l.index, productId: l.productId, variantId: l.variantId ?? null, quantity: l.quantity,
+            unitPrice: l.serverUnitPrice, productName: l.productName, variantLabel: l.variantLabel,
+          })),
+          reservations: reservation.reservations,
+          reservationWarnings: reservation.warnings,
+          inventory: reservation.reservations.length ? 'reserved' : 'none',
+        }
+      : {}),
     ...(onApproval
       ? {
           decision: 'pending',
@@ -149,6 +180,9 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
       // shown in the admin dashboard / used by the Firestore rules: a Telegram-approval order is decided ONLY by
       // the Worker (written by the service account; the browser can never set or change it)
       ...(onApproval ? { approval: { policy: 'telegram', state: 'pending' } } : {}),
+      // shown in the admin dashboard / used by the Firestore rules: the status of an on_delivery order is changed
+      // ONLY through the Worker (POST /admin/orders/:id/status), so the stock moves exactly once
+      ...(onDelivery ? { inventory: { policy: 'on_delivery', state: ledger.inventory } } : {}),
     };
     writes.push({
       update: { name: fs.name(orderPath), fields: encodeFields(order) },
@@ -160,7 +194,9 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     });
   } else {
     // adopted / reconciled: never rewrite the browser's fields — only attach the server check.
-    const extra = onApproval ? { approval: { policy: 'telegram', state: 'pending' } } : {};
+    const extra = onApproval
+      ? { approval: { policy: 'telegram', state: 'pending' } }
+      : onDelivery ? { inventory: { policy: 'on_delivery', state: ledger.inventory } } : {};
     writes.push({
       update: { name: fs.name(orderPath), fields: encodeFields({ workerCheck, ...extra }) },
       updateMask: { fieldPaths: ['workerCheck', ...Object.keys(extra)] },
@@ -175,6 +211,7 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
       currentDocument: { updateTime: w.updateTime },
     });
   }
+  if (onDelivery) writes.push(...reservationWrites(fs, reservation.reservations, reservationDocs, +1).writes);
 
   const r = await fs.commit(writes);
   if (r.ok) {
@@ -294,6 +331,12 @@ export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {
         status: 422,
         body: { ok: false, code: 'PRICE_CHANGED', problems: r.priceRejected.problems, serverPricing: { subtotal: sp.subtotal, discount: sp.discount, shipping: sp.shipping, total: sp.total, lines: sp.lines.map((l) => ({ index: l.index, unitPrice: l.unitPrice })) } },
       };
+    }
+    // on_delivery: not enough stock left after the other open orders' reservations. Nothing was written (422, like
+    // PRICE_CHANGED: the storefront shows "out of stock" and keeps the cart). Only line indexes and the quantity still
+    // available are returned.
+    if (r.outOfStock) {
+      return { status: 422, body: { ok: false, code: 'OUT_OF_STOCK', lines: r.outOfStock.map((s) => ({ index: s.index, available: s.available })) } };
     }
     if (!r.conflict) return { status: 503, body: { ok: false, code: 'RETRY_LATER' } };
     await sleep(40 * (attempt + 1) + Math.floor(Math.random() * 40));

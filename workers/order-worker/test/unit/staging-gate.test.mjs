@@ -312,9 +312,8 @@ const PRODUCTION = {
   TURNSTILE_SECRET: '0x4AAAAAAAREALLOOKINGSECRET',
   PRICE_CHECK_MODE: 'enforce', // production launch requirement (config.js)
   TURNSTILE_MODE: 'enforce',
-  // production launch requirement (config.js): Telegram approval, complete (FAKE values)
-  APPROVAL_MODE: 'telegram', STOCK_MODE: 'apply', TELEGRAM_BOT_TOKEN: 'fake-bot-token', TELEGRAM_CHAT_ID: '-1001234567890',
-  TELEGRAM_WEBHOOK_SECRET: 'f'.repeat(40), TELEGRAM_ADMIN_USER_IDS: '123456789',
+  // production launch requirement (config.js): stock deducted on delivery (FAKE values)
+  STOCK_POLICY: 'on_delivery', STOCK_MODE: 'apply', TELEGRAM_BOT_TOKEN: 'fake-bot-token', TELEGRAM_CHAT_ID: '-1001234567890',
 };
 
 test('production: no gate (same behaviour as before), and a production Worker carrying STAGING_ACCESS_TOKEN is refused', async () => {

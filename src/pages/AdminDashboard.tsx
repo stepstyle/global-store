@@ -38,7 +38,8 @@ import SEO from '../components/SEO';
 import LazyImage from '../components/LazyImage';
 import { isFirebaseInitialized, setFirebaseConfig, removeFirebaseConfig } from '../services/firebase';
 import { uploadToCloudinary } from '../services/cloudinary';
-import { IS_LIVE } from '../config/deployEnv';
+import { IS_LIVE, BACKEND_ENABLED } from '../config/deployEnv';
+import { isWorkerManaged, inventoryState, INVENTORY_LABEL_AR, canCancel, deleteBlockedReason, changeStatusViaWorker, type StatusFailure } from '../services/adminOrders';
 
 const PAGE_SIZE = 100;
 
@@ -211,8 +212,8 @@ const AdminDashboard: React.FC = () => {
   const [newOrdersCount, setNewOrdersCount] = useState(0);
   const prevNewIdsRef = useRef<Set<string>>(new Set());
   const initializedRef = useRef(false);
-  // order id -> Telegram approval state seen in the previous snapshot (null until the first snapshot)
-  const approvalStatesRef = useRef<Map<string, string> | null>(null);
+  // order id -> inventory state (stock on delivery) seen in the previous snapshot (null until the first snapshot)
+  const inventoryStatesRef = useRef<Map<string, string> | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -374,15 +375,15 @@ const AdminDashboard: React.FC = () => {
 
           prevNewIdsRef.current = current;
 
-          // Telegram approval: accept deducts / cancel restores stock in the Worker. The product list is loaded once, so
-          // reload it when a decision that moved stock arrives, and the dashboard shows the new stock without a page reload.
+          // Stock on delivery: the Worker deducts on delivery / puts back on a return. The product list is loaded once,
+          // so reload it when such a change arrives (also one made in another tab or by another admin).
           const states = new Map<string, string>(
-            sorted.filter((o: any) => o?.approval?.policy === 'telegram').map((o: any) => [String(o.id), String(o.approval?.state || '')])
+            sorted.filter((o: any) => isWorkerManaged(o)).map((o: any) => [String(o.id), String(inventoryState(o) || '')])
           );
-          const before = approvalStatesRef.current;
-          approvalStatesRef.current = states;
+          const before = inventoryStatesRef.current;
+          inventoryStatesRef.current = states;
           if (before) {
-            const moved = [...states].some(([id, st]) => (st === 'accepted' || st === 'cancelled') && before.get(id) !== st);
+            const moved = [...states].some(([id, st]) => (st === 'deducted' || st === 'restocked') && before.get(id) !== st);
             if (moved) refreshProducts?.().catch?.(() => {});
           }
         },
@@ -449,7 +450,8 @@ const AdminDashboard: React.FC = () => {
       const exists = products.some((p: any) => p.id === safeProduct.id);
 
       if (exists) {
-        await updateProduct(safeProduct);
+        // baseline = the product the editor was opened with (stock changed meanwhile is kept, see stockMerge.ts)
+        await updateProduct(safeProduct, editingProduct ?? products.find((p: any) => p.id === safeProduct.id) ?? null);
         showToast(t('updated') ?? 'تم تحديث المنتج', 'success');
       } else {
         await addProducts([safeProduct]);
@@ -468,27 +470,47 @@ const AdminDashboard: React.FC = () => {
   const handleUpdateOrderStatus = async (id: string, newStatus: any) => {
     const actionNames: any = { processing: 'قبول الطلب', shipped: 'شحن الطلب', delivered: 'تسليم الطلب', cancelled: 'إلغاء الطلب' };
 
-    // Telegram-approval orders (set by the order Worker): accept / reject / cancel happen in Telegram so the stock is
-    // deducted or returned exactly once. The Firestore rules enforce the same; this only explains it up front.
-    const approval: any = (orders.find((o: any) => o.id === id) as any)?.approval;
-    if (approval?.policy === 'telegram') {
-      if (approval.state === 'pending') {
-        showToast('هذا الطلب بانتظار قرار تيليجرام (قبول/رفض) — لا يُغيَّر من هنا حتى لا يتجاوز خصم المخزون.', 'error');
-        return;
-      }
-      if (approval.state !== 'accepted' || !['processing', 'shipped', 'delivered'].includes(newStatus)) {
-        showToast('إلغاء طلب مقبول يتم من رسالة تيليجرام (إلغاء الطلب) حتى يُعاد المخزون مرة واحدة.', 'error');
-        return;
-      }
+    // Orders of the order Worker with stock on DELIVERY: the status (and the stock) change ONLY through the Worker,
+    // in one atomic step — delivered deducts once, cancelled releases the reservation, a return puts the stock back
+    // once after an explicit confirmation. The Firestore rules refuse a direct status write for these orders.
+    const current: any = orders.find((o: any) => o.id === id) || (orderDetailsModal.order as any);
+    const viaWorker = isWorkerManaged(current);
+    const currentStatus = String(current?.status || '').toLowerCase();
+    let confirmReturn = false;
+
+    if (viaWorker && newStatus === 'cancelled' && currentStatus === 'delivered') {
+      // a return: the stock is put back ONLY when the goods really came back
+      if (!window.confirm('إلغاء طلب تم تسليمه = إرجاع.\n\nهل استُرجعت المنتجات فعليًا وهي صالحة للبيع؟\n\nموافق: نعم — ألغِ الطلب وأعِد الكميات إلى المخزون.\nإلغاء: لا — لا تغيّر شيئًا.')) return;
+      confirmReturn = true;
+    } else {
+      const note = viaWorker && newStatus === 'delivered' ? '\n\nسيُخصم المخزون الآن (مرة واحدة فقط).' : viaWorker && newStatus === 'cancelled' ? '\n\nسيُفك حجز الكمية ولن يُخصم شيء من المخزون.' : '';
+      // تأكيد قبل العملية لتجنب الخطأ
+      if (!window.confirm(`هل أنت متأكد من ${actionNames[newStatus] || newStatus}؟${note}`)) return;
     }
 
-    // تأكيد قبل العملية لتجنب الخطأ
-    if (!window.confirm(`هل أنت متأكد من ${actionNames[newStatus] || newStatus}؟`)) return;
-
     setProcessingOrderId(id); // تشغيل التحميل
+    let newInventory: string | null = null;
     try {
-      await db.orders.updateStatus(id, newStatus);
-      
+      if (viaWorker) {
+        const r = await changeStatusViaWorker(BACKEND_ENABLED ? String(import.meta.env.VITE_WORKER_URL || '') : '', id, newStatus, { confirmReturn }, {
+          fetch: (url, init) => window.fetch(url, init as RequestInit) as any,
+          getIdToken: async (refresh) => (await getFirebaseAuth()?.currentUser?.getIdToken(refresh)) ?? null,
+        });
+        if (!r.ok) {
+          const f = r as StatusFailure;
+          const detail = f.problems?.length
+            ? `\n${f.problems.map((p) => `• ${(current?.items?.[p.index]?.name) || p.productId || `#${p.index + 1}`}: المتوفر ${p.available}، المطلوب ${p.requested}`).join('\n')}`
+            : '';
+          showToast(`${f.messageAr}${detail}`, 'error');
+          return;
+        }
+        // the stock just moved: reload the product list so the dashboard shows it
+        if (r.inventory === 'deducted' || r.inventory === 'restocked') refreshProducts?.().catch?.(() => {});
+        newInventory = r.inventory;
+      } else {
+        await db.orders.updateStatus(id, newStatus);
+      }
+
       // تحديث النافذة المنبثقة إذا كانت مفتوحة
       setOrderDetailsModal((prev) => {
         if (!prev.order || (prev.order as any).id !== id) return prev;
@@ -499,6 +521,7 @@ const AdminDashboard: React.FC = () => {
             status: newStatus,
             updatedAt: new Date().toISOString(),
             seenByAdmin: true,
+            ...(newInventory ? { inventory: { policy: 'on_delivery', state: newInventory } } : {}),
           },
         };
       });
@@ -549,6 +572,12 @@ const AdminDashboard: React.FC = () => {
 
   // 🚀 [تعديل 2]: إضافة دالة حذف الطلب الاحترافية والآمنة
   const handleDeleteOrder = async (id: string) => {
+    // a Worker order whose quantity is still reserved: deleting it would keep the stock blocked forever
+    const blocked = deleteBlockedReason(orders.find((o: any) => o.id === id) as any);
+    if (blocked) {
+      showToast(blocked, 'error');
+      return;
+    }
     if (!window.confirm('⚠️ تحذير خطير: هل أنت متأكد من حذف هذا الطلب نهائياً؟\n\nلا يمكن التراجع عن هذه الخطوة!')) return;
 
     setProcessingOrderId(id); // تشغيل التحميل
@@ -1585,8 +1614,15 @@ const AdminDashboard: React.FC = () => {
                 {selectedOrderStatus === 'shipped' && (
                   <Button disabled={processingOrderId === selectedOrder.id} onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'delivered')}>تم التسليم</Button>
                 )}
-                {selectedOrderStatus !== 'delivered' && selectedOrderStatus !== 'cancelled' && (
-                  <Button disabled={processingOrderId === selectedOrder.id} variant="outline" onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'cancelled')} className="border-red-200 text-red-600 hover:bg-red-50">إلغاء الطلب</Button>
+                {canCancel(selectedOrder) && (
+                  <Button disabled={processingOrderId === selectedOrder.id} variant="outline" onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'cancelled')} className="border-red-200 text-red-600 hover:bg-red-50">
+                    {selectedOrderStatus === 'delivered' ? 'إلغاء الطلب (إرجاع المنتجات)' : 'إلغاء الطلب'}
+                  </Button>
+                )}
+                {inventoryState(selectedOrder) && (
+                  <span data-testid="order-inventory-state" className="text-xs font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
+                    المخزون: {INVENTORY_LABEL_AR[inventoryState(selectedOrder)!]}
+                  </span>
                 )}
                 
                 {/* زر حذف الطلب من داخل التفاصيل */}

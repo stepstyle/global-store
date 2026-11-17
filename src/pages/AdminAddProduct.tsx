@@ -575,7 +575,8 @@ const AdminAddProduct: React.FC = () => {
         await addProducts([mergedProduct]);
         showToast(t('created') ?? 'تم إضافة المنتج', 'success');
       } else {
-        await updateProduct(mergedProduct);
+        // baseline = the product this page was opened with: stock the admin did not touch keeps its current value
+        await updateProduct(mergedProduct, editingProductData);
         showToast(t('updated') ?? 'تم تحديث المنتج', 'success');
       }
       
