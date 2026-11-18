@@ -22,6 +22,9 @@ export const MATCH_LABELS = Object.freeze({ exact: 'مطابق للنوع الم
 export const INFERRED_CAVEAT = 'اقتراح تقريبي من فهم المساعد الذكي لطلبك — لم تذكر هذا النوع صراحة، تأكد من مناسبته';
 export const INSUFFICIENT_AGE = 'المعلومات غير كافية: العمر المناسب غير مذكور في بيانات المنتج';
 export const INSUFFICIENT_STOCK = 'المعلومات غير كافية: التوفر غير مسجل في بيانات المنتج';
+export const INSUFFICIENT_SAFETY = 'المعلومات غير كافية: خلوّه من القطع الصغيرة غير مؤكد من بيانات العبوة';
+/** below this age a product needs a confirmed "no small parts" (choking hazard) */
+export const SMALL_PARTS_AGE = 3;
 const LEVEL_RANK = { exact: 0, fits: 1, alternative: 2, inferred: 3 } as const;
 
 const W = { exact: 100, fits: 60, alternative: 30, inferred: 20, keyword: 8, edu: 20, age: 15, budget: 8, gift: 6, recipient: 6, offer: 15, rating: 2, nameExact: 10, hint: 4 };
@@ -29,14 +32,15 @@ const W = { exact: 100, fits: 60, alternative: 30, inferred: 20, keyword: 8, edu
 const fmtJod = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(2).replace(/0$/, '')} دينار`;
 
 export function formatAge(min: number, max: number): string {
-  const y = (n: number) => (n === 1 ? 'سنة' : n === 2 ? 'سنتين' : n <= 10 ? `${n} سنوات` : `${n} سنة`);
-  if (max < 1) return `حتى ${Math.round(max * 12)} أشهر`;
+  const y = (n: number) => (n < 1 ? `${Math.round(n * 12)} أشهر` : n === 1 ? 'سنة' : n === 2 ? 'سنتين' : n <= 10 ? `${n} سنوات` : `${n} سنة`);
+  if (max < 1) return min > 0 ? `من ${Math.round(min * 12)} إلى ${Math.round(max * 12)} شهرًا` : `حتى ${Math.round(max * 12)} أشهر`;
   if (max >= 99) return `من ${y(min)} فما فوق`;
-  if (min === max) return min === 2 ? 'سنتين' : y(min);
+  if (min === max) return min === 1.5 ? 'سنة ونص' : min === 2.5 ? 'سنتين ونص' : min === 2 ? 'سنتين' : y(min);
+  if (min < 1) return `من ${y(min)} إلى ${y(max)}`;
   return `من ${min} إلى ${max} ${max <= 10 ? 'سنوات' : 'سنة'}`;
 }
 
-const SOURCE_AR = { category: 'القسم', subCategory: 'التصنيف الفرعي', tags: 'الوسوم', name: 'اسم المنتج', description: 'وصف المنتج', age: 'العمر' } as const;
+const SOURCE_AR = { category: 'القسم', subCategory: 'التصنيف الفرعي', tags: 'الوسوم', name: 'اسم المنتج', description: 'وصف المنتج', age: 'العمر', verified: 'بيانات العبوة المعتمدة' } as const;
 const labelOf = (c: string) => CATEGORY_LABEL_AR[c as DiscoveryCategory] ?? c;
 
 /** "0-3" is too wide for a safe recommendation (a newborn and a 3-year-old need different products). */
@@ -173,13 +177,22 @@ export function rankCatalog(intent: DiscoveryIntent, items: readonly CatalogItem
     }
     if (intent.budget?.min != null && it.price < intent.budget.min - 1e-9) { excluded.underBudget++; continue; }
     if (ageReq) {
+      // young children: the product must already be suitable at the YOUNGEST age asked (not merely overlap)
+      const top = young ? ageReq.min : ageReq.max;
+      const fits = (a: { min: number; max: number }) => a.max >= ageReq.min && a.min <= top;
+      // an age written in the product text can only keep a product AWAY (a "3+" toy never goes to a 1-year-old)
+      if (it.ageClaim && !fits(it.ageClaim)) { excluded.ageMismatch++; continue; }
       if (it.age) {
-        // young children: the product must already be suitable at the YOUNGEST age asked (not merely overlap)
-        const ok = it.age.max >= ageReq.min && it.age.min <= (young ? ageReq.min : ageReq.max);
-        if (!ok) { excluded.ageMismatch++; continue; }
+        if (!fits(it.age)) { excluded.ageMismatch++; continue; }
       } else if (young || it.categories.some((c) => AGE_CRITICAL_CATEGORIES.includes(c as DiscoveryCategory))) {
-        // cannot be confirmed from the store data -> never presented as suitable
+        // no approved age -> never presented as suitable (text ages are not proof)
         noteUnconfirmed(INSUFFICIENT_AGE);
+        continue;
+      }
+      // under 3: "no small parts" must be confirmed from the packaging data — never inferred from a name or picture
+      if (ageReq.min < SMALL_PARTS_AGE && it.smallParts !== 'no') {
+        if (it.smallParts === 'yes') excluded.ageMismatch++;
+        else noteUnconfirmed(INSUFFICIENT_SAFETY);
         continue;
       }
     }
@@ -203,6 +216,7 @@ export function rankCatalog(intent: DiscoveryIntent, items: readonly CatalogItem
     }
     if (intent.educational && eduHit) { score += W.edu; reasons.push(`تعليمي حسب ${SOURCE_AR[it.educational!.source]}`); }
     if (ageReq && it.age) { score += W.age; reasons.push(`مناسب لعمر ${formatAge(it.age.min, it.age.max)} حسب ${SOURCE_AR[it.age.source]}`); }
+    const ageLabel = it.age ? formatAge(it.age.min, it.age.max) : null;
     if (intent.budget) {
       if (maxBudget !== null && it.price > maxBudget) { score += 2; caveats.push(`سعره ${fmtJod(it.price)}، أعلى قليلًا من ميزانيتك (${fmtJod(maxBudget)})`); }
       else { score += W.budget; reasons.push(`سعره ${fmtJod(it.price)} ضمن ميزانيتك`); }
@@ -237,7 +251,7 @@ export function rankCatalog(intent: DiscoveryIntent, items: readonly CatalogItem
 
     candidates.push({
       id: it.id, name: it.name, nameEn: it.nameEn, image: it.image, price: it.price, originalPrice: it.originalPrice, category: it.category,
-      matchLevel: level, matchLabel: MATCH_LABELS[level], forNeed: need?.label ?? null, needKey: need?.key ?? null,
+      matchLevel: level, matchLabel: MATCH_LABELS[level], ageLabel, forNeed: need?.label ?? null, needKey: need?.key ?? null,
       score: Math.round(score * 100) / 100, reasons, missing, caveats,
     });
   }

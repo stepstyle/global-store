@@ -4,6 +4,8 @@ import { Sparkles, ArrowRight, ArrowLeft, RefreshCcw, Search, Baby, User, Users,
 import { useNavigate } from 'react-router-dom';
 // The SAME discovery engine as the free-text search (src/services/discovery): store data only, deterministic order.
 import { discoverWithIntent, giftFinderIntent } from '../services/discovery/index.ts';
+import { PRODUCT_AGES } from '../services/productAges';
+import { STORE_WHATSAPP_URL } from '../config/contact';
 
 interface Product {
   id: string;
@@ -62,7 +64,7 @@ const SmartFinder: React.FC<SmartFinderProps> = ({ products, L, isRtl }) => {
   // out-of-stock never recommended, missing data said plainly.
   const discovery = useMemo(() => {
     if (step !== 'result') return null;
-    return discoverWithIntent(giftFinderIntent(answers), products, { limit: 6 });
+    return discoverWithIntent(giftFinderIntent(answers), products, { limit: 6, ages: PRODUCT_AGES });
   }, [answers, products, step]);
   const recommendedProducts = discovery?.results ?? [];
   return (
@@ -225,7 +227,6 @@ const SmartFinder: React.FC<SmartFinderProps> = ({ products, L, isRtl }) => {
                               {/* why it is suggested — every line comes from the product's store data */}
                               <p className="text-[11px] text-slate-500 mt-1 line-clamp-2" data-role="reasons">{p.reasons.slice(0, 2).join(' · ')}</p>
                               {p.caveats.map((c) => <p key={c} className="text-[11px] text-amber-700 mt-0.5" data-role="caveat">{c}</p>)}
-                              {p.missing.map((m) => <p key={m} className="text-[11px] text-slate-400 mt-0.5" data-role="missing">{m}</p>)}
                             </div>
                             <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors shrink-0">
                               <ArrowRight size={18} className="rtl:rotate-180" />
@@ -234,16 +235,11 @@ const SmartFinder: React.FC<SmartFinderProps> = ({ products, L, isRtl }) => {
                         ))}
                       </div>
 
-                      {discovery && discovery.unavailable.length > 0 && (
-                        <p data-testid="finder-unavailable" className="mt-4 text-xs text-slate-500 font-bold">
-                          {L('مناسب لكن غير متوفر حاليًا: ', 'Matching but out of stock: ')}{discovery.unavailable.map((u) => u.name).join('، ')}
-                        </p>
-                      )}
-                      {discovery && discovery.unconfirmed.length > 0 && (
-                        <p data-testid="finder-unconfirmed" className="mt-2 text-xs text-slate-400 font-bold">
-                          {L('لم نقترحها لأن بيانات المتجر لا تؤكد مناسبتها (المعلومات غير كافية): ', 'Not suggested — the store data does not confirm they suit (insufficient information): ')}
-                          {discovery.unconfirmed.map((u) => u.name).join('، ')}
-                        </p>
+                      {/* out-of-stock / unconfirmed products are never listed to the customer; WhatsApp instead */}
+                      {discovery?.suggestWhatsApp && (
+                        <a href={STORE_WHATSAPP_URL} target="_blank" rel="noopener noreferrer" data-testid="finder-whatsapp" className="mt-4 w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center justify-center gap-2 transition-colors">
+                          {L('اسألنا على واتساب', 'Ask us on WhatsApp')}
+                        </a>
                       )}
 
                       <button onClick={() => setStep('who')} className="mt-6 w-full py-4 text-slate-500 hover:bg-slate-100 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors">

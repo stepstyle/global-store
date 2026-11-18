@@ -99,8 +99,15 @@ export interface CatalogItem {
   originalPrice: number | null;
   /** 'in' / 'out' from stock fields; 'unknown' when the store has no stock number */
   stock: 'in' | 'out' | 'unknown';
-  /** age range found in the store data, with where it was found */
-  age: { min: number; max: number; source: 'subCategory' | 'tags' | 'name' | 'description' } | null;
+  /**
+   * CONFIRMED age range: approved by the owner (src/data/productAges.json -> 'verified') or the store's own age
+   * sub-category. Only this can make a product suitable for an asked age.
+   */
+  age: { min: number; max: number; source: 'verified' | 'subCategory' } | null;
+  /** age written in the product text (often a marketing guess): may only EXCLUDE a product, never recommend it */
+  ageClaim: { min: number; max: number; source: 'tags' | 'name' | 'description' } | null;
+  /** small parts per the approved packaging data; a text warning gives 'yes'; otherwise 'unknown' */
+  smallParts: 'yes' | 'no' | 'unknown';
   educational: { source: 'category' | 'subCategory' | 'tags' | 'name' | 'description' } | null;
   /** evidence in the store data that the product is made for children (category, slug, words, or a child age range) */
   forChildren: { source: 'category' | 'subCategory' | 'tags' | 'name' | 'description' | 'age' } | null;
@@ -128,6 +135,8 @@ export interface DiscoveryResult {
    */
   matchLevel: 'exact' | 'fits' | 'alternative' | 'inferred';
   matchLabel: string;
+  /** confirmed age, for the customer card ("من 3 سنوات فما فوق"); null when the product has no approved age */
+  ageLabel: string | null;
   /** which asked type it answers ("دفاتر" / "أقلام") when the request names several */
   forNeed: string | null;
   /** INTERNAL ordering score (heuristic, not a probability) — never show it as accuracy */
@@ -173,13 +182,15 @@ export interface DiscoveryResponse {
   results: DiscoveryResult[];
   /** matching products that are out of stock — listed, never recommended */
   unavailable: UnavailableMatch[];
-  /** relevant products whose age suitability / availability is not confirmed by the store data — never recommended */
+  /** relevant products whose age suitability / availability is not confirmed by the store data — never recommended, internal only */
   unconfirmed: UnconfirmedMatch[];
   /** one question when the request is too open to recommend safely (e.g. "0-3 years", a gift for an adult) */
   clarification: { question: string; options: string[] } | null;
   /** per asked product type, how many recommendations answer it ("دفتر وقلم") */
   needs: NeedCoverage[];
   excluded: { overBudget: number; underBudget: number; ageMismatch: number; outOfStock: number; noPrice: number; negated: number; notForRecipient: number; unconfirmed: number };
+  /** nothing confirmed to recommend: the customer is offered WhatsApp to ask the store */
+  suggestWhatsApp: boolean;
   engine: 'local' | 'ai+local';
   /** set when an AI provider was configured but not used (error / timeout / invalid output) */
   aiFallbackReason: string | null;

@@ -22,6 +22,9 @@
     "test:attempt-recovery": "node --test tests/unit/attemptRecovery.test.mjs",
     "test:toast-queue": "node --test tests/unit/toastQueue.test.mjs",
     "test:ai-discovery": "node --test tests/unit/aiDiscovery.test.mjs",
+    "test:shop-assistant": "node --test tests/unit/shopAssistant.test.mjs",
+    "ages:review": "node scripts/product-ages.mjs review",
+    "ages:apply": "node scripts/product-ages.mjs apply",
     "test:ai-discovery-worker": "node --test workers/ai-discovery/test/ai-intent.test.mjs",
     "test:dev-rules": "firebase emulators:exec --only firestore,auth --project demo-dairsharaf-dev --config firebase/dev-emulator.firebase.json \"node --test tools/dev-emulator.rules.test.mjs\""
   },

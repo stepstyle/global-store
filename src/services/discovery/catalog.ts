@@ -1,6 +1,8 @@
 // Store Product -> CatalogItem: only facts present in the store data. Missing data stays null/'unknown', never guessed.
 import { normalizeArabic, tokenize, lightStem } from './arabicText.ts';
 import { CHILD_CATEGORIES, CHILD_SUBCATEGORIES, CHILD_WORDS } from './lexicon.ts';
+import { smallPartsWarningInText } from './ageRegistry.ts';
+import type { AgeRegistry } from './ageRegistry.ts';
 import type { CatalogItem } from './types.ts';
 
 /** Store subCategory slugs that carry an age range (constants.ts SUBCATEGORIES.Games). */
@@ -50,7 +52,7 @@ function words(...texts: string[]): Set<string> {
  * Builds the discovery view of one store product. `p` is the store Product shape (src/types.ts) but read defensively:
  * documents loaded from Firestore may miss fields. Returns null for records without an id or a name.
  */
-export function toCatalogItem(p: unknown): CatalogItem | null {
+export function toCatalogItem(p: unknown, ages: AgeRegistry = {}): CatalogItem | null {
   if (!p || typeof p !== 'object') return null;
   const r = p as Record<string, unknown>;
   const id = str(r.id).trim();
@@ -87,18 +89,23 @@ export function toCatalogItem(p: unknown): CatalogItem | null {
   }
   if (originalPrice !== null && (price === null || originalPrice <= price)) originalPrice = null;
 
-  // age: store taxonomy first, then text fields (tags may use bare "6+")
+  // CONFIRMED age: the owner-approved registry, else the store's own age sub-category. Nothing else.
   let age: CatalogItem['age'] = null;
-  if (subCategory && AGE_SUBCATEGORIES[subCategory]) {
+  const approved = Object.prototype.hasOwnProperty.call(ages, id) ? ages[id] : undefined;
+  if (approved) age = { min: approved.minYears, max: approved.maxYears ?? OPEN_MAX, source: 'verified' };
+  else if (subCategory && AGE_SUBCATEGORIES[subCategory]) {
     const [a, b] = AGE_SUBCATEGORIES[subCategory];
     age = { min: a, max: b, source: 'subCategory' };
-  } else {
-    const fromTags = ageFromText(normalizeArabic(tags.join(' ')), true);
-    const fromName = fromTags ? null : ageFromText(normalizeArabic(`${name} ${nameEn}`), false);
-    const fromDesc = fromTags || fromName ? null : ageFromText(normalizeArabic(description), false);
-    const found = fromTags ?? fromName ?? fromDesc;
-    if (found) age = { min: found[0], max: found[1], source: fromTags ? 'tags' : fromName ? 'name' : 'description' };
   }
+  // age written in the text (tags may use bare "6+"): an exclusion signal only
+  const fromTags = ageFromText(normalizeArabic(tags.join(' ')), true);
+  const fromName = fromTags ? null : ageFromText(normalizeArabic(`${name} ${nameEn}`), false);
+  const fromDesc = fromTags || fromName ? null : ageFromText(normalizeArabic(`${description} ${str(r.descriptionEn)}`), false);
+  const claim = fromTags ?? fromName ?? fromDesc;
+  const ageClaim: CatalogItem['ageClaim'] = claim ? { min: claim[0], max: claim[1], source: fromTags ? 'tags' : fromName ? 'name' : 'description' } : null;
+  const smallParts: CatalogItem['smallParts'] = approved
+    ? approved.smallParts
+    : smallPartsWarningInText(normalizeArabic(`${name} ${nameEn} ${tags.join(' ')} ${description} ${str(r.descriptionEn)}`).toLowerCase()) ? 'yes' : 'unknown';
 
   // educational evidence
   const category = str(r.category);
@@ -116,7 +123,7 @@ export function toCatalogItem(p: unknown): CatalogItem | null {
   let forChildren: CatalogItem['forChildren'] = null;
   if (categories.some((c) => (CHILD_CATEGORIES as readonly string[]).includes(c))) forChildren = { source: 'category' };
   else if (subCategory && CHILD_SUBCATEGORIES.includes(subCategory)) forChildren = { source: 'subCategory' };
-  else if (age && age.max < 13) forChildren = { source: 'age' };
+  else if ((age && age.max < 13) || (ageClaim && ageClaim.max < 13)) forChildren = { source: 'age' };
   else if (hasChildWord(tags.join(' '))) forChildren = { source: 'tags' };
   else if (hasChildWord(`${name} ${nameEn}`)) forChildren = { source: 'name' };
   else if (hasChildWord(description)) forChildren = { source: 'description' };
@@ -136,6 +143,8 @@ export function toCatalogItem(p: unknown): CatalogItem | null {
     originalPrice,
     stock,
     age,
+    ageClaim,
+    smallParts,
     educational,
     forChildren,
     ratingAvg,
@@ -146,11 +155,11 @@ export function toCatalogItem(p: unknown): CatalogItem | null {
 }
 
 /** Converts a product list; records that cannot be used (no id / name) are skipped and counted. */
-export function buildCatalog(products: readonly unknown[]): { items: CatalogItem[]; skipped: number } {
+export function buildCatalog(products: readonly unknown[], ages: AgeRegistry = {}): { items: CatalogItem[]; skipped: number } {
   const items: CatalogItem[] = [];
   let skipped = 0;
   for (const p of Array.isArray(products) ? products : []) {
-    const it = toCatalogItem(p);
+    const it = toCatalogItem(p, ages);
     if (it) items.push(it);
     else skipped++;
   }

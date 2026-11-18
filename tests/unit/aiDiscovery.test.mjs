@@ -7,8 +7,19 @@ import { normalizeArabic, numberWordsToDigits } from '../../src/services/discove
 import { parseDiscoveryQuery, DiscoveryInputError, MAX_QUERY_LENGTH, numbersInContext } from '../../src/services/discovery/intent.ts';
 import { toCatalogItem, buildCatalog } from '../../src/services/discovery/catalog.ts';
 import { STORE_CATEGORIES, SUBCATEGORY_LABEL_AR, CATEGORY_TERMS } from '../../src/services/discovery/lexicon.ts';
-import { discoverProductsLocal, discoverProducts, createRemoteIntentProvider, sanitizeProviderIntent, discoverWithIntent, giftFinderIntent } from '../../src/services/discovery/index.ts';
+import { discoverProductsLocal as rawLocal, discoverProducts as rawDiscover, createRemoteIntentProvider, sanitizeProviderIntent, discoverWithIntent as rawWithIntent, giftFinderIntent, validateAgeRegistry } from '../../src/services/discovery/index.ts';
 import { MOCK_PRODUCTS } from '../fixtures/discoveryCatalog.mjs';
+
+// Ages are recommended only from the OWNER-APPROVED registry (src/data/productAges.json). For these tests the mock
+// products' written ages stand in for approved packaging data ("no small parts" unless the text warns), so the
+// ranking rules below are exercised with confirmed ages. Without approval, nothing is age-suitable (see the
+// "approved ages only" tests at the end).
+const FIXTURE_AGES = validateAgeRegistry({ products: Object.fromEntries(MOCK_PRODUCTS.map((p) => [p.id, toCatalogItem(p)])
+  .filter(([, c]) => c && (c.ageClaim || c.age))
+  .map(([id, c]) => { const a = c.ageClaim ?? c.age; return [id, { minYears: a.min, maxYears: a.max >= 99 ? null : a.max, smallParts: c.smallParts === 'yes' ? 'yes' : 'no', source: 'packaging', approvedBy: 'test', approvedAt: '2026-11-18' }]; })) });
+const discoverProductsLocal = (q, p, o = {}) => rawLocal(q, p, { ages: FIXTURE_AGES, ...o });
+const discoverProducts = (q, p, o = {}) => rawDiscover(q, p, { ages: FIXTURE_AGES, ...o });
+const discoverWithIntent = (i, p, o = {}) => rawWithIntent(i, p, { ages: FIXTURE_AGES, ...o });
 import { REAL_AI_RESPONSES } from '../fixtures/realAiResponses.mjs';
 import { mergeIntent, needsAiHelp, cleanKeywordTokens } from '../../src/services/discovery/index.ts';
 
@@ -99,16 +110,23 @@ test('catalog: price/stock from the cheapest IN-STOCK variant; unknown stock sta
   assert.equal(items.length, MOCK_PRODUCTS.length - 1);
 });
 
-test('catalog: age only from store data, with its source', () => {
-  assert.deepEqual(toCatalogItem(byId['m-math-cards']).age, { min: 6, max: 8, source: 'tags' });
+test('catalog: a confirmed age comes only from the approved registry or the store age sub-category; text is a claim', () => {
+  // text ages are claims (exclusion only), never a confirmed age
+  assert.equal(toCatalogItem(byId['m-math-cards']).age, null);
+  assert.deepEqual(toCatalogItem(byId['m-math-cards']).ageClaim, { min: 6, max: 8, source: 'tags' });
+  assert.deepEqual(toCatalogItem(byId['m-science-kit']).ageClaim, { min: 7, max: 10, source: 'description' });
+  assert.equal(toCatalogItem(byId['m-puzzle-edu']).ageClaim.min, 6);
   assert.deepEqual(toCatalogItem(byId['m-doll']).age, { min: 2, max: 3, source: 'subCategory' });
-  assert.deepEqual(toCatalogItem(byId['m-science-kit']).age, { min: 7, max: 10, source: 'description' });
-  assert.equal(toCatalogItem(byId['m-puzzle-edu']).age.min, 6);
+  // approved -> confirmed, with the approved small-parts flag
+  const ok = toCatalogItem(byId['m-math-cards'], FIXTURE_AGES);
+  assert.deepEqual(ok.age, { min: 6, max: 8, source: 'verified' });
+  assert.equal(ok.smallParts, 'no');
   assert.equal(toCatalogItem(byId['m-car']).age, null);
+  assert.equal(toCatalogItem(byId['m-car']).ageClaim, null);
   assert.equal(toCatalogItem(byId['m-water-colors']).age, null);
   // "100 ورقة" or "24 لون" are not ages
-  assert.equal(toCatalogItem(byId['m-notebook-offer']).age, null);
-  assert.equal(toCatalogItem(byId['m-wood-colors']).age, null);
+  assert.equal(toCatalogItem(byId['m-notebook-offer']).ageClaim, null);
+  assert.equal(toCatalogItem(byId['m-wood-colors']).ageClaim, null);
 });
 
 // ------------------------------------------------------------------ ranking
@@ -147,7 +165,8 @@ test('strict budget: "تحت 10" excludes 18 and 25; the reply explains with the
   const r = discoverProductsLocal('شنطة مدرسية تحت 10 دنانير', MOCK_PRODUCTS);
   assert.equal(r.status, 'no_results');
   assert.equal(r.excluded.overBudget, 2);
-  assert.match(r.message, /أرخصها 18 دينار/);
+  assert.match(r.message, /أقرب خيار مناسب سعره 18 دينار/);
+  assert.equal(r.suggestWhatsApp, true);
 });
 
 test('out of stock: never recommended, listed separately; only-out-of-stock match -> alternatives flagged', () => {
@@ -195,7 +214,7 @@ test('broad request (who/age/budget, no product type): no unrelated lists; age-c
   assert.equal(ids(r)[0], 'm-math-cards');
   for (const x of r.results) {
     assert.ok(x.price <= 10, `${x.id} strict budget`);
-    const it = toCatalogItem(byId[x.id]);
+    const it = toCatalogItem(byId[x.id], FIXTURE_AGES);
     if (!it.age) assert.ok(!['Games', 'EducationalCards', 'Courses'].includes(it.category), `${x.id}: a toy/card/course without age is not recommended`);
   }
 });
@@ -212,7 +231,7 @@ test('no results / needs more info / empty catalog', () => {
   assert.equal(discoverProductsLocal('مرحبا', MOCK_PRODUCTS).status, 'needs_more_info');
   const e = discoverProductsLocal(MAIN, []);
   assert.equal(e.status, 'no_results');
-  assert.match(e.message, /لا توجد منتجات في بيانات المتجر/);
+  assert.match(e.message, /المنتجات مش ظاهرة/);
   assert.equal(discoverProductsLocal(MAIN, null).status, 'no_results'); // bad product list is tolerated
 });
 
@@ -324,7 +343,7 @@ const ACCEPTANCE = [
   { q: MAIN, status: 'ok', first: 'm-math-cards', has: ['m-puzzle-edu'], not: ['m-robot-kit', 'm-no-price', 'm-car', 'm-course'], out: ['m-english-cards'], maxPrice: 13.2 },
   { q: 'بدي اشي لابني عمره سبع سنين ما بدي اكثر من 10 دنانير', status: 'ok', first: 'm-math-cards', not: ['m-baby-rattle', 'm-doll', 'm-puzzle-edu', 'm-car'], maxPrice: 10, outEmpty: true },
   { q: 'ألعاب أقل من 10 دنانير', status: 'ok', has: ['m-baby-rattle', 'm-doll', 'm-car'], not: ['m-puzzle-edu', 'm-no-price'], maxPrice: 10, onlyCats: ['Games'] },
-  { q: 'شنطة مدرسية أقل من 10 دنانير', status: 'no_results', message: /أرخصها 18 دينار/ },
+  { q: 'شنطة مدرسية أقل من 10 دنانير', status: 'no_results', message: /أقرب خيار مناسب سعره 18 دينار/ },
   { q: 'شنطة مدرسة لبنتي صف تالت تحت 20 دينار', status: 'ok', first: 'm-bag-girls', not: ['m-bag-big'], maxPrice: 20 },
   { q: 'بطاقات انجليزي', status: 'ok', not: ['m-english-cards'], out: ['m-english-cards'], allAlternatives: true },
   { q: 'حقيبة ظهر', status: 'ok', not: ['m-backpack'], out: ['m-backpack'], allAlternatives: true },
@@ -337,7 +356,7 @@ const ACCEPTANCE = [
   { q: 'صلصال لطفل 4 سنين', status: 'ok', exactly: ['m-clay'] },
   { q: 'بدي دفتر وقلم', status: 'ok', exactly: ['m-notebook-offer'], unconfirmed: ['m-pens'], needs: ['دفاتر', 'أقلام'] },
   { q: 'مقلمة', status: 'ok', exactly: ['m-pencil-case'] },
-  { q: 'اقلام حبر رخيصة', status: 'no_results', unconfirmed: ['m-pens'], message: /لا تؤكد بيانات المتجر مناسبته/ },
+  { q: 'اقلام حبر رخيصة', status: 'no_results', unconfirmed: ['m-pens'], message: /ما لقيت إشي متوفر ومتأكدين.*واتساب/ },
   { q: 'بازل للصف الاول', status: 'ok', first: 'm-puzzle-edu', not: ['m-baby-rattle', 'm-doll'] },
   { q: 'هدية عيد ميلاد لبنتي 3 سنين بين 5 و 10 دنانير', status: 'ok', has: ['m-doll', 'm-clay'], not: ['m-baby-rattle', 'm-puzzle-edu', 'm-water-colors'], minPrice: 5, maxPrice: 10 },
   { q: 'رجعة المدارس لابني صف خامس', status: 'ok', has: ['m-notebook-offer', 'm-bag-girls'], not: ['m-clay', 'm-wood-colors', 'm-puzzle-edu', 'm-robot-kit'], needs: ['دفاتر', 'أقلام', 'شنط مدرسية'] },
@@ -347,7 +366,7 @@ const ACCEPTANCE = [
   { q: 'بطاقات حروف عربي لطفلة 4 سنين', status: 'ok', first: 'm-arabic-cards', not: ['m-math-cards'] },
   { q: 'بدي تلسكوب فلكي', status: 'no_results' },
   { q: 'مرحبا', status: 'needs_more_info' },
-  { q: 'لعبة بحدود 2 دينار', status: 'no_results', message: /أغلى من ميزانيتك/ },
+  { q: 'لعبة بحدود 2 دينار', status: 'no_results', message: /ما لقيت إشي ضمن ميزانيتك/ },
   { q: 'هدية تخرج لاستاذة', status: 'ok', not: ['m-baby-rattle', 'm-doll', 'm-math-cards', 'm-arabic-cards', 'm-car', 'm-puzzle-edu', 'm-robot-kit', 'm-bag-girls', 'm-bag-big'], maxResults: 3, clarification: true },
 ];
 test(`acceptance: ${ACCEPTANCE.length} customer requests (Arabic + Jordanian; budget, age, gifts, negation, out of stock)`, () => {
@@ -431,7 +450,7 @@ test('gift finder results: real store products, age-compatible, stable order (no
     assert.equal(res.status, 'ok', JSON.stringify(answers));
     const age = intent.age;
     for (const x of res.results) {
-      const it = toCatalogItem(byId[x.id]);
+      const it = toCatalogItem(byId[x.id], FIXTURE_AGES);
       assert.ok(byId[x.id] && x.price === it.price && it.stock !== 'out', x.id);
       assert.ok(belongs(it), `${JSON.stringify(answers)}: ${x.id} does not match the chosen interest`);
       if (it.age) assert.ok(it.age.max >= age.min && it.age.min <= age.max, `${x.id} age`);
@@ -519,8 +538,9 @@ test('quality — stationery types: the named type only; sharing the category is
 test('quality — several products in one request: answered per type, never "one product covers it all"', () => {
   const r = discoverProductsLocal('بدي دفتر وقلم', MOCK_PRODUCTS);
   assert.deepEqual(r.needs.map((n) => [n.label, n.found]), [['دفاتر', 1], ['أقلام', 0]]);
-  assert.match(r.message, /«دفاتر»: 1/);
-  assert.match(r.message, /«أقلام»: لا يوجد منتج مؤكد/);
+  assert.match(r.message, /لقيتلك من «دفاتر»/);
+  assert.match(r.message, /«أقلام» فما لقيت إشي متوفر/);
+  assert.equal(r.suggestWhatsApp, true, 'a missing type -> offer WhatsApp');
   for (const x of r.results) assert.equal(x.forNeed, 'دفاتر');
   const two = discoverProductsLocal('شنطة ومقلمة', MOCK_PRODUCTS);
   assert.deepEqual(two.needs.map((n) => n.label), ['حقائب', 'مقلمة']);
@@ -547,7 +567,7 @@ test('quality — missing age data: a toy/card/course without age is never recom
   for (const q of ['لعبة لطفل 5 سنين', 'هدية تعليمية لطفل عمره 9 سنوات', 'لعبة لبنت 4 سنين']) {
     const r = discoverProductsLocal(q, MOCK_PRODUCTS);
     for (const x of r.results) {
-      const it = toCatalogItem(byId[x.id]);
+      const it = toCatalogItem(byId[x.id], FIXTURE_AGES);
       if (['Games', 'EducationalCards', 'Courses'].includes(it.category)) assert.ok(it.age, `${q}: ${x.id} has no age in the data`);
     }
   }
@@ -664,7 +684,7 @@ test('AI hints never hide suitable products and never bypass safety / age condit
   assert.deepEqual([r3.intent.age.min, r3.intent.age.max], [0, 1], 'AI age does not replace the local one');
   assert.equal(r3.intent.provenance.age, 'local_inferred');
   for (const x of r3.results) {
-    const it = toCatalogItem(byId[x.id]);
+    const it = toCatalogItem(byId[x.id], FIXTURE_AGES);
     assert.ok(it.age && it.age.min <= 0 && it.age.max >= 0, `${x.id}: age confirmed for a baby`);
   }
   assert.ok(!ids(r3).includes('m-car'));

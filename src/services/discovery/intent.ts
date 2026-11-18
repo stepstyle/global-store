@@ -28,7 +28,8 @@ export function validateQuery(raw: unknown): string {
 }
 
 const NUM = '(\\d+(?:\\.\\d+)?)';
-const CUR = '(?:دينار|دنانير|جد|jd|jod|د ا|dinar|dinars)';
+// "ليره / ليرات" = dinar in everyday Jordanian speech ("بخمس ليرات")
+const CUR = '(?:دينار|دنانير|ليره|ليرات|جد|jd|jod|د ا|dinar|dinars)';
 const AGE_UNIT_Y = '(?:سنه|سنوات|سنين|عام|اعوام|سنتين|years?|yrs?|y)';
 const AGE_UNIT_M = '(?:شهر|اشهر|شهور|months?)';
 const END = '(?=\\s|$)';
@@ -78,6 +79,8 @@ const AGE_RULES: readonly { re: RegExp; f: (m: RegExpExecArray) => [number, numb
     { re: new RegExp(`(?:من|بين)?\\s*${NUM}\\s*(?:-|ل|الى|الي|و|to)\\s*${NUM}\\s*${AGE_UNIT_Y}${END}`, 'u'), f: (m) => [Number(m[1]), Number(m[2])] },
     // "7 سنوات" / "سبع سنين" (digits already)
     { re: new RegExp(`${NUM}\\s*${AGE_UNIT_Y}${END}`, 'u'), f: (m) => [Number(m[1]), Number(m[1])] },
+    // "سنه ونص" / "سنتين ونص" (Jordanian "and a half")
+    { re: new RegExp(`(?:^|\\s)(سنه|سنتين)\\s+و\\s*(?:نص|نصف)${END}`, 'u'), f: (m) => (m[1] === 'سنه' ? [1.5, 1.5] : [2.5, 2.5]) },
     // "عمره سنتين" / "سنتين"
     { re: new RegExp(`(?:^|\\s)سنتين${END}`, 'u'), f: () => [2, 2] },
     // "عمره سنه" (= 1)
@@ -124,7 +127,7 @@ function parseAge(text: string, warnings: string[]): { age: AgeIntent | null; re
 /** "مش اقل من 10" / "ما يقل عن 10": a MINIMUM (inclusive), not a maximum */
 const BUDGET_MIN_NEG = ['مش اقل من', 'مو اقل من', 'ما يقل عن', 'ما بيقل عن', 'لا يقل عن', 'ما يقل علي', 'لا يقل علي'];
 /** "اقل من 10" / "تحت 10": strictly below (10 itself is out) */
-const BUDGET_MAX_STRICT = ['اقل من', 'اقل م', 'تحت', 'دون', 'under', 'below', 'less than'];
+const BUDGET_MAX_STRICT = ['اقل من', 'اقل م', 'باقل من', 'باقل م', 'تحت', 'دون', 'under', 'below', 'less than'];
 /** "حتى 10" / "ما يتعدى 10" / "ما يزيد عن 10": at most, 10 included */
 const BUDGET_MAX_INCL = [
   'حتي', 'لحد', 'لغايه', 'اقصي', 'اقصاه', 'بحد اقصي', 'كحد اقصي',
@@ -299,7 +302,7 @@ const SPEC_UNITS: ReadonlySet<string> = new Set(
   ['ورقة', 'ورقه', 'ورق', 'اوراق', 'لون', 'الوان', 'قطعة', 'قطعه', 'قطع', 'صفحة', 'صفحه', 'صفحات', 'سم', 'مم', 'ملم', 'مل', 'لتر', 'غرام', 'جرام',
     'cm', 'mm', 'ml', 'pcs', 'pieces', 'sheets', 'pages', 'colors', 'colours'].map((w) => lightStem(normalizeArabic(w))),
 );
-const CURRENCY_WORDS: ReadonlySet<string> = new Set(['دينار', 'دنانير', 'jd', 'jod', 'قرش', 'قروش', 'فلس', 'ليرة', 'ليره', 'dinar', 'dinars'].map(normalizeArabic));
+const CURRENCY_WORDS: ReadonlySet<string> = new Set(['دينار', 'دنانير', 'jd', 'jod', 'قرش', 'قروش', 'فلس', 'ليرة', 'ليره', 'ليرات', 'dinar', 'dinars'].map(normalizeArabic));
 const PAPER_SIZE = /^a[3-6]$/;
 /** concept words handled by other fields (category, occasion, recipient, educational) — not keywords */
 const CONCEPT_WORDS: ReadonlySet<string> = new Set([
