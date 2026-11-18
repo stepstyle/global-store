@@ -21,7 +21,8 @@ import {
   serverTimestamp,
   runTransaction,
 } from 'firebase/firestore';
-import { mergeStockForSave, StaleStockError } from './stockMerge';
+import { saveProductGuarded } from './stockMerge';
+import { createProductsIfAbsent, ProductExistsError } from './csvImport';
 
 import {
   createUserWithEmailAndPassword,
@@ -308,20 +309,27 @@ export const db = {
 
     // (no browser-side stock deduction exists: the order Worker deducts stock only when an order is delivered)
 
-    add: async (newProducts: Product[]): Promise<Product[]> => {
+    /**
+     * Create products whose id does not exist yet; an existing product is NEVER overwritten (its stock, colours /
+     * sizes, ratings stay as they are). Returns the ids added and the ids that already existed (csvImport.ts).
+     */
+    addNewOnly: async (newProducts: Product[]): Promise<{ added: string[]; existing: string[] }> => {
+      const enriched = newProducts.map(ensureProductSearchFields);
       if (firebaseReady()) {
-        for (const p of newProducts) {
-          const enriched = ensureProductSearchFields(p);
-          const safeProduct = cleanForFirestore(enriched);
-          await setDoc(doc(firestore, 'products', (enriched as any).id), safeProduct as any);
-        }
-        return newProducts.map(ensureProductSearchFields);
+        return createProductsIfAbsent({ runTransaction: runTransaction as any, doc: doc as any }, firestore, enriched as any[], (p) => cleanForFirestore(p));
       }
-
       const products = JSON.parse(localStorage.getItem(KEYS.PRODUCTS) || '[]');
-      const updated = [...products, ...newProducts.map(ensureProductSearchFields)];
-      localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(updated));
-      return updated;
+      const ids = new Set(products.map((p: Product) => String(p.id)));
+      const fresh = enriched.filter((p) => !ids.has(String(p.id)));
+      localStorage.setItem(KEYS.PRODUCTS, JSON.stringify([...products, ...fresh]));
+      return { added: fresh.map((p) => String(p.id)), existing: enriched.filter((p) => ids.has(String(p.id))).map((p) => String(p.id)) };
+    },
+
+    /** "Add product": create-only as well — an id that already exists is refused (ProductExistsError), never overwritten */
+    add: async (newProducts: Product[]): Promise<Product[]> => {
+      const r = await db.products.addNewOnly(newProducts);
+      if (r.existing.length) throw new ProductExistsError(r.existing);
+      return newProducts.map(ensureProductSearchFields);
     },
 
     delete: async (id: string): Promise<Product[]> => {
@@ -345,13 +353,7 @@ export const db = {
     update: async (updatedProduct: Product, baseline?: Product | null): Promise<Product[]> => {
       if (firebaseReady()) {
         const enriched = ensureProductSearchFields(updatedProduct);
-        const ref = doc(firestore, 'products', (enriched as any).id);
-        await runTransaction(firestore, async (tx) => {
-          const snap = await tx.get(ref);
-          const merged = mergeStockForSave(enriched as any, baseline as any, snap.exists() ? (snap.data() as any) : null);
-          if (!merged.ok) throw new StaleStockError((merged as { conflicts: string[] }).conflicts);
-          tx.set(ref, cleanForFirestore((merged as { product: any }).product) as any, { merge: true });
-        });
+        await saveProductGuarded({ runTransaction: runTransaction as any, doc: doc as any }, firestore, enriched as any, baseline as any, cleanForFirestore);
         return db.products.getAll();
       }
 

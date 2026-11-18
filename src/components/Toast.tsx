@@ -45,7 +45,7 @@ const Toast: React.FC<ToastProps> = ({ toast, onClose, closeLabel = 'إغلاق'
       </div>
 
       {/* نص الإشعار */}
-      <p className="flex-1 text-sm font-bold text-slate-800 leading-relaxed" data-testid="toast-message">
+      <p className="flex-1 text-sm font-bold text-slate-800 leading-relaxed whitespace-pre-line" data-testid="toast-message">
         {toast.message}
       </p>
 

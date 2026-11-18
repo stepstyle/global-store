@@ -8,8 +8,15 @@ import {
   startMockServices, makeEnv, callWorker, createOrderReq, clearDb, seedProducts, putDoc, getDecoded,
   productStock, variantStock, PROJECT_ID,
 } from './helpers.mjs';
-import { checkoutOrder, line, makeOrderId } from './fixtures.mjs';
+import { checkoutOrder, line, makeOrderId, PRODUCTS } from './fixtures.mjs';
 import { makeTestSigner } from './token-signer.mjs';
+import { adminDb, runCron } from './helpers.mjs';
+
+async function adminDelete(path) {
+  const fs = adminDb();
+  const r = await fs.commit([{ delete: fs.name(path) }]);
+  if (!r.ok) throw new Error(`delete failed ${r.status}`);
+}
 
 const OWNER = 'owner-uid-0001';
 const ADMIN = 'admin-uid-0002';
@@ -305,13 +312,207 @@ test('D11. delivered and cancelled AT THE SAME TIME: exactly one wins and the st
 });
 
 // D12 --------------------------------------------------------------------------------------------------------------
-test('D12. untracked / unknown lines: order accepted, nothing reserved or deducted for them', async () => {
+test('D12. a product that exists but has NO stock number: the order is accepted, but "delivered" is REFUSED (STOCK_UNTRACKED) until a stock number exists', async () => {
   const o = await newOrder([line('p-no-stock', 5)]);
   assert.equal((await ledger(o.id)).inventory, 'none');
   const r = await setStatus(o.id, 'delivered');
-  assert.equal(r.status, 200);
-  assert.equal(r.body.inventory, 'deducted');
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'STOCK_UNTRACKED');
+  assert.deepEqual(r.body.problems, [{ index: 0, productId: 'p-no-stock', variantId: null, reason: 'STOCK_UNTRACKED' }]);
+  assert.equal((await order(o.id)).status, 'new');
   assert.equal(await productStock('p-no-stock'), undefined);
+  await putDoc('products/p-no-stock', { name: 'بلا مخزون', price: 1, stock: 6 });
+  const ok = await setStatus(o.id, 'delivered');
+  assert.equal(ok.status, 200, ok.text);
+  assert.equal(await productStock('p-no-stock'), 1, 'deducted once the number exists');
+});
+
+test('D18. colours and sizes without a VALID stock number (missing, empty, text, null, NaN) — set after the order: "delivered" refused, nothing written; deducted once fixed', async () => {
+  const fs = adminDb();
+  const rawVariant = (id, label, type, stockRaw) => ({ mapValue: { fields: { id: { stringValue: id }, label: { stringValue: label }, type: { stringValue: type }, price: { doubleValue: 4 }, ...(stockRaw === undefined ? {} : { stock: stockRaw }) } } });
+  const writeSizes = async (mStock) => {
+    const r = await fs.commit([{ update: { name: fs.name('products/p-sizes'), fields: { name: { stringValue: 'قميص' }, price: { doubleValue: 4 }, stock: { integerValue: '0' }, variants: { arrayValue: { values: [rawVariant('size_s', 'S', 'size', { integerValue: '3' }), rawVariant('size_m', 'M', 'size', mStock)] } } } } }]);
+    assert.ok(r.ok, `write ${JSON.stringify(mStock)}`);
+  };
+  const invalid = [['missing', undefined], ['empty string', { stringValue: '' }], ['text', { stringValue: 'كثير' }], ['null', { nullValue: null }], ['NaN', { doubleValue: 'NaN' }]];
+  for (const [name, raw] of invalid) {
+    await clearDb();
+    await seedProducts();
+    await putDoc('config/roles', { ownerUid: OWNER });
+    await putDoc('products/p-sizes', SIZES);
+    const o = await newOrder([line('p-variants', 1, { variantId: 'var_red' }), sizeLine('size_m', 1)]);
+    await writeSizes(raw); // size M loses its valid number after the order
+    const before = await snapshotAll(o.id);
+    const r = await setStatus(o.id, 'delivered');
+    assert.equal(r.status, 409, `${name}: ${r.text}`);
+    assert.equal(r.body.code, 'STOCK_UNTRACKED', name);
+    assert.deepEqual(r.body.problems, [{ index: 1, productId: 'p-sizes', variantId: 'size_m', reason: 'STOCK_UNTRACKED' }], name);
+    assert.equal(await snapshotAll(o.id), before, `${name}: nothing written (other colour not deducted either)`);
+  }
+  // a colour without stock: same refusal
+  await putDoc('products/p-variants', { ...PRODUCTS['p-variants'], variants: PRODUCTS['p-variants'].variants.map((v) => (v.id === 'var_red' ? (({ stock, ...rest }) => rest)(v) : v)) });
+  const c = await newOrder([line('p-variants', 1, { variantId: 'var_blue' })]);
+  const o2 = await newOrder([sizeLine('size_s', 1)]);
+  assert.equal((await setStatus(c.id, 'delivered')).status, 200, 'blue still has its number');
+  await putDoc('products/p-sizes', SIZES);
+  // fixed -> delivered once
+  const fixed = await setStatus(o2.id, 'delivered');
+  assert.equal(fixed.status, 200, fixed.text);
+  assert.equal(await variantStock('p-sizes', 'size_s'), 2);
+  const red = await newOrder([line('p-variants', 1, { variantId: 'var_red' })]);
+  assert.equal((await setStatus(red.id, 'delivered')).body.code, 'STOCK_UNTRACKED', 'colour red without a stock number');
+});
+
+// D16 --------------------------------------------------------------------------------------------------------------
+const SIZES = { name: 'قميص', price: 4, stock: 0, variants: [{ id: 'size_s', label: 'S', type: 'size', price: 4, stock: 3 }, { id: 'size_m', label: 'M', type: 'size', price: 4, stock: 2 }] };
+const sizeLine = (vid, q) => ({ productId: 'p-sizes', name: 'قميص', price: 4, quantity: q, image: '', selectedVariant: { ...SIZES.variants.find((v) => v.id === vid) } });
+
+async function snapshotAll(orderId) {
+  return JSON.stringify({
+    order: await order(orderId).then((o) => ({ status: o.status, inventory: o.inventory })),
+    inv: (await ledger(orderId)).inventory,
+    simple: await productStock('p-simple'), red: await variantStock('p-variants', 'var_red'), blue: await variantStock('p-variants', 'var_blue'),
+    s: await variantStock('p-sizes', 'size_s'), m: await variantStock('p-sizes', 'size_m'),
+    rs: await reserved('p-simple'), rred: await reserved('p-variants', 'var_red'), rm: await reserved('p-sizes', 'size_m'),
+  });
+}
+
+test('D16. a product / colour / size of the order is gone: "delivered" refused as a whole (ITEMS_MISSING), nothing written; works again once restored', async () => {
+  const cases = [
+    ['product deleted', async () => { await adminDelete('products/p-variants'); }, { index: 1, productId: 'p-variants', variantId: 'var_red', reason: 'PRODUCT_NOT_FOUND' }],
+    ['colour removed', async () => { await putDoc('products/p-variants', { ...PRODUCTS['p-variants'], variants: PRODUCTS['p-variants'].variants.filter((v) => v.id !== 'var_red') }); }, { index: 1, productId: 'p-variants', variantId: 'var_red', reason: 'VARIANT_NOT_FOUND' }],
+    ['size removed', async () => { await putDoc('products/p-sizes', { ...SIZES, variants: SIZES.variants.filter((v) => v.id !== 'size_m') }); }, { index: 2, productId: 'p-sizes', variantId: 'size_m', reason: 'VARIANT_NOT_FOUND' }],
+    ['size duplicated (ambiguous)', async () => { await putDoc('products/p-sizes', { ...SIZES, variants: [...SIZES.variants, { ...SIZES.variants[1], label: 'M2' }] }); }, { index: 2, productId: 'p-sizes', variantId: 'size_m', reason: 'DUPLICATE_VARIANT_ID' }],
+    ['simple product turned into a variant product', async () => { await putDoc('products/p-simple', { ...PRODUCTS['p-simple'], variants: [{ id: 'new_v', label: 'x', type: 'size', price: 2.5, stock: 9 }] }); }, { index: 0, productId: 'p-simple', variantId: null, reason: 'AMBIGUOUS_VARIANT' }],
+  ];
+  for (const [name, breakIt, problem] of cases) {
+    await clearDb();
+    await seedProducts();
+    await putDoc('config/roles', { ownerUid: OWNER });
+    await putDoc('products/p-sizes', SIZES);
+    const o = await newOrder([line('p-simple', 2), line('p-variants', 1, { variantId: 'var_red' }), sizeLine('size_m', 1)]);
+    await setStatus(o.id, 'shipped');
+    await breakIt();
+    const before = await snapshotAll(o.id);
+    for (let i = 0; i < 2; i++) {
+      const r = await setStatus(o.id, 'delivered');
+      assert.equal(r.status, 409, `${name}: ${r.text}`);
+      assert.equal(r.body.code, 'ITEMS_MISSING', name);
+      assert.deepEqual(r.body.problems, [problem], name);
+    }
+    assert.equal(await snapshotAll(o.id), before, `${name}: status, stock, reservations, ledger unchanged`);
+    assert.equal((await order(o.id)).status, 'shipped', name);
+  }
+  // restored -> delivered normally (all three lines deducted once, colour and size included)
+  await putDoc('products/p-simple', PRODUCTS['p-simple']);
+  const o2 = await newOrder([line('p-variants', 1, { variantId: 'var_red' }), sizeLine('size_s', 2)]);
+  await putDoc('products/p-sizes', { ...SIZES, variants: [SIZES.variants[1]] });
+  assert.equal((await setStatus(o2.id, 'delivered')).body.code, 'ITEMS_MISSING');
+  await putDoc('products/p-sizes', SIZES);
+  const ok = await setStatus(o2.id, 'delivered');
+  assert.equal(ok.status, 200, ok.text);
+  assert.equal(await variantStock('p-sizes', 'size_s'), 1);
+  assert.equal(await variantStock('p-variants', 'var_red'), 4);
+  assert.equal(await reserved('p-sizes', 'size_s'), 0);
+});
+
+test('D16b. an order whose item is gone can still be CANCELLED (reservation released, no stock change)', async () => {
+  const o = await newOrder([line('p-variants', 2, { variantId: 'var_red' })]);
+  await adminDelete('products/p-variants');
+  assert.equal((await setStatus(o.id, 'delivered')).body.code, 'ITEMS_MISSING');
+  const c = await setStatus(o.id, 'cancelled');
+  assert.equal(c.status, 200);
+  assert.equal(c.body.inventory, 'released');
+  assert.equal(await reserved('p-variants', 'var_red'), 0);
+});
+
+// D17 --------------------------------------------------------------------------------------------------------------
+/** what the OLD dashboard (storage.ts updateStatus, under the snapshot rules) writes: the status only */
+async function oldDashboardStatus(id, status) {
+  const fs = adminDb();
+  const r = await fs.commit([{ update: { name: fs.name(`orders/${id}`), fields: { status: { stringValue: status }, seenByAdmin: { booleanValue: true } } }, updateMask: { fieldPaths: ['status', 'seenByAdmin'] } }]);
+  if (!r.ok) throw new Error('direct write failed');
+}
+
+test('D17. ROLLBACK to the old dashboard: with SYNC_DIRECT_STATUS=true the cron applies delivered / cancelled / deleted exactly once; off = nothing', async () => {
+  const delivered = await newOrder([line('p-simple', 2), line('p-variants', 1, { variantId: 'var_red' })]);
+  const cancelled = await newOrder([line('p-hundred', 5)]);
+  const deleted = await newOrder([line('p-variants', 1, { variantId: 'var_blue' })]);
+  const open = await newOrder([line('p-simple', 1)]);
+  const broken = await newOrder([line('p-last-one', 1)]);
+  await oldDashboardStatus(delivered.id, 'delivered');
+  await oldDashboardStatus(cancelled.id, 'cancelled');
+  await oldDashboardStatus(open.id, 'processing');
+  await adminDelete(`orders/${deleted.id}`);
+  await oldDashboardStatus(broken.id, 'delivered');
+  await putDoc('products/p-last-one', { name: 'آخر قطعة', price: 5, stock: 0 }); // stock edited below the order
+
+  // sync OFF (default): nothing happens
+  const off = await runCron(env());
+  assert.equal(off.sync.enabled, false);
+  assert.equal(await productStock('p-simple'), 10);
+
+  const on = env({ SYNC_DIRECT_STATUS: 'true' });
+  const r1 = await runCron(on);
+  assert.equal(r1.sync.applied, 3, JSON.stringify(r1.sync));
+  assert.equal(r1.sync.problems, 1);
+  await runCron(on); // second run: nothing applied twice
+  await runCron(on);
+  assert.equal(await productStock('p-simple'), 8, 'delivered: deducted once');
+  assert.equal(await variantStock('p-variants', 'var_red'), 4, 'colour deducted once');
+  assert.equal(await reserved('p-simple'), 1, 'only the open order still reserved');
+  assert.equal(await productStock('p-hundred'), 100, 'cancelled: no deduction');
+  assert.equal(await reserved('p-hundred'), 0, 'cancelled: released');
+  assert.equal(await reserved('p-variants', 'var_blue'), 0, 'deleted order: released');
+  assert.equal(await variantStock('p-variants', 'var_blue'), 1);
+  assert.equal((await ledger(delivered.id)).inventory, 'deducted');
+  assert.deepEqual((await order(delivered.id)).inventory, { policy: 'on_delivery', state: 'deducted' });
+  assert.equal((await ledger(open.id)).inventory, 'reserved');
+  // the refused one: stock untouched, reason recorded for the admin
+  const B = await ledger(broken.id);
+  assert.equal(B.inventory, 'reserved');
+  assert.equal(B.syncProblem.code, 'INSUFFICIENT_STOCK');
+  assert.equal(await productStock('p-last-one'), 0);
+  // fixed by hand -> applied on the next run, once
+  await putDoc('products/p-last-one', { name: 'آخر قطعة', price: 5, stock: 1 });
+  await runCron(on);
+  await runCron(on);
+  assert.equal(await productStock('p-last-one'), 0);
+  assert.equal((await ledger(broken.id)).inventory, 'deducted');
+  // back on the new dashboard: the synced order is consistent (return still possible once)
+  assert.equal((await setStatus(delivered.id, 'cancelled', { confirmReturn: true })).status, 200);
+  assert.equal(await productStock('p-simple'), 10);
+});
+
+test('D19. sync under load: pages of reserved orders, a per-run limit, a stuck order that never blocks the others, overlapping runs and a racing dashboard — each effect exactly once', async () => {
+  const on = (o = {}) => env({ SYNC_DIRECT_STATUS: 'true', SYNC_BATCH: '2', SYNC_APPLY_PER_RUN: '2', ...o });
+  // 5 open orders first (ids sort before?) — mixed with 4 delivered directly by the old dashboard + 1 stuck one
+  const open = [];
+  for (let i = 0; i < 5; i++) open.push(await newOrder([line('p-hundred', 1)]));
+  const done = [];
+  for (let i = 0; i < 4; i++) done.push(await newOrder([line('p-hundred', 10)]));
+  const stuck = await newOrder([line('p-no-stock', 1), line('p-hundred', 1)]);
+  for (const o of done) await oldDashboardStatus(o.id, 'delivered');
+  await oldDashboardStatus(stuck.id, 'delivered');
+  const start = 100;
+  // overlapping cron runs: still exactly once
+  for (let k = 0; k < 4; k++) await Promise.all([runCron(on()), runCron(on()), runCron(on())]);
+  assert.equal(await productStock('p-hundred'), start - 40, 'the 4 delivered orders deducted once each (10 each)');
+  for (const o of done) assert.equal((await ledger(o.id)).inventory, 'deducted');
+  assert.equal((await ledger(stuck.id)).inventory, 'reserved', 'stuck one untouched');
+  assert.equal((await ledger(stuck.id)).syncProblem.code, 'STOCK_UNTRACKED');
+  assert.equal(await reserved('p-hundred'), 5 + 1, 'only the 5 open orders + the stuck one still reserved');
+  // a racing dashboard change on an order the sync is about to handle
+  const race = await newOrder([line('p-simple', 2)]);
+  await oldDashboardStatus(race.id, 'cancelled');
+  await Promise.all([runCron(on()), setStatus(race.id, 'cancelled'), runCron(on())]);
+  assert.equal(await reserved('p-simple'), 0);
+  assert.equal(await productStock('p-simple'), 10);
+  assert.equal((await ledger(race.id)).inventory, 'released');
+  // every cron after that changes nothing
+  const snap = JSON.stringify([await productStock('p-hundred'), await reserved('p-hundred'), await productStock('p-simple')]);
+  for (let k = 0; k < 3; k++) await runCron(on());
+  assert.equal(JSON.stringify([await productStock('p-hundred'), await reserved('p-hundred'), await productStock('p-simple')]), snap);
 });
 
 // D13 --------------------------------------------------------------------------------------------------------------

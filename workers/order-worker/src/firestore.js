@@ -52,7 +52,8 @@ export const decodeFields = (fields = {}) =>
 export function rawNumber(v) {
   if (!v) return { value: null, fromString: false };
   if ('integerValue' in v) return { value: Number(v.integerValue), fromString: false };
-  if ('doubleValue' in v) return { value: Number(v.doubleValue), fromString: false };
+  // NaN / Infinity can be stored in Firestore but are not a stock number (treated as missing, never deducted from)
+  if ('doubleValue' in v) return Number.isFinite(Number(v.doubleValue)) ? { value: Number(v.doubleValue), fromString: false } : { value: null, fromString: false };
   if ('stringValue' in v && /^\s*\d+(\.\d+)?\s*$/.test(v.stringValue)) {
     return { value: Number(v.stringValue), fromString: true };
   }

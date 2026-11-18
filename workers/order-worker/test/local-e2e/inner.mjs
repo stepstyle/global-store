@@ -17,6 +17,7 @@ import { runApprovalScenarios } from '../../staging/approval-scenarios.mjs';
 import { makeTestSigner } from '../token-signer.mjs';
 import { launchChrome, openTab } from './cdp.mjs';
 import { buildUiScenarios, runUiScenarios } from './ui-scenarios.mjs';
+import { runDeliveryScenarios, dashboardAdminEmail } from './delivery-scenarios.mjs';
 import { resolve as resolvePath } from 'node:path';
 import { WORKER_ROOT } from './plan.mjs';
 import { assertLocalPlan, localOnlyFetch } from './guard.mjs';
@@ -25,7 +26,7 @@ import { PLAN, PORTS, URLS, FILES, PROJECT_ID, TURNSTILE_PASS_TOKEN } from './pl
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const TMP = process.env.E2E_TMP;
 const CPU_MODE = process.env.E2E_MODE === 'cpu';
-const SUITE = process.env.E2E_SUITE || 'all'; // all | scenarios | submit | ui | approval | approval-live
+const SUITE = process.env.E2E_SUITE || 'all'; // all | scenarios | submit | ui | delivery | approval | approval-live
 const children = [];
 
 function fail(msg) {
@@ -300,9 +301,10 @@ function stopChildren() {
 const fs = new Firestore({ projectId: PROJECT_ID, firestoreAuth: 'emulator', urls: { firestore: URLS.firestore } });
 
 // which local rules file the emulator enforces for the browser: compat (default) | transition | final (all test-only)
-const RULES_NAME = ['transition', 'final'].includes(process.env.E2E_RULES) ? process.env.E2E_RULES : 'compat';
+// delivery suite: always the rules planned for that rollout (firebase/firestore.rules.on-delivery)
+const RULES_NAME = SUITE === 'delivery' ? 'on-delivery' : ['transition', 'final'].includes(process.env.E2E_RULES) ? process.env.E2E_RULES : 'compat';
 async function loadCompatRules() {
-  const content = readFileSync(RULES_NAME === 'final' ? FILES.finalRules : RULES_NAME === 'transition' ? FILES.transitionRules : FILES.compatRules, 'utf8');
+  const content = readFileSync(RULES_NAME === 'on-delivery' ? FILES.onDeliveryRules : RULES_NAME === 'final' ? FILES.finalRules : RULES_NAME === 'transition' ? FILES.transitionRules : FILES.compatRules, 'utf8');
   console.log(`[inner] emulator rules: firestore.rules.${RULES_NAME} (local test file)`);
   const r = await fetch(`http://127.0.0.1:${PORTS.emulator}/emulator/v1/projects/${PROJECT_ID}:securityRules`, {
     method: 'PUT',
@@ -512,6 +514,75 @@ async function runUiSuite() {
   return out;
 }
 
+// ---------------------------------------------------------------- delivery suite (STOCK_POLICY=on_delivery)
+async function runDeliverySuite() {
+  const repoRoot = resolvePath(WORKER_ROOT, '../..');
+  const base = `http://127.0.0.1:${PORTS.vite}`;
+  const AUTH = `http://127.0.0.1:${PORTS.authEmulator}`;
+  // the admin account exists ONLY in the local Auth emulator; its e-mail is the dashboard's configured admin
+  const admin = { email: dashboardAdminEmail(repoRoot), password: `e2e-${randomBytes(9).toString('hex')}` };
+  await fetch(`${AUTH}/emulator/v1/projects/${PROJECT_ID}/accounts`, { method: 'DELETE' });
+  const su = await fetch(`${AUTH}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo-api-key`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: admin.email, password: admin.password, returnSecureToken: true }),
+  });
+  const sj = await su.json();
+  if (!su.ok || !sj.localId) throw new Error(`auth emulator signUp failed (${su.status})`);
+  const ownerUid = sj.localId;
+  // the Login page only accepts verified e-mail addresses (same as the UI suite's synthetic customers)
+  const up = await fetch(`${AUTH}/identitytoolkit.googleapis.com/v1/projects/${PROJECT_ID}/accounts:update`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer owner' }, body: JSON.stringify({ localId: ownerUid, emailVerified: true, displayName: 'مسؤول اختبار' }),
+  });
+  if (!up.ok) throw new Error(`auth emulator update failed (${up.status})`);
+  const put = async (path, data) => {
+    const r = await fs.commit([{ update: { name: fs.name(path), fields: encodeFields(data) } }]);
+    if (!r.ok) throw new Error(`put ${path} failed (${r.status})`);
+  };
+  const reseedAll = async () => {
+    await reseed();
+    await put('config/roles', { ownerUid });
+    await put(`users/${ownerUid}`, { id: ownerUid, name: 'مسؤول اختبار', email: admin.email, role: 'admin', orders: [], createdAt: new Date().toISOString() });
+  };
+  // Vite: checkout talks to the Worker DIRECTLY (guest, real CORS); the dashboard uses VITE_ORDER_ADMIN_URL = the local
+  // proxy, which re-signs the Auth-emulator ID token with the run's TEST key (the Worker refuses unsigned tokens)
+  const log = createWriteStream(join(TMP, 'vite-delivery.log'));
+  const env = {
+    ...process.env,
+    VITE_FIREBASE_TARGET: 'emulator', VITE_FIREBASE_PROJECT_ID: PROJECT_ID,
+    VITE_FIRESTORE_EMULATOR_HOST: `127.0.0.1:${PORTS.emulator}`, VITE_AUTH_EMULATOR_HOST: `127.0.0.1:${PORTS.authEmulator}`,
+    VITE_WORKER_URL: URLS.order, VITE_ORDER_ADMIN_URL: `${URLS.mock}/ui`,
+  };
+  const vite = spawn(process.execPath, [join(repoRoot, 'node_modules/vite/bin/vite.js'), '--port', String(PORTS.vite), '--strictPort', '--host', '127.0.0.1'], { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  vite.stdout.pipe(log);
+  vite.stderr.pipe(log);
+  children.push({ label: 'vite-delivery', child: vite });
+  await waitReady('vite-delivery', base, 90_000);
+  await launchChrome({ port: PORTS.cdp, tmpDir: TMP, track: (child) => children.push({ label: 'chrome', child }) });
+  console.log(`[inner] delivery suite: Worker STOCK_POLICY=on_delivery, rules on-delivery, Vite ${base}, headless Chrome`);
+  return runDeliveryScenarios({
+    W: URLS.order, base, tmpDir: TMP, turnstileToken: TURNSTILE_PASS_TOKEN, ownerUid, admin,
+    only: process.env.E2E_ONLY ? new Set(process.env.E2E_ONLY.split(',')) : null,
+    openTab: () => openTab(PORTS.cdp),
+    reseed: reseedAll,
+    put,
+    get: async (path) => {
+      const d = await fs.get(path);
+      return d.exists ? decodeFields(d.fields) : null;
+    },
+    /** what the OLD dashboard (storage.ts updateStatus) writes: the status only */
+    directStatus: async (orderId, status) => {
+      const r = await fs.commit([{ update: { name: fs.name(`orders/${orderId}`), fields: encodeFields({ status, seenByAdmin: true }) }, updateMask: { fieldPaths: ['status', 'seenByAdmin'] } }]);
+      if (!r.ok) throw new Error(`direct status failed (${r.status})`);
+    },
+    countOrdersByPhone: async (phone) =>
+      (await fs.runQuery({ from: [{ collectionId: 'orders' }], where: { fieldFilter: { field: { fieldPath: 'address.phone' }, op: 'EQUAL', value: { stringValue: phone } } } })).length,
+    idToken: (uid) => AUTH_SIGNER.idToken({ projectId: PROJECT_ID, uid }),
+    forgedToken: (uid) => AUTH_FORGER.idToken({ projectId: PROJECT_ID, uid }),
+    triggerCron: async () => { await fetch(`${URLS.order}/__scheduled?cron=*+*+*+*+*`); },
+    sinkCalls: async () => (await (await fetch(`${URLS.sink}/calls`, { headers: { 'x-sink-auth': T.read } })).json()).calls || [],
+    resetSink: async () => { await fetch(`${URLS.sink}/calls`, { method: 'DELETE', headers: { 'x-sink-auth': T.read } }); },
+  });
+}
+
 // ---------------------------------------------------------------- run
 let results = [];
 let cpu = null;
@@ -528,6 +599,8 @@ try {
     TELEGRAM_BOT_TOKEN: T.tg, SENDGRID_API_KEY: T.sg, WORKER_AUTH_TOKEN: T.worker,
     // UI suite: the current web app sends no Turnstile token -> Phase 1 production mode (log), for this run only
     ...(SUITE === 'ui' ? { TURNSTILE_MODE: 'log' } : {}),
+    // stock on delivery (production settings except Turnstile: the local web app sends no token) + the rollback sync
+    ...(SUITE === 'delivery' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', SYNC_DIRECT_STATUS: 'true' } : {}),
     ...(SUITE === 'approval' ? {
       APPROVAL_MODE: 'telegram', TELEGRAM_CHAT_ID: APPROVAL.chatId, TELEGRAM_ADMIN_USER_IDS: APPROVAL.adminIds.join(','),
       TELEGRAM_WEBHOOK_SECRET: T.webhook, PRICE_CHECK_MODE: 'enforce',
@@ -566,6 +639,8 @@ try {
     });
   } else if (SUITE === 'ui') {
     results = await runUiSuite();
+  } else if (SUITE === 'delivery') {
+    results = await runDeliverySuite();
   } else if (SUITE === 'approval-live') {
     results = await runLiveApproval();
   } else if (SUITE === 'approval') {

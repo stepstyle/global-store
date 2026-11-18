@@ -63,6 +63,8 @@ export function decisionOf(text) {
   if (t.includes('تم قبول الطلب')) return 'accepted';
   if (t.includes('تم رفض الطلب')) return 'rejected';
   if (t.includes('تم إلغاء الطلب بعد القبول')) return 'cancelled';
+  // STOCK_POLICY=on_delivery: accepted automatically, no decision buttons
+  if (t.includes('قبوله تلقائيًا')) return 'auto';
   return null;
 }
 const nextMessageId = () => 1 + Math.floor(Math.random() * 2_000_000_000);

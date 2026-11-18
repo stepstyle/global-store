@@ -2,7 +2,7 @@
 //   node --test tests/unit/adminOrders.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isWorkerManaged, inventoryState, canCancel, deleteBlockedReason, changeStatusViaWorker, messageFor } from '../../src/services/adminOrders.ts';
+import { isWorkerManaged, inventoryState, canCancel, deleteBlockedReason, changeStatusViaWorker, messageFor, problemLineAr } from '../../src/services/adminOrders.ts';
 
 const W = 'https://anta-order-v2.example.workers.dev';
 const ID = 'ORD-ABCD1234-XYZ1';
@@ -74,6 +74,33 @@ test('refusals become clear Arabic messages; INSUFFICIENT_STOCK carries the line
   assert.match(messageFor('NOT_ADMIN'), /ليس مسؤولًا/);
   assert.match(messageFor('SOMETHING_NEW'), /لم يتغير شيء/);
   assert.equal((await changeStatusViaWorker(W, ID, 'delivered', {}, deps(['network']))).code, 'NETWORK');
+});
+
+test('ITEMS_MISSING (a product / colour / size is gone): clear message + one line per item with the reason', async () => {
+  const problems = [
+    { index: 0, productId: 'p1', variantId: null, reason: 'PRODUCT_NOT_FOUND' },
+    { index: 1, productId: 'p2', variantId: 'red', reason: 'VARIANT_NOT_FOUND' },
+    { index: 2, productId: 'p3', variantId: 'size_m', reason: 'DUPLICATE_VARIANT_ID' },
+  ];
+  const r = await changeStatusViaWorker(W, ID, 'delivered', {}, deps([res(409, { ok: false, code: 'ITEMS_MISSING', problems })]));
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'ITEMS_MISSING');
+  assert.deepEqual(r.problems, problems);
+  assert.match(r.messageAr, /لم تتغير الحالة ولا أي كمية/);
+  assert.equal(problemLineAr(problems[0], 'دفتر'), '• دفتر: المنتج لم يعد موجودًا');
+  assert.equal(problemLineAr(problems[1], 'قلم - أحمر'), '• قلم - أحمر: اللون/المقاس لم يعد موجودًا في المنتج');
+  assert.match(problemLineAr(problems[2], 'قميص M'), /مكرر/);
+  assert.equal(problemLineAr({ index: 0, available: 2, requested: 3 }, 'دفتر'), '• دفتر: المتوفر 2، المطلوب 3');
+});
+
+test('STOCK_UNTRACKED (no valid stock number for a product / colour / size): clear message + the item named', async () => {
+  const problems = [{ index: 0, productId: 'p-sizes', variantId: 'size_m', reason: 'STOCK_UNTRACKED' }];
+  const r = await changeStatusViaWorker(W, ID, 'delivered', {}, deps([res(409, { ok: false, code: 'STOCK_UNTRACKED', problems })]));
+  assert.equal(r.code, 'STOCK_UNTRACKED');
+  assert.deepEqual(r.problems, problems);
+  assert.match(r.messageAr, /ليس له رقم مخزون صالح/);
+  assert.match(r.messageAr, /لم تتغير الحالة ولا أي كمية/);
+  assert.equal(problemLineAr(problems[0], 'قميص M'), '• قميص M: لا يوجد رقم مخزون صالح لهذا المنتج/اللون/المقاس');
 });
 
 test('expired token: refreshed ONCE and resent; no token at all: nothing sent', async () => {

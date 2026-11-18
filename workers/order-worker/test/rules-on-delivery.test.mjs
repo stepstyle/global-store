@@ -97,6 +97,27 @@ test('R7. unchanged paths: products (admin edits stock), order reads, customer l
   await assertSucceeds(getDocs(collection(as(ADMIN), 'orders')));
 });
 
+test('R9. ROLLBACK rules (production snapshot): the OLD dashboard can still list and move new-system orders, and the old success page can read them', async () => {
+  const [host, port] = emulatorHost().split(':');
+  const old = await initializeTestEnvironment({ projectId: 'demo-dairsharaf-rollback', firestore: { rules: SNAPSHOT, host, port: Number(port) } });
+  try {
+    await old.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, 'config/roles'), { ownerUid: OWNER });
+      await setDoc(doc(db, 'orders/ORD-RESERVED-AAAA'), { id: 'ORD-RESERVED-AAAA', status: 'new', userId: CUSTOMER, inventory: { policy: 'on_delivery', state: 'reserved' } });
+    });
+    const owner = old.authenticatedContext(OWNER).firestore();
+    await assertSucceeds(getDocs(collection(owner, 'orders')));
+    for (const s of ['processing', 'shipped', 'delivered']) await assertSucceeds(updateDoc(doc(owner, 'orders/ORD-RESERVED-AAAA'), statusUpdate(s)));
+    await assertSucceeds(getDoc(doc(old.unauthenticatedContext().firestore(), 'orders/ORD-RESERVED-AAAA')));
+    // and even then the browser never reaches the Worker's records (the sync applies the stock effect)
+    await assertFails(setDoc(doc(owner, 'stockReservations/p1'), { product: 0 }));
+    await assertFails(setDoc(doc(owner, 'orderLedger/ORD-RESERVED-AAAA'), { inventory: 'deducted' }));
+  } finally {
+    await old.cleanup();
+  }
+});
+
 test('R8. the transition file differs from the production snapshot ONLY in the orders block (+ comments)', () => {
   const strip = (t) => t.split(/\r?\n/).map((l) => l.replace(/\/\/.*$/, '').trimEnd()).filter((l) => l.trim()).join('\n');
   const outside = (t) => strip(t).replace(/function workerManaged\(\)[\s\S]*?\n {4}match \/reviews/, 'match /reviews').replace(/match \/orders\/\{id\} \{[\s\S]*?\n {4}\}\n/, '');

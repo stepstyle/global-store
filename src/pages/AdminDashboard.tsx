@@ -39,7 +39,8 @@ import LazyImage from '../components/LazyImage';
 import { isFirebaseInitialized, setFirebaseConfig, removeFirebaseConfig } from '../services/firebase';
 import { uploadToCloudinary } from '../services/cloudinary';
 import { IS_LIVE, BACKEND_ENABLED } from '../config/deployEnv';
-import { isWorkerManaged, inventoryState, INVENTORY_LABEL_AR, canCancel, deleteBlockedReason, changeStatusViaWorker, type StatusFailure } from '../services/adminOrders';
+import { isWorkerManaged, inventoryState, INVENTORY_LABEL_AR, canCancel, deleteBlockedReason, changeStatusViaWorker, problemLineAr, type StatusFailure } from '../services/adminOrders';
+import { planCsvImport, csvImportMessageAr, type CsvCandidate } from '../services/csvImport';
 
 const PAGE_SIZE = 100;
 
@@ -183,7 +184,7 @@ const toMillis = (v: any): number => {
 
 const AdminDashboard: React.FC = () => {
   const navigate = useNavigate();
-  const { addProducts, deleteProduct, updateProduct, showToast, t, products, language, user, refreshProducts } = useCart() as any;
+  const { addProducts, importNewProducts, deleteProduct, updateProduct, showToast, t, products, language, user, refreshProducts } = useCart() as any;
 
   // 🚨🚨 ضع إيميلك الشخصي الحقيقي هنا بين الأقواس (مثال: admin@gmail.com) 🚨🚨
   const MY_ADMIN_EMAIL = "mohmmedmostakl@gmail.com".toLowerCase();
@@ -492,14 +493,17 @@ const AdminDashboard: React.FC = () => {
     let newInventory: string | null = null;
     try {
       if (viaWorker) {
-        const r = await changeStatusViaWorker(BACKEND_ENABLED ? String(import.meta.env.VITE_WORKER_URL || '') : '', id, newStatus, { confirmReturn }, {
+        // VITE_ORDER_ADMIN_URL (optional) keeps the dashboard on the Worker that holds these orders even if order
+        // CREATION is ever pointed back to the old Worker (rollback); unset = the same Worker as the checkout
+        const adminWorkerUrl = BACKEND_ENABLED ? String(import.meta.env.VITE_ORDER_ADMIN_URL || import.meta.env.VITE_WORKER_URL || '') : '';
+        const r = await changeStatusViaWorker(adminWorkerUrl, id, newStatus, { confirmReturn }, {
           fetch: (url, init) => window.fetch(url, init as RequestInit) as any,
           getIdToken: async (refresh) => (await getFirebaseAuth()?.currentUser?.getIdToken(refresh)) ?? null,
         });
         if (!r.ok) {
           const f = r as StatusFailure;
           const detail = f.problems?.length
-            ? `\n${f.problems.map((p) => `• ${(current?.items?.[p.index]?.name) || p.productId || `#${p.index + 1}`}: المتوفر ${p.available}، المطلوب ${p.requested}`).join('\n')}`
+            ? `\n${f.problems.map((p) => problemLineAr(p, (current?.items?.[p.index]?.name) || p.productId || `#${p.index + 1}`)).join('\n')}`
             : '';
           showToast(`${f.messageAr}${detail}`, 'error');
           return;
@@ -678,7 +682,7 @@ const AdminDashboard: React.FC = () => {
       }
 
       const rows = parsed.data || [];
-      const newProducts: Product[] = [];
+      const candidates: CsvCandidate<Product>[] = [];
 
       rows.forEach((row, idx) => {
         const name = (row.name || (row as any).Name || (row as any).productName || '').toString().trim();
@@ -741,16 +745,25 @@ const AdminDashboard: React.FC = () => {
           ratingCount: 0,
         };
 
-        newProducts.push(normalizeProductForSave(product));
+        // row number as the admin sees it in a spreadsheet (line 1 = the header)
+        candidates.push({ row: idx + 2, product: normalizeProductForSave(product) });
       });
 
       try {
-        if (newProducts.length > 0) {
-          await addProducts(newProducts);
-          showToast(`Imported ${newProducts.length} products`, 'success');
-        } else {
-          showToast('No valid products found', 'info');
+        // CSV never changes an existing product (stock, colours / sizes, ratings, price …): rows with an existing id
+        // are refused — checked against the loaded list AND again in the Firestore transaction that creates them
+        const plan = planCsvImport(candidates, products.map((p: any) => String(p.id)));
+        const rejected = [...plan.rejected];
+        let added = 0;
+        if (plan.accepted.length > 0) {
+          const r = await importNewProducts(plan.accepted.map((c) => c.product));
+          added = r.added.length;
+          const late = new Set(r.existing);
+          for (const c of plan.accepted) if (late.has(String(c.product.id))) rejected.push({ row: c.row, id: String(c.product.id), reason: 'EXISTS' });
         }
+        rejected.sort((a, b) => a.row - b.row);
+        if (added === 0 && rejected.length === 0) showToast('No valid products found', 'info');
+        else showToast(csvImportMessageAr(added, rejected), rejected.length ? 'error' : 'success');
       } catch (err: any) {
         showToast(err?.message || 'Import failed', 'error');
       } finally {

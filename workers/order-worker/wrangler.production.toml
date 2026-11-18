@@ -71,4 +71,7 @@ RECONCILE_ENABLED = "false"
 # stock is deducted once when the admin marks the order delivered in the dashboard.
 STOCK_POLICY = "on_delivery"
 APPROVAL_MODE = "off"
+# ROLLBACK ONLY: "true" while the OLD admin dashboard is back in use (see STOCK_ON_DELIVERY.md) — the cron then applies
+# the stock effect of statuses written directly by it. Normal operation: "false" (no extra Firestore reads).
+SYNC_DIRECT_STATUS = "false"
 CURRENCY = "JOD"

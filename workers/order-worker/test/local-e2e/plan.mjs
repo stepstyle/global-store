@@ -43,6 +43,8 @@ export const FILES = {
   // test-only proposals; selected with E2E_RULES=transition|final (default compat)
   transitionRules: resolve(WORKER_ROOT, '../../firebase/rules-test/firestore.rules.transition'),
   finalRules: resolve(WORKER_ROOT, '../../firebase/rules-test/firestore.rules.final'),
+  // E2E_SUITE=delivery: the transition rules planned for STOCK_POLICY=on_delivery
+  onDeliveryRules: resolve(WORKER_ROOT, '../../firebase/firestore.rules.on-delivery'),
 };
 export const PLAN = {
   projectId: PROJECT_ID,

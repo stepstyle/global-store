@@ -227,6 +227,11 @@ export function loadConfig(env = {}) {
     turnstileMode,
     allowedOrigins,
     reconcileEnabled: bool(env.RECONCILE_ENABLED, false),
+    // rollback safety net (src/fulfilment.js syncDirectStatusChanges): ON only while the OLD admin dashboard is back
+    syncDirectStatus: bool(env.SYNC_DIRECT_STATUS, false),
+    syncBatch: Math.max(1, Math.min(300, num(env.SYNC_BATCH, 300))),
+    syncPages: Math.max(1, Math.min(10, num(env.SYNC_PAGES, 5))),
+    syncApplyPerRun: Math.max(1, Math.min(10, num(env.SYNC_APPLY_PER_RUN, 4))),
     adoptWindowMs: num(env.ADOPT_WINDOW_MS, 15 * 60 * 1000),
     createWaitMs: num(env.CREATE_WAIT_MS, 1500),
     reconcileWindowMs: num(env.RECONCILE_WINDOW_MS, 2 * 60 * 60 * 1000),

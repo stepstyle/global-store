@@ -61,6 +61,8 @@ interface CartContextType {
   products: Product[];
   refreshProducts: () => Promise<void>;
   addProducts: (newProducts: Product[]) => Promise<void>;
+  /** CSV import: creates only NEW ids; existing products are never changed (csvImport.ts) */
+  importNewProducts: (newProducts: Product[]) => Promise<{ added: string[]; existing: string[] }>;
   deleteProduct: (id: string) => Promise<void>;
   /** baseline = the product as the editor was opened with (protects stock changed meanwhile, see stockMerge.ts) */
   updateProduct: (p: Product, baseline?: Product | null) => Promise<void>;
@@ -163,6 +165,17 @@ const App: React.FC = () => {
       await refreshProducts();
     } catch (e) {
       console.error('Error adding product:', e);
+      throw e;
+    }
+  }, [refreshProducts]);
+
+  const importNewProducts = useCallback(async (newProducts: Product[]) => {
+    try {
+      const r = await storageDb.products.addNewOnly(newProducts);
+      await refreshProducts();
+      return r;
+    } catch (e) {
+      console.error('Error importing products:', e);
       throw e;
     }
   }, [refreshProducts]);
@@ -339,8 +352,9 @@ const App: React.FC = () => {
       orderNote, setOrderNote: (n) => { setOrderNoteState(n); localStorage.setItem(ORDER_NOTE_KEY, n); },
       clearOrderNote: () => { setOrderNoteState(''); localStorage.removeItem(ORDER_NOTE_KEY); },
       isLoading, 
-      addProducts, 
-      deleteProduct, 
+      addProducts,
+      importNewProducts,
+      deleteProduct,
       updateProduct 
     }}>
       <HashRouter>

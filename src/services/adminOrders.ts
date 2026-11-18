@@ -42,7 +42,22 @@ export const deleteBlockedReason = (o: AnyOrder): string | null =>
     ? 'هذا الطلب ما زالت كميته محجوزة. ألغِ الطلب أولًا (يُفك الحجز) ثم احذفه.'
     : null;
 
-export type StatusFailure = { ok: false; code: string; messageAr: string; problems?: Array<{ index: number; productId?: string; available: number; requested: number }> };
+/** INSUFFICIENT_STOCK: available / requested; ITEMS_MISSING: reason (PRODUCT_NOT_FOUND, VARIANT_NOT_FOUND, …) */
+export type DeliveryProblem = { index: number; productId?: string; variantId?: string | null; available?: number; requested?: number; reason?: string };
+export type StatusFailure = { ok: false; code: string; messageAr: string; problems?: DeliveryProblem[] };
+
+const REASON_AR: Record<string, string> = {
+  PRODUCT_NOT_FOUND: 'المنتج لم يعد موجودًا',
+  VARIANT_NOT_FOUND: 'اللون/المقاس لم يعد موجودًا في المنتج',
+  DUPLICATE_VARIANT_ID: 'اللون/المقاس مكرر في المنتج (غير محدد)',
+  AMBIGUOUS_VARIANT: 'المنتج أصبح بألوان/مقاسات ولم يُحدد أيّها',
+  STOCK_UNTRACKED: 'لا يوجد رقم مخزون صالح لهذا المنتج/اللون/المقاس',
+};
+/** one Arabic line per problem, for the admin toast; `name` = the item name shown in the order */
+export function problemLineAr(p: DeliveryProblem, name: string): string {
+  if (p.reason) return `• ${name}: ${REASON_AR[p.reason] || p.reason}`;
+  return `• ${name}: المتوفر ${p.available ?? 0}، المطلوب ${p.requested ?? 0}`;
+}
 export type StatusResult = { ok: true; status: AdminStatus; inventory: InventoryState | null; changed: boolean } | StatusFailure;
 
 export type AdminDeps = {
@@ -53,6 +68,8 @@ export type AdminDeps = {
 };
 
 const MESSAGES_AR: Record<string, string> = {
+  ITEMS_MISSING: 'لا يمكن التسليم: منتج أو لون/مقاس في هذا الطلب لم يعد موجودًا، فلا يمكن خصم كميته. لم تتغير الحالة ولا أي كمية. أعد المنتج/الصنف كما كان، أو ألغِ الطلب.',
+  STOCK_UNTRACKED: 'لا يمكن التسليم: منتج أو لون/مقاس في هذا الطلب ليس له رقم مخزون صالح، فلا يمكن خصم كميته. لم تتغير الحالة ولا أي كمية. أدخل رقم المخزون الصحيح من صفحة المنتج ثم أعد المحاولة.',
   INSUFFICIENT_STOCK: 'لا يمكن التسليم: المخزون المسجّل أقل من كمية الطلب (ربما عُدّل يدويًا). صحّح المخزون من صفحة المنتج ثم أعد المحاولة. لم يُخصم شيء.',
   RETURN_CONFIRMATION_REQUIRED: 'إلغاء طلب مُسلَّم يحتاج تأكيد استرجاع المنتجات فعليًا.',
   TRANSITION_NOT_ALLOWED: 'لا يمكن نقل الطلب إلى هذه الحالة من حالته الحالية.',
@@ -109,8 +126,8 @@ export async function changeStatusViaWorker(
     const inv = typeof r.body.inventory === 'string' ? (r.body.inventory as InventoryState) : null;
     return { ok: true, status, inventory: inv, changed: r.body.result === 'changed' };
   }
-  if (code === 'INSUFFICIENT_STOCK' && Array.isArray(r.body?.problems)) {
-    return fail(code, { problems: r.body!.problems as Array<{ index: number; productId?: string; available: number; requested: number }> });
+  if ((code === 'INSUFFICIENT_STOCK' || code === 'ITEMS_MISSING' || code === 'STOCK_UNTRACKED') && Array.isArray(r.body?.problems)) {
+    return fail(code, { problems: r.body!.problems as DeliveryProblem[] });
   }
   return fail(code);
 }

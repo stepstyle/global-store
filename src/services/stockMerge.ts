@@ -66,3 +66,24 @@ export class StaleStockError extends Error {
     this.conflicts = conflicts;
   }
 }
+
+/** the Firestore functions used here, injected (storage.ts passes the app's; the emulator tests pass the SDK's) */
+export type FirestoreTxApi = {
+  runTransaction: (db: any, fn: (tx: any) => Promise<unknown>) => Promise<unknown>;
+  doc: (db: any, collection: string, id: string) => any;
+};
+
+/**
+ * Save a product edited in the admin editor: read the CURRENT document and write the merged product in ONE
+ * transaction (the SDK retries it if the product changes in between, e.g. a delivery committed meanwhile).
+ * Throws StaleStockError (nothing written) on a real conflict.
+ */
+export async function saveProductGuarded(api: FirestoreTxApi, db: any, product: Record<string, unknown>, baseline: StockLike, clean: (p: any) => any = (p) => p): Promise<void> {
+  const ref = api.doc(db, 'products', String(product.id));
+  await api.runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const merged = mergeStockForSave(product, baseline, snap.exists() ? snap.data() : null);
+    if (!merged.ok) throw new StaleStockError((merged as { conflicts: string[] }).conflicts);
+    tx.set(ref, clean((merged as { product: unknown }).product), { merge: true });
+  });
+}

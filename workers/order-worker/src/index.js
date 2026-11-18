@@ -19,7 +19,7 @@ import { ORDER_ID_RE } from './validate.js';
 import { AuthError, bearerToken, verifyFirebaseIdToken } from './auth.js';
 import { handleTelegramWebhook } from './telegram.js';
 import { requireAdmin } from './admin.js';
-import { changeOrderStatus } from './fulfilment.js';
+import { changeOrderStatus, syncDirectStatusChanges } from './fulfilment.js';
 
 const STATUS_PATH = /^\/orders\/([^/]+)\/status$/;
 const ADMIN_STATUS_PATH = /^\/admin\/orders\/([^/]+)\/status$/;
@@ -219,8 +219,10 @@ export default {
     const job = (async () => {
       const retried = await retryPendingNotifications(fs, cfg);
       const rec = await reconcileOrphans(fs, cfg);
-      log('cron.done', { retried, reconcile: rec.enabled, processed: rec.processed, skipped: rec.skipped.length });
-      return { retried, reconcile: rec };
+      // rollback safety net, off by default (SYNC_DIRECT_STATUS); a failure never blocks the notifications above
+      const sync = await syncDirectStatusChanges(fs, cfg).catch((e) => ({ enabled: true, error: String(e?.message || e).slice(0, 120) }));
+      log('cron.done', { retried, reconcile: rec.enabled, processed: rec.processed, skipped: rec.skipped.length, sync });
+      return { retried, reconcile: rec, sync };
     })();
     if (ctx?.waitUntil) ctx.waitUntil(job);
     return job;
