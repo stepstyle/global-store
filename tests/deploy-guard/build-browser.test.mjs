@@ -93,9 +93,11 @@ await t('X01', 'production build keeps production behaviour: Firebase config, Wo
   const txt = allText(b.out);
   assert.ok(txt.includes(FAKE.VITE_WORKER_URL.trim()), 'worker url missing from production bundle');
   assert.ok(txt.includes(PROD_CFG.projectId) && txt.includes(PROD_CFG.apiKey), 'firebase config missing');
-  const srcHtml = readFileSync(join(ROOT, 'index.html'), 'utf8');
-  const builtHtml = readFileSync(join(b.out, 'index.html'), 'utf8');
-  for (const block of srcHtml.match(/<script>[\s\S]*?<\/script>|<script async[^>]*><\/script>/g)) assert.ok(builtHtml.includes(block), 'tracking block changed');
+  // GA + Meta Pixel: loaded by src/services/tracking.ts after cookie consent — the PRODUCTION bundle carries the
+  // loader with both ids (no inline tags in index.html any more)
+  for (const id of ['G-E4P313LDJ0', '406363479141487', 'googletagmanager.com/gtag/js', 'connect.facebook.net/en_US/fbevents.js']) {
+    assert.ok(txt.includes(id), `production tracking loader missing: ${id}`);
+  }
   return b.decision;
 });
 

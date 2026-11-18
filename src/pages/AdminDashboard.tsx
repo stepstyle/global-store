@@ -469,7 +469,8 @@ const AdminDashboard: React.FC = () => {
 
   // 🚀 [تعديل 1]: تحسين تحديث حالة الطلب ليكون احترافي ومحمي من التعليق
   const handleUpdateOrderStatus = async (id: string, newStatus: any) => {
-    const actionNames: any = { processing: 'قبول الطلب', shipped: 'شحن الطلب', delivered: 'تسليم الطلب', cancelled: 'إلغاء الطلب' };
+    // orders are accepted automatically: moving to "processing" STARTS the preparation (no acceptance step)
+    const actionNames: any = { processing: 'بدء تجهيز الطلب', shipped: 'شحن الطلب', delivered: 'تسليم الطلب', cancelled: 'إلغاء الطلب' };
 
     // Orders of the order Worker with stock on DELIVERY: the status (and the stock) change ONLY through the Worker,
     // in one atomic step — delivered deducts once, cancelled releases the reservation, a return puts the stock back
@@ -1330,7 +1331,7 @@ const AdminDashboard: React.FC = () => {
                                 onClick={() => handleUpdateOrderStatus(order.id, 'processing')}
                                 className="px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold hover:bg-emerald-100 border border-emerald-100"
                               >
-                                قبول
+                                بدء التجهيز
                               </button>
                             )}
                             
@@ -1619,7 +1620,7 @@ const AdminDashboard: React.FC = () => {
             <div className="p-5 border-t border-slate-100 bg-white rounded-b-3xl">
               <div className="flex flex-wrap items-center gap-2">
                 {selectedOrderStatus === 'new' && (
-                  <Button disabled={processingOrderId === selectedOrder.id} onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'processing')}>قبول الطلب</Button>
+                  <Button disabled={processingOrderId === selectedOrder.id} onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'processing')}>بدء التجهيز</Button>
                 )}
                 {selectedOrderStatus === 'processing' && (
                   <Button disabled={processingOrderId === selectedOrder.id} onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'shipped')}>قيد الشحن</Button>

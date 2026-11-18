@@ -255,8 +255,15 @@ test('vite.config.ts: envDir env/staging + .env watcher ignore ONLY in mode stag
 
 // ------------------------------------------------------------------ production trackers: dev server only
 test('dev server serves index.html WITHOUT Google Analytics / Meta Pixel; builds keep it byte-identical', () => {
-  const html = readFileSync(join(ROOT, 'index.html'), 'utf8');
-  assert.match(html, /googletagmanager\.com/, 'the production page does load the trackers');
+  // index.html itself no longer carries the trackers (src/services/tracking.ts loads them after consent, production
+  // only); the dev-server stripping is still checked on the real page with the old inline snippets added back
+  const real = readFileSync(join(ROOT, 'index.html'), 'utf8');
+  assert.doesNotMatch(real, /googletagmanager|connect\.facebook\.net|fbq\(/, 'index.html loads no tracker');
+  const html = real.replace('</head>', `<script async src="https://www.googletagmanager.com/gtag/js?id=G-E4P313LDJ0"></script>
+<script>window.dataLayer = window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag('js', new Date()); gtag('config', 'G-E4P313LDJ0');</script>
+<script>!function(f,b,e,v){f.fbq=function(){};}(window, document,'script','https://connect.facebook.net/en_US/fbevents.js'); fbq('init', '406363479141487'); fbq('track', 'PageView');</script>
+</head>`);
+  assert.match(html, /googletagmanager\.com/, 'fixture carries the trackers');
   const stripped = stripProductionTrackers(html);
   assert.doesNotMatch(stripped, /googletagmanager|connect\.facebook\.net|fbq\(|gtag\(|G-E4P313LDJ0|406363479141487/);
   assert.match(stripped, /<div id="root"><\/div>/);

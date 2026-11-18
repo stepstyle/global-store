@@ -1,7 +1,8 @@
 // src/pages/Home.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
+  Search,
   ArrowLeft,
   TrendingUp,
   Truck,
@@ -39,6 +40,7 @@ import { useCart } from '../App';
 import SEO from '../components/SEO';
 import { ProductSkeletonGrid } from '../components/Skeleton';
 import { shopTo } from '../config/nav';
+import { STORE_WHATSAPP_URL } from '../config/contact';
 // 🚀 استدعاء المكتشف الذكي
 import SmartFinder from '../components/SmartFinder'; 
 
@@ -71,8 +73,16 @@ const ROTATE_MS = 6500;
 const FB_URL = 'https://www.facebook.com/maktabatdayrsharafaleilmia/';
 const IG_URL = 'https://www.instagram.com/deirsharaf/';
 const MAPS_URL = 'https://maps.app.goo.gl/JeK1tvF4jysnLgjM9?g_st=iw';
-const WA_NUMBER = '9627XXXXXXXX'; 
-const WA_URL = `https://wa.me/${WA_NUMBER}`;
+const WA_URL = STORE_WHATSAPP_URL;
+
+// Mobile quick access (first screen): the store's main departments, same routes as the header menu.
+const QUICK_CATEGORIES = [
+  { category: 'Stationery', labelAr: 'القرطاسية', labelEn: 'Stationery', image: '/images/categories/pens.png' },
+  { category: 'Games', labelAr: 'الألعاب', labelEn: 'Toys', image: '/images/categories/blocks.png' },
+  { category: 'BabyGear', labelAr: 'مركبات الأطفال', labelEn: 'Ride-ons', image: '/images/categories/bicycles.png' },
+  { category: 'Gifts', labelAr: 'الهدايا', labelEn: 'Gifts', image: '/images/categories/gift-boxes.png' },
+  { category: 'Offers', labelAr: 'العروض', labelEn: 'Offers', image: '/images/categories/discount.png' },
+];
 
 const GAMES_SHOWCASE = [
   { sub: 'montessori', labelAr: 'ألعاب اطفال ', labelEn: 'Montessori', Icon: Shapes, image: '/images/categories/montessori.png' },
@@ -221,6 +231,21 @@ const Home: React.FC = () => {
   const isRTL = useMemo(() => (language ?? 'ar') === 'ar', [language]);
   const L = useCallback((ar: string, en: string) => ((language ?? 'ar') === 'ar' ? ar : en), [language]);
 
+  const navigate = useNavigate();
+  const [quickQuery, setQuickQuery] = useState('');
+  const onQuickSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = quickQuery.trim();
+    navigate(q ? `/shop?search=${encodeURIComponent(q)}` : '/shop');
+  };
+
+  // «العروض» shows only while the Offers category has products (same rule as the shop's category filter), so it never
+  // opens an empty page. It reappears by itself as soon as a product is filed under Offers.
+  const quickCategories = useMemo(() => {
+    const hasOffers = Array.isArray(products) && products.some((p: any) => p?.category === 'Offers');
+    return QUICK_CATEGORIES.filter((c) => c.category !== 'Offers' || hasOffers);
+  }, [products]);
+
   const slides = useMemo<HeroSlide[]>(() => [
     {
       key: 'back-to-school',
@@ -314,9 +339,41 @@ const Home: React.FC = () => {
     <div className="min-h-screen">
       <SEO title={String(t('home') ?? 'Home')} description={slide?.desc} type="website" />
 
+      {/* Mobile quick access: search + departments on the first screen (desktop already has both in the header) */}
+      <section className="lg:hidden bg-white border-b border-slate-100" aria-label={L('بحث وأقسام', 'Search and departments')}>
+        <div className="container mx-auto px-4 pt-4 pb-3">
+          <form onSubmit={onQuickSearch} role="search" className="relative">
+            <label htmlFor="home-quick-search" className="sr-only">{L('ابحث في المتجر', 'Search the store')}</label>
+            <input
+              id="home-quick-search"
+              type="search"
+              enterKeyHint="search"
+              value={quickQuery}
+              onChange={(e) => setQuickQuery(e.target.value)}
+              placeholder={L('دوّر على قلم، شنطة، لعبة…', 'Search pens, bags, toys…')}
+              className="w-full h-12 ps-11 pe-4 rounded-2xl bg-slate-50 border-2 border-slate-200 text-[15px] font-semibold text-ink placeholder:text-slate-400 outline-none focus:border-secondary-DEFAULT focus:bg-white transition-colors"
+            />
+            <button type="submit" aria-label={L('بحث', 'Search')} className="absolute start-1.5 top-1.5 w-9 h-9 rounded-xl bg-primary-DEFAULT text-ink flex items-center justify-center">
+              <Search size={18} strokeWidth={2.5} />
+            </button>
+          </form>
+
+          <nav aria-label={L('الأقسام', 'Departments')} className="mt-3 -mx-4 px-4 flex gap-3 overflow-x-auto scrollbar-hide">
+            {quickCategories.map((c) => (
+              <Link key={c.category} to={shopTo(c.category)} className="shrink-0 w-[68px] flex flex-col items-center gap-1.5 text-center group">
+                <span className="w-[60px] h-[60px] rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden flex items-center justify-center group-active:scale-95 transition-transform">
+                  <img src={c.image} alt="" width={60} height={60} loading="eager" decoding="async" className="w-full h-full object-cover" />
+                </span>
+                <span className="text-[12px] font-bold text-ink leading-tight">{L(c.labelAr, c.labelEn)}</span>
+              </Link>
+            ))}
+          </nav>
+        </div>
+      </section>
+
       {/* Hero Section */}
       <section
-        className="relative overflow-hidden bg-slate-50 py-12 lg:py-28"
+        className="relative overflow-hidden bg-slate-50 py-8 lg:py-28"
         onMouseEnter={() => setIsPaused(true)}
         onMouseLeave={() => setIsPaused(false)}
         onFocusCapture={() => setIsPaused(true)}
@@ -414,7 +471,8 @@ const Home: React.FC = () => {
               )}
             </div>
 
-            <div className="flex-1 relative animate-in zoom-in duration-1000 w-full order-1 lg:order-2">
+            {/* On phones the photo pushed every product below the fold; it is shown from lg up only. */}
+            <div className="hidden lg:block flex-1 relative animate-in zoom-in duration-1000 w-full order-1 lg:order-2">
               <div className="relative z-10 bg-white p-3 lg:p-4 rounded-3xl shadow-2xl lg:rotate-3 lg:hover:rotate-0 transition-transform duration-500">
                 <div className="rounded-2xl bg-slate-100 overflow-hidden">
                   <img

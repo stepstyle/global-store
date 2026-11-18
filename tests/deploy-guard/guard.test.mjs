@@ -111,8 +111,18 @@ await t('U02', 'sandbox env prefix is not a prefix of any VITE_* name', async ()
   assert.ok(!'VITE_WORKER_URL'.startsWith(SANDBOX_ENV_PREFIX) && SANDBOX_ENV_PREFIX.length > 8);
 });
 
+const TRACKER_SNIPPET = `<script async src="https://www.googletagmanager.com/gtag/js?id=G-E4P313LDJ0"></script>
+<script>window.dataLayer = window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag('js', new Date()); gtag('config', 'G-E4P313LDJ0');</script>
+<script>!function(f,b,e,v){f.fbq=function(){};}(window, document,'script','https://connect.facebook.net/en_US/fbevents.js'); fbq('init', '406363479141487'); fbq('track', 'PageView');</script>
+`;
 await t('U03', 'stripTracking removes GA + Meta Pixel from the real index.html and keeps the app entry', async () => {
-  const html = readFileSync(join(ROOT, 'index.html'), 'utf8');
+  // the trackers are no longer in index.html at all (loaded after cookie consent, production only:
+  // src/services/tracking.ts). stripTracking stays as a second line of defence, checked on the real page with the
+  // old inline snippets added back.
+  const real = readFileSync(join(ROOT, 'index.html'), 'utf8');
+  assert.ok(!/googletagmanager|fbq\(|connect\.facebook\.net/.test(real), 'index.html loads no tracker');
+  assert.match(readFileSync(join(ROOT, 'src/services/tracking.ts'), 'utf8'), /if \(!IS_LIVE\) return;/, 'tracking.ts: production only');
+  const html = real.replace('</head>', `${TRACKER_SNIPPET}</head>`);
   assert.ok(/googletagmanager|fbq\(/.test(html), 'fixture should contain the tags');
   const out = stripTracking(html);
   for (const m of ['googletagmanager.com', 'gtag(', 'fbq(', 'connect.facebook.net', 'dataLayer']) assert.ok(!out.includes(m), m);

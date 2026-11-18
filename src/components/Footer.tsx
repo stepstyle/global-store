@@ -4,6 +4,7 @@ import * as ReactRouterDOM from 'react-router-dom';
 import { Facebook, Instagram, Twitter, Mail, MapPin, MessageCircle } from 'lucide-react';
 import Button from './Button';
 import { useCart } from '../App';
+import { STORE_PHONE_LOCAL, STORE_TEL_URL, STORE_WHATSAPP_URL } from '../config/contact';
 
 const { Link } = ReactRouterDOM as any;
 
@@ -62,11 +63,11 @@ const Footer: React.FC = () => {
     freeShippingEn: 'Free shipping for orders over 20 JOD',
     paymentAr: 'الدفع: كاش أو تحويل عن طريق كليك',
     paymentEn: 'Payment: Cash or CliQ transfer',
-    phoneDisplay: '+962 7X XXX XXXX',
-    phoneTel: 'tel:+9627XXXXXXXX',
+    phoneDisplay: STORE_PHONE_LOCAL,
+    phoneTel: STORE_TEL_URL,
     email: 'support@deirsharaf.com',
     social: {
-      whatsapp: `https://wa.me/9627XXXXXXXX`,
+      whatsapp: STORE_WHATSAPP_URL,
       facebook: 'https://www.facebook.com/maktabatdayrsharafaleilmia/',
       instagram: 'https://www.instagram.com/deirsharaf/',
       maps: 'https://maps.app.goo.gl/JeK1tvF4jysnLgjM9?g_st=iw'

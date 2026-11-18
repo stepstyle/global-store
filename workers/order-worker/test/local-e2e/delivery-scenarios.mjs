@@ -216,7 +216,7 @@ export function buildDeliveryScenarios(ctx) {
       const o = await newOrder([line('p-simple', 3)]);
       await openDashboard(t);
       await openOrderDetails(t, o.id);
-      await clickButton(t, 'قبول الطلب');
+      await clickButton(t, 'بدء التجهيز');
       await statusIs(o.id, 'processing');
       await clickButton(t, 'قيد الشحن');
       await statusIs(o.id, 'shipped');

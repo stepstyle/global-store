@@ -1,9 +1,9 @@
 // src/components/CookieBanner.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as ReactRouterDOM from 'react-router-dom';
-import Button from './Button';
-import { ShieldCheck, X } from 'lucide-react';
+import { ShieldCheck } from 'lucide-react';
 import { useCart } from '../App';
+import { loadTracking } from '../services/tracking';
 
 const { Link } = ReactRouterDOM as any;
 
@@ -53,6 +53,7 @@ const CookieBanner: React.FC = () => {
   const accept = useCallback(() => {
     safeStorage.set(COOKIE_KEY, 'accepted');
     setShow(false);
+    loadTracking(); // analytics start only now, after consent
   }, []);
 
   const decline = useCallback(() => {
@@ -62,6 +63,8 @@ const CookieBanner: React.FC = () => {
 
   useEffect(() => {
     const choice = safeStorage.get(COOKIE_KEY) as CookieChoice | null;
+    // Accepted on an earlier visit → load analytics. Declined or no choice yet → nothing is loaded.
+    if (choice === 'accepted') loadTracking();
     if (choice === 'accepted' || choice === 'declined') return;
 
     // تأخير الظهور قليلاً ليعطي فرصة للمحتوى الأساسي بالتحميل
@@ -80,74 +83,48 @@ const CookieBanner: React.FC = () => {
 
   if (!show) return null;
 
+  // Compact bar docked to the bottom edge: one short line + two buttons, so it never covers the page content
+  // (the previous card covered about half of a phone screen). Same storage key and same accept/decline behaviour.
   return (
     <div
-      role="dialog"
-      aria-modal="false"
+      role="region"
+      aria-label={language === 'ar' ? 'ملفات تعريف الارتباط' : 'Cookies'}
       aria-live="polite"
       className={[
-        'fixed bottom-6 left-4 right-4 md:left-8 md:right-auto md:max-w-md z-[100]',
-        'bg-slate-950/95 backdrop-blur-xl text-white shadow-2xl shadow-black/40 border border-white/10 rounded-[2rem] p-6',
-        prefersReducedMotion ? '' : 'animate-in fade-in slide-in-from-bottom-10 duration-700 ease-out',
+        'fixed inset-x-0 bottom-0 z-[100] px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pointer-events-none',
+        'md:inset-x-auto md:start-6 md:bottom-6 md:px-0 md:pb-0 md:max-w-lg',
+        prefersReducedMotion ? '' : 'animate-in fade-in slide-in-from-bottom-4 duration-500 ease-out',
       ].join(' ')}
     >
-      <div className="flex flex-col gap-5">
-        {/* Header: Icon + Title + Close */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-sky-500/20 flex items-center justify-center text-sky-400 shadow-inner">
-              <ShieldCheck size={24} strokeWidth={2.5} />
-            </div>
-            <h3 className="font-heading font-black text-lg tracking-tight">
-              {language === 'ar' ? 'خصوصيتك تهمنا' : 'Cookie Policy'}
-            </h3>
-          </div>
-          <button
-            type="button"
-            onClick={decline} // تم التعديل هنا لحفظ القرار بدلاً من الإخفاء فقط
-            className="p-2 rounded-xl hover:bg-white/10 transition-colors text-slate-400 hover:text-white"
-            aria-label="Close"
+      <div className="pointer-events-auto flex items-center gap-2.5 rounded-2xl bg-ink/95 backdrop-blur-md text-white shadow-xl shadow-black/25 border border-white/10 ps-3.5 pe-2 py-2">
+        <ShieldCheck size={18} strokeWidth={2.5} className="shrink-0 text-secondary-light" aria-hidden="true" />
+        <p className="flex-1 min-w-0 text-[12.5px] leading-snug text-slate-200">
+          {language === 'ar'
+            ? 'نستخدم ملفات الارتباط لتحسين تجربتك وتحليل الزيارات والإعلانات.'
+            : 'We use cookies to improve your experience, analyse traffic and personalise ads.'}{' '}
+          <Link
+            to="/privacy"
+            onClick={scrollToTopInstant}
+            className="text-secondary-light font-bold underline-offset-2 hover:underline"
           >
-            <X size={20} strokeWidth={3} />
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="space-y-4">
-          <p className="text-sm font-medium text-slate-300 leading-relaxed">
-            {t('cookieText')}{' '}
-            <Link
-              to="/privacy"
-              onClick={scrollToTopInstant}
-              className="text-sky-400 font-black hover:underline transition-all"
-            >
-              {t('privacyPolicy')}
-            </Link>
-            .
-          </p>
-
-          {/* Actions */}
-          <div className="flex flex-row-reverse items-center gap-3">
-            <Button 
-              size="sm" 
-              onClick={accept} 
-              className="flex-1 bg-sky-500 hover:bg-sky-600 shadow-lg shadow-sky-500/20"
-            >
-              {t('agree')}
-            </Button>
-            
-            <button
-              onClick={decline}
-              className="flex-1 px-4 py-2.5 rounded-2xl text-sm font-black text-slate-400 hover:text-white hover:bg-white/5 transition-all"
-            >
-              {t('decline')}
-            </button>
-          </div>
-        </div>
+            {t('privacyPolicy')}
+          </Link>
+        </p>
+        <button
+          type="button"
+          onClick={decline}
+          className="shrink-0 h-10 px-3 rounded-xl text-[13px] font-bold text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+        >
+          {t('decline')}
+        </button>
+        <button
+          type="button"
+          onClick={accept}
+          className="shrink-0 h-10 px-4 rounded-xl text-[13px] font-extrabold bg-primary-DEFAULT text-ink hover:bg-primary-dark transition-colors"
+        >
+          {t('agree')}
+        </button>
       </div>
-
-      {/* لمسة فنية: تدرج لوني خفيف خلف الأيقونة */}
-      <div className="absolute -z-10 top-0 left-0 w-24 h-24 bg-sky-500/10 blur-[50px] rounded-full pointer-events-none" />
     </div>
   );
 };
