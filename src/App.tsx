@@ -117,6 +117,7 @@ const generateCartItemId = (product: Product, selectedVariant?: any) => {
 // =========================================================
 const App: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
+  const [catalogError, setCatalogError] = useState(false);
   // initialised from storage synchronously: the save effect below can never overwrite a saved cart with []
   const [cart, setCart] = useState<CartItem[]>(() => readStoredCart<CartItem>(browserStorage()));
   const [wishlist, setWishlist] = useState<Set<string>>(new Set());
@@ -158,7 +159,12 @@ const App: React.FC = () => {
     try {
       const data = await storageDb.products.getAll();
       setProducts(data || []);
-    } catch (e) { console.error(e); }
+      setCatalogError(false);
+    } catch (e) {
+      console.error(e);
+      // never replaced by demo products: the visitor is told the catalogue could not be loaded
+      setCatalogError(true);
+    }
   }, []);
 
   const addProducts = useCallback(async (newProducts: Product[]) => {
@@ -370,6 +376,12 @@ const App: React.FC = () => {
           {/* Toast System (restored: removed by mistake in 1bf3d27, so every showToast was invisible) */}
           <ToastContainer toasts={toasts} onClose={removeToast} closeLabel={language === 'ar' ? 'إغلاق' : 'Close'} />
 
+          {catalogError && (
+            <div role="alert" data-testid="catalog-error" className="bg-rose-50 border-b border-rose-200 text-rose-800 text-center text-[14px] font-semibold px-4 py-3">
+              {language === 'ar' ? 'تعذّر تحميل منتجات المكتبة الآن. أعد تحميل الصفحة بعد قليل.' : 'The store’s products could not be loaded. Please reload the page shortly.'}
+              <button type="button" onClick={() => refreshProducts()} className="ms-3 underline font-bold">{language === 'ar' ? 'إعادة المحاولة' : 'Retry'}</button>
+            </div>
+          )}
           <main className="flex-grow">
             <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-10 h-10 border-4 border-t-blue-600 rounded-full animate-spin" /></div>}>
               <Routes>

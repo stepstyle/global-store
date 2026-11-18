@@ -205,6 +205,9 @@ if (!CHROME || !existsSync(CHROME)) {
     const reset = () => { net.length = 0; exceptions.length = 0; dialogs.length = 0; windowOpens.length = 0; apiHits.length = 0; nodeOutbound.length = 0; };
     // anything that is not a static GET (fonts / images) counts as an outbound attempt
     const writes = () => net.filter((r) => r.method !== 'GET' || !['Stylesheet', 'Font', 'Image', 'Media', 'Document'].includes(r.type));
+    // sandbox builds show the read-only snapshot of the REAL catalogue (public/catalog-snapshot.json), never demo products:
+    // the product pages under test are real ones (first plain in-stock product of the snapshot)
+    const REAL = JSON.parse(readFileSync(join(ROOT, 'public/catalog-snapshot.json'), 'utf8')).products.find((p) => !(p.variants || []).length && Number(p.stock) > 0);
     const PRODUCT = { id: 'p-test', name: 'دفتر اختبار', nameEn: 'Test notebook', price: 2.5, category: 'stationery', subCategory: 'notebooks', stock: 40, image: '/favicon.ico', images: ['/favicon.ico'], rating: 5, reviews: 0, description: 'x', descriptionEn: 'x' };
     // the dashboard opens only for the owner address hard-coded in AdminDashboard.tsx; it is read from source here,
     // used only inside this throw-away local browser profile, and never printed
@@ -227,7 +230,7 @@ if (!CHROME || !existsSync(CHROME)) {
     // ---------- X17: every route renders in sandbox, no uncaught exception, banner + marker present
     await t('X17', 'every route renders in a sandbox build: no uncaught exception, test banner shown, zero outbound', async () => {
       await seed();
-      const ROUTES = ['/', '/shop', '/product/p-test', '/cart', '/wishlist', '/login', '/tracking', '/checkout', '/order-success/ORD-X', '/my-orders', '/account', '/admin', '/admin/product/new', '/admin/product/edit', '/admin-secure', '/does-not-exist'];
+      const ROUTES = ['/', '/shop', `/product/${REAL.id}`, '/cart', '/wishlist', '/login', '/tracking', '/checkout', '/order-success/ORD-X', '/my-orders', '/account', '/admin', '/admin/product/new', '/admin/product/edit', '/admin-secure', '/does-not-exist'];
       reset();
       const bad = [];
       for (const r of ROUTES) {
@@ -302,7 +305,7 @@ if (!CHROME || !existsSync(CHROME)) {
     // ---------- X05 / X20: localStorage relink to the PRODUCTION Firebase project
     await t('X05', 'production Firebase config injected in localStorage (anta_firebase_config) is ignored: no Firebase traffic on any page', async () => {
       await seed({ anta_firebase_config: JSON.stringify(PROD_CFG) }); reset();
-      for (const r of ['/', '/login', '/account', '/admin', '/checkout', '/product/p-test']) await go(r);
+      for (const r of ['/', '/login', '/account', '/admin', '/checkout', `/product/${REAL.id}`]) await go(r);
       const fbTraffic = net.filter((r) => /googleapis\.com|firebaseio|firebaseapp|identitytoolkit|securetoken/.test(r.host) && !['Stylesheet', 'Font'].includes(r.type));
       assert.deepEqual(fbTraffic, []); assert.deepEqual(writes(), []); assert.deepEqual(exceptions, []);
     });
@@ -437,7 +440,7 @@ if (!CHROME || !existsSync(CHROME)) {
 
     await t('T-UI4', 'product page add-to-cart: success toast for the customer', async () => {
       await seed(); await ev(`localStorage.setItem('anta_cart', '[]')`); reset();
-      await go('/product/p-test');
+      await go(`/product/${REAL.id}`);
       const clicked = await ev(`(() => { const b = [...document.querySelectorAll('button')].filter((x) => x.offsetParent).find((x) => /أضف\\s*(إلى\\s*|الى\\s*)?(لل|ال)سلة|Add to cart/i.test(x.innerText.trim())); if (!b) return false; b.click(); return b.innerText.trim(); })()`);
       assert.ok(clicked, 'no add-to-cart button');
       assert.ok(await waitFor(`document.querySelectorAll('[data-toast-type="success"], [data-toast-type="info"]').length > 0`, 4000), 'no toast after add to cart');

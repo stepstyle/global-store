@@ -1,6 +1,5 @@
 // src/services/storage.ts
 import { Product, Order, User } from '../types';
-import { MOCK_PRODUCTS, MOCK_ORDERS } from '../constants';
 import { db as firestore, auth, isFirebaseInitialized } from './firebase';
 
 import {
@@ -140,12 +139,41 @@ const ensureProductSearchFields = (p: Product): Product => {
 /**
  * ✅ Local fallback only (when Firebase isn't available)
  */
-const initLocalData = () => {
-  if (!localStorage.getItem(KEYS.PRODUCTS)) {
-    localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(MOCK_PRODUCTS));
+// The catalogue WITHOUT Firebase (isolated Vercel previews) = a read-only snapshot of the store's REAL public catalogue
+// (/catalog-snapshot.json, exported with public reads only). Generated demo products are never shown: if the snapshot
+// cannot be loaded, the products call fails and the site says so instead of inventing products.
+const CATALOG_SNAPSHOT_URL = '/catalog-snapshot.json';
+const CATALOG_SOURCE_KEY = 'anta_catalog_source';
+let snapshotLoad: Promise<void> | null = null;
+export class CatalogUnavailableError extends Error {
+  constructor() { super('catalog snapshot unavailable'); this.name = 'CatalogUnavailableError'; }
+}
+const ensureLocalCatalog = (): Promise<void> => {
+  if (!snapshotLoad) {
+    snapshotLoad = (async () => {
+      const r = await fetch(CATALOG_SNAPSHOT_URL, { cache: 'no-cache' });
+      if (!r.ok) throw new CatalogUnavailableError();
+      const data = await r.json();
+      if (!Array.isArray(data?.products) || !data.products.length) throw new CatalogUnavailableError();
+      const marker = `snapshot:${data.exportedAt || ''}:${data.products.length}`;
+      // replaces anything older in this browser (e.g. demo products cached by an earlier preview)
+      if (localStorage.getItem(CATALOG_SOURCE_KEY) !== marker) {
+        localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(data.products));
+        localStorage.setItem(CATALOG_SOURCE_KEY, marker);
+      }
+    })().catch((e) => {
+      snapshotLoad = null; // a later call may retry
+      throw e instanceof CatalogUnavailableError ? e : new CatalogUnavailableError();
+    });
   }
+  return snapshotLoad;
+};
+
+const initLocalData = () => {
+  // no generated demo products / orders any more (they looked like the store's catalogue)
+  if (!localStorage.getItem(CATALOG_SOURCE_KEY)) localStorage.removeItem(KEYS.PRODUCTS);
   if (!localStorage.getItem(KEYS.ORDERS)) {
-    localStorage.setItem(KEYS.ORDERS, JSON.stringify(MOCK_ORDERS));
+    localStorage.setItem(KEYS.ORDERS, JSON.stringify([]));
   }
   if (!localStorage.getItem(KEYS.USERS)) {
     const defaultAdmin: User = {
@@ -203,9 +231,8 @@ export const db = {
         }
       }
 
-      return new Promise((resolve) => {
-        setTimeout(() => resolve(JSON.parse(localStorage.getItem(KEYS.PRODUCTS) || '[]')), 300);
-      });
+      await ensureLocalCatalog();
+      return JSON.parse(localStorage.getItem(KEYS.PRODUCTS) || '[]');
     },
 
     list: async (args: ProductListArgs): Promise<ProductListResult> => {
@@ -221,6 +248,7 @@ export const db = {
       } = args || {};
 
       if (!firebaseReady()) {
+        await ensureLocalCatalog();
         const all = JSON.parse(localStorage.getItem(KEYS.PRODUCTS) || '[]') as any[];
         const qNorm = normalizeIndex(q);
 
@@ -303,6 +331,7 @@ export const db = {
         return docSnap.exists() ? ({ ...(docSnap.data() as any), id: docSnap.id } as Product) : undefined;
       }
 
+      await ensureLocalCatalog();
       const products = JSON.parse(localStorage.getItem(KEYS.PRODUCTS) || '[]');
       return products.find((p: Product) => p.id === id);
     },
