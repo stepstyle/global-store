@@ -40,6 +40,9 @@ const safeText = (v: any) => String(v ?? '').trim();
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
 
+// Facebook sign-in is HIDDEN until the Meta app allows the redirect URI https://auth.dairsharaf.com/__/auth/handler
+// ("URL blocked" today). The code stays; set this to true after the Meta fix and a verified sign-in.
+const FACEBOOK_LOGIN_ENABLED = false;
 const facebookProvider = new FacebookAuthProvider();
 facebookProvider.addScope('email');
 
@@ -616,7 +619,7 @@ const Login: React.FC = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className={`grid gap-4 ${FACEBOOK_LOGIN_ENABLED ? 'grid-cols-2' : 'grid-cols-1'}`}>
               <button
                 type="button"
                 onClick={() => handleSocialAuth('google')}
@@ -632,15 +635,17 @@ const Login: React.FC = () => {
                 Google
               </button>
 
-              <button
-                type="button"
-                onClick={() => handleSocialAuth('facebook')}
-                className="flex items-center justify-center gap-2 py-3.5 border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 transition-all text-xs font-black text-slate-700 shadow-sm disabled:opacity-50"
-                disabled={isLoading}
-              >
-                <Facebook size={18} className="text-[#1877F2]" fill="currentColor" stroke="none" />
-                Facebook
-              </button>
+              {FACEBOOK_LOGIN_ENABLED && (
+                <button
+                  type="button"
+                  onClick={() => handleSocialAuth('facebook')}
+                  className="flex items-center justify-center gap-2 py-3.5 border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 transition-all text-xs font-black text-slate-700 shadow-sm disabled:opacity-50"
+                  disabled={isLoading}
+                >
+                  <Facebook size={18} className="text-[#1877F2]" fill="currentColor" stroke="none" />
+                  Facebook
+                </button>
+              )}
             </div>
           </div>
         </div>
