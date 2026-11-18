@@ -295,7 +295,9 @@ export function buildDeliveryScenarios(ctx) {
       await ctx.put('products/p-simple', { ...PRODUCTS['p-simple'], ratingAvg: 4.5, ratingCount: 3 });
       const before = JSON.stringify(await get('products/p-simple'));
       const file = join(ctx.tmpDir, `import-${Date.now()}.csv`);
-      writeFileSync(file, 'id,name,price,stock,category\np-simple,دفتر من الملف,9,0,Stationery\ncsv-new-e2e,منتج جديد,3,4,Stationery\n', 'utf8');
+      // complete rows only: the import refuses a row without id / name / price / stock / category / real image
+      const img = 'https://res.cloudinary.com/demo/image/upload/sample.jpg';
+      writeFileSync(file, `id,name,price,stock,category,image\np-simple,دفتر من الملف,9,0,Stationery,${img}\ncsv-new-e2e,منتج جديد,3,4,Stationery,${img}\n`, 'utf8');
       await openDashboard(t);
       await t.evaluate(`${tab(0)}.click(); true`); // the CSV upload lives in the overview tab
       await t.waitFor(`!!document.querySelector('#csvUpload')`, 20_000, 'csv input');
