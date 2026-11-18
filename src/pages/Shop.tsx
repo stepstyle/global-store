@@ -19,6 +19,7 @@ import { useCart } from '../App';
 import { SortOption } from '../types';
 import { ProductSkeletonGrid } from '../components/Skeleton';
 import SEO from '../components/SEO';
+import { departmentsNamedBy, matchProduct, parseQuery, productSearchEntry, type ProductSearchEntry } from '../utils/arabicSearch';
 
 const ITEMS_PER_PAGE = 24;
 const PRICE_MIN = 0;
@@ -132,20 +133,6 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
   return debounced;
 }
 
-const makePrefixes = (text: string, maxLen = 8) => {
-  const out: string[] = [];
-  const t = safeLower(text).replace(/\s+/g, ' ').trim();
-  if (!t) return out;
-  const parts = t.split(' ').filter(Boolean);
-  for (const w of parts) {
-    const ww = w.trim();
-    if (!ww) continue;
-    for (let i = 1; i <= Math.min(maxLen, ww.length); i += 1) {
-      out.push(ww.slice(0, i));
-    }
-  }
-  return Array.from(new Set(out));
-};
 
 const Shop: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -215,19 +202,14 @@ const Shop: React.FC = () => {
   const debouncedSearch = useDebouncedValue(rawSearch, 180);
   const deferredSearch = useDeferredValue(debouncedSearch);
 
+  // Arabic-aware index: each product's own words (name, English name, brand), normalized once, + its department.
+  // Category / sub-category labels are not searched (see matchProduct in utils/arabicSearch.ts).
   const searchIndex = useMemo(() => {
-    const map = new Map<string, { full: string; prefixes: Set<string> }>();
+    const map = new Map<string, ProductSearchEntry>();
     if (!Array.isArray(products)) return map;
 
     products.forEach((p: any) => {
-      const id = String(p?.id ?? '');
-      const full = `${p.name} ${p.nameEn} ${p.category} ${p.brand || ''} ${p.subcategory || p.subCategory || ''}`.toLowerCase();
-      const prefixes = new Set<string>([
-        ...makePrefixes(p.name || ''),
-        ...makePrefixes(p.nameEn || ''),
-        ...makePrefixes(p.brand || ''),
-      ]);
-      map.set(id, { full, prefixes });
+      map.set(String(p?.id ?? ''), productSearchEntry(p));
     });
 
     return map;
@@ -235,12 +217,18 @@ const Shop: React.FC = () => {
 
   const filteredProducts = useMemo(() => {
     let result = Array.isArray(products) ? [...products] : [];
+    // products whose own name matches the search (shown before products listed only because the query names their department)
+    let ownMatches: Set<string> | null = null;
 
     if (deferredSearch) {
+      const query = parseQuery(deferredSearch);
+      const named = departmentsNamedBy(query);
+      ownMatches = new Set<string>();
       result = result.filter((p) => {
         const entry = searchIndex.get(String(p.id));
-        if (!entry) return false;
-        return entry.full.includes(deferredSearch) || entry.prefixes.has(deferredSearch);
+        const match = entry ? matchProduct(entry, query, named) : null;
+        if (match === 'name') ownMatches!.add(String(p.id));
+        return match !== null;
       });
     }
 
@@ -283,6 +271,12 @@ const Shop: React.FC = () => {
           if (!aNew && bNew) return 1;
           return getIdTimestamp(b?.id) - getIdTimestamp(a?.id);
         });
+        // While searching with the default order: name matches first, then products listed because the query names
+        // their department (sort is stable, so each group keeps the order above). An explicit price/rating sort is kept.
+        if (ownMatches) {
+          const own = ownMatches;
+          result.sort((a, b) => Number(own.has(String(b.id))) - Number(own.has(String(a.id))));
+        }
     }
 
     return result;

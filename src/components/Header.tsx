@@ -23,6 +23,8 @@ import {
 } from 'lucide-react';
 import { useCart } from '../App';
 import { shopTo } from '../config/nav';
+import { STORE_PHONE_LOCAL } from '../config/contact';
+import { matchesQuery, parseQuery, searchableText } from '../utils/arabicSearch';
 
 // 🚀 استدعاء شريط الإعلانات
 import AnnouncementBanner from './AnnouncementBanner'; 
@@ -330,10 +332,11 @@ const Header: React.FC = () => {
   }, []);
 
   const suggestions = useMemo(() => {
-    if (debouncedQuery.length <= 1) return [];
-    const q = debouncedQuery.toLowerCase();
+    if (debouncedQuery.trim().length <= 1) return [];
+    const q = parseQuery(debouncedQuery);
+    if (!q.groups.length) return [];
     return products
-      .filter((p) => (p.name || '').toLowerCase().includes(q) || (p.nameEn || '').toLowerCase().includes(q))
+      .filter((p) => matchesQuery(searchableText([p.name, p.nameEn, (p as any).brand]), q))
       .slice(0, 5);
   }, [debouncedQuery, products]);
 
@@ -354,7 +357,7 @@ const Header: React.FC = () => {
     () => [
       { id: 'ship', icon: '🚚', ar: 'توصيل سريع خلال 24-48 ساعة', en: 'Fast delivery within 24–48 hours', to: '/tracking' },
       { id: 'deals', icon: '🎁', ar: 'عروض أسبوعية حصرية — اضغط للمشاهدة', en: 'Exclusive weekly deals — tap to view', to: '/shop?category=Offers' },
-      { id: 'support', icon: '📞', ar:  'الدعم: - 0796047637 ', en: 'Support: +962 6 000 0000', to: '/contact' },
+      { id: 'support', icon: '📞', ar: `الدعم: ${STORE_PHONE_LOCAL}`, en: `Support: ${STORE_PHONE_LOCAL}`, to: '/contact' },
     ],
     []
   );
@@ -441,7 +444,7 @@ const Header: React.FC = () => {
           </div>
         </div>
 
-        <div className={`w-full flex items-center justify-between px-5 sm:px-6 lg:px-14 2xl:px-24 transition-all duration-300 ${isScrolled ? 'h-[72px]' : 'h-20'}`}>
+        <div className={`w-full flex items-center justify-between px-5 sm:px-6 lg:px-14 2xl:px-24 transition-all duration-300 ${isScrolled ? 'h-14 lg:h-[72px]' : 'h-16 lg:h-20'}`}>
           
           <Link to="/" className="flex items-center group shrink-0 min-w-0" onClick={handleHomeClick}>
             <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center text-white font-extrabold text-xl shadow-lg group-hover:rotate-12 transition-transform duration-300 backdrop-blur-sm border border-white/30 shrink-0">
