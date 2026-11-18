@@ -105,20 +105,21 @@ const Home: React.FC = () => {
       <section className="relative overflow-hidden bg-ink-900 text-white">
         <div className="absolute inset-0 bg-ink-glow" aria-hidden />
         <div className="absolute inset-0 opacity-[0.07] bg-paper-grain [background-size:18px_18px]" aria-hidden />
-        <div className="ds-container relative grid grid-cols-1 lg:grid-cols-[1.05fr_1fr] gap-10 lg:gap-14 items-center py-10 sm:py-14 lg:py-20">
+        <div className="ds-container relative grid grid-cols-1 lg:grid-cols-[1.05fr_1fr] gap-6 sm:gap-10 lg:gap-12 xl:gap-14 items-center py-6 sm:py-14 lg:py-16 xl:py-20">
           <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 ring-1 ring-white/15 px-3.5 py-1.5 text-[12px] font-semibold text-gold-200 mb-5">
+            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 ring-1 ring-white/15 px-3.5 py-1.5 text-[12px] font-semibold text-gold-200 mb-3 sm:mb-5">
               <Sparkles size={14} /> {L('مكتبة عريقة منذ عام 2000', 'A trusted library since 2000')}
             </div>
-            <h1 className="font-heading font-bold text-[34px] leading-[1.15] sm:text-5xl lg:text-[3.6rem] lg:leading-[1.08]">
+            {/* sizes per width: phone 28px · tablet 48px · 1024-1279 (two columns, narrow) 2.75rem · desktop 3.6rem */}
+            <h1 className="font-heading font-bold text-[28px] leading-[1.2] sm:text-5xl sm:leading-[1.15] lg:text-[2.75rem] lg:leading-[1.12] xl:text-[3.6rem] xl:leading-[1.08] [overflow-wrap:anywhere]">
               {L('كل ما يحتاجه الطالب والطفل', 'Everything students and kids need,')}
               <span className="block text-gold-300 mt-1">{L('بعناية مكتبة دير شرف', 'chosen with care')}</span>
             </h1>
-            <p className="mt-5 text-[15px] sm:text-[17px] leading-8 text-ink-100/85 max-w-xl">
+            <p className="hidden sm:block mt-5 text-[17px] leading-8 text-ink-100/85 max-w-xl">
               {L('قرطاسية، ألعاب تعليمية، مستلزمات مدرسية وهدايا — نختارها بأنفسنا ونوصلها لباب بيتك في كل المحافظات.', 'Genuine stationery, safe educational toys, school supplies and gifts — hand-picked and delivered to your door.')}
             </p>
 
-            <form onSubmit={onSearch} className="mt-7 flex items-center gap-2 bg-white rounded-full p-1.5 ps-5 max-w-xl shadow-lift">
+            <form onSubmit={onSearch} className="mt-5 sm:mt-7 flex items-center gap-2 bg-white rounded-full p-1.5 ps-5 max-w-xl shadow-lift">
               <Search size={19} className="text-ink-400 shrink-0" />
               <input
                 value={q}
@@ -131,12 +132,12 @@ const Home: React.FC = () => {
               <button type="submit" className="ds-btn-gold !py-2.5 !px-5 text-[14px]">{L('بحث', 'Search')}</button>
             </form>
 
-            <div className="mt-6 flex flex-wrap gap-3">
+            <div className="mt-4 sm:mt-6 flex flex-wrap gap-3">
               <Link to="/shop" className="ds-btn-gold">{L('تسوّق كل المنتجات', 'Shop all products')} {isRtl ? <ArrowLeft size={18} /> : <ArrowRight size={18} />}</Link>
               <Link to={shopTo('Stationery')} className="inline-flex items-center gap-2 rounded-full ring-1 ring-white/25 text-white font-bold px-6 py-3.5 hover:bg-white/10 transition">{L('العودة للمدارس', 'Back to school')}</Link>
             </div>
 
-            <dl className="mt-9 grid grid-cols-3 gap-2 sm:gap-3 max-w-lg">
+            <dl className="mt-5 sm:mt-9 grid grid-cols-3 gap-2 sm:gap-3 max-w-lg">
               {[
                 { v: list.length ? `${list.length}+` : '100+', l: L('منتج متوفر', 'products') },
                 { v: L('كل المحافظات', 'Nationwide'), l: L('توصيل', 'delivery') },
@@ -150,25 +151,21 @@ const Home: React.FC = () => {
             </dl>
           </div>
 
-          {/* real products collage */}
-          <div className="relative h-[300px] sm:h-[420px] lg:h-[480px]">
+          {/* real products: one large card + two stacked — a grid, so no card covers another card's photo or price */}
+          <div className="relative min-w-0 grid grid-cols-[1.35fr_1fr] grid-rows-2 gap-3 sm:gap-4 h-[210px] sm:h-[400px] lg:h-[440px] xl:h-[480px]">
             {heroPicks.map((p, i) => {
-              const pos = [
-                'top-0 end-0 w-[62%] h-[70%] rotate-[2deg]',
-                'bottom-0 start-0 w-[52%] h-[58%] -rotate-[3deg]',
-                'bottom-[8%] end-[6%] w-[36%] h-[40%] rotate-[4deg]',
-              ][i];
+              const pos = ['row-span-2', '', ''][i];
               return (
-                <Link key={p.id} to={`/product/${p.id}`} className={`absolute ${pos} rounded-[1.75rem] bg-paper-100 shadow-lift ring-1 ring-white/20 overflow-hidden group transition-transform duration-500 hover:rotate-0 hover:scale-[1.02]`}>
-                  <img src={firstImage(p)} alt={p.name} className="w-full h-full object-contain p-4 mix-blend-multiply" loading={i === 0 ? 'eager' : 'lazy'} />
-                  <div className="absolute bottom-2.5 inset-x-2.5 rounded-xl bg-white/90 backdrop-blur px-3 py-1.5 flex items-center justify-between gap-2 text-ink-900">
+                <Link key={p.id} to={`/product/${p.id}`} className={`relative min-w-0 min-h-0 ${pos} rounded-[1.5rem] sm:rounded-[1.75rem] bg-paper-100 shadow-lift ring-1 ring-white/20 overflow-hidden group transition-transform duration-500 hover:scale-[1.02]`}>
+                  <img src={firstImage(p)} alt={p.name} className="w-full h-full object-contain p-3 sm:p-4 pb-11 sm:pb-12 mix-blend-multiply" loading={i === 0 ? 'eager' : 'lazy'} />
+                  <div className="absolute bottom-2 sm:bottom-2.5 inset-x-2 sm:inset-x-2.5 rounded-xl bg-white/90 backdrop-blur px-2.5 sm:px-3 py-1.5 flex items-center justify-between gap-2 text-ink-900">
                     <span className="text-[11.5px] font-semibold truncate">{isRtl ? p.name : p.nameEn || p.name}</span>
                     <span className="text-[12px] font-bold text-gold-600 shrink-0">{p.price} {L('د.أ', 'JOD')}</span>
                   </div>
                 </Link>
               );
             })}
-            <div className="absolute -top-3 start-[8%] hidden sm:flex items-center gap-2 rounded-2xl bg-white text-ink-900 px-3.5 py-2.5 shadow-lift">
+            <div className="absolute top-3 start-3 hidden sm:flex items-center gap-2 rounded-2xl bg-white text-ink-900 px-3.5 py-2.5 shadow-lift z-10">
               <Star size={16} className="text-gold-500" fill="currentColor" />
               <span className="text-[12.5px] font-bold">{L('مختارة بعناية لكل الأعمار', 'Curated for every age')}</span>
             </div>

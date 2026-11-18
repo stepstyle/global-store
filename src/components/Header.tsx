@@ -459,7 +459,9 @@ const Header: React.FC = () => {
             </div>
           </Link>
 
-          <nav ref={desktopNavRef} className="hidden lg:flex items-center justify-center flex-1 space-s-2 px-4">
+          {/* full menu from xl (1280px): at 1024-1279 (iPad Pro landscape/portrait 1032) logo + 5 menus + actions do not
+              fit and pushed the actions off-screen (horizontal overflow); the drawer menu is used below xl */}
+          <nav ref={desktopNavRef} className="hidden xl:flex items-center justify-center flex-1 min-w-0 space-s-2 px-4">
             
             <Link to="/" onClick={handleHomeClick} className={`text-sm font-bold transition-colors duration-300 relative py-2 px-3 rounded-lg group flex items-center gap-2 ${isActivePath('/') ? 'text-slate-900 bg-paper-200 text-ink-900' : 'text-slate-900 hover:bg-paper-200 hover:text-slate-950 hover:shadow-sm'}`}>
               <Home size={18} />
@@ -576,7 +578,7 @@ const Header: React.FC = () => {
               )}
             </div>
 
-            <div className="hidden lg:block w-px h-8 bg-slate-800/10 mx-1"></div>
+            <div className="hidden xl:block w-px h-8 bg-slate-800/10 mx-1"></div>
 
             <div className="flex items-center gap-2 sm:gap-3">
               <button 
@@ -597,7 +599,7 @@ const Header: React.FC = () => {
                 {cartCount > 0 && <span className="absolute top-0 end-0 w-4 h-4 bg-ink-900 text-gold-200 text-[10px] flex items-center justify-center rounded-full border-2 border-white">{cartCount}</span>}
               </button>
 
-              <div ref={userMenuRef} className="relative hidden lg:block" onMouseEnter={user ? openUserMenuSafe : undefined} onMouseLeave={user ? closeUserMenuDelayed : undefined}>
+              <div ref={userMenuRef} className="relative hidden xl:block"onMouseEnter={user ? openUserMenuSafe : undefined} onMouseLeave={user ? closeUserMenuDelayed : undefined}>
                 {user ? (
                   <>
                     <button onClick={() => setIsUserMenuOpen((v) => !v)} className="flex items-center gap-2 ms-1 px-2 py-1.5 rounded-full bg-paper hover:bg-paper-200 border border-ink-900/10 shadow-sm transition-all">
@@ -633,7 +635,7 @@ const Header: React.FC = () => {
                 )}
               </div>
 
-              <button onClick={() => setIsMenuOpen(true)} className="lg:hidden p-2 text-slate-900 hover:bg-paper-200 rounded-full transition-colors active:scale-95">
+              <button onClick={() => setIsMenuOpen(true)} className="xl:hidden p-2text-slate-900 hover:bg-paper-200 rounded-full transition-colors active:scale-95">
                 <Menu size={28} strokeWidth={2.5} />
               </button>
             </div>

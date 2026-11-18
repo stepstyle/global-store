@@ -81,6 +81,13 @@ const CookieBanner: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [show, decline]); // أضفنا decline للمصفوفة
 
+  // lets other bottom-docked controls (the shopping assistant button) move above the bar while it is shown
+  useEffect(() => {
+    if (!show) return;
+    document.documentElement.setAttribute('data-cookie-bar', '');
+    return () => document.documentElement.removeAttribute('data-cookie-bar');
+  }, [show]);
+
   if (!show) return null;
 
   // Compact bar docked to the bottom edge: one short line + two buttons, so it never covers the page content

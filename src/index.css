@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* phones/small tablets: the cookie bar spans the bottom edge -> the assistant button sits above it while it is shown
+   (from md the bar is a card on the start side and the button on the end side: no overlap) */
+@media (max-width: 767.98px) {
+  html[data-cookie-bar] [data-testid="assistant-open"] { bottom: 5.25rem; }
+}
+
 /* ============================================================
    Dair Sharaf — "Scholar" identity (ink navy · gold · paper)
    ============================================================ */

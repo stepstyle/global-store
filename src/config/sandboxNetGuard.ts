@@ -35,10 +35,12 @@ const showBanner = () => {
     bar.textContent = IS_LOCAL_TEST
       ? 'نسخة اختبار محلية (Emulator / Staging) — لا اتصال بالمتجر الحقيقي. Local test build: no production services.'
       : 'نسخة اختبار — لا تُنشأ طلبات حقيقية ولا تُرسل رسائل. Test build: no real orders or messages.';
+    // A strip at the TOP, in the page flow (not fixed): it is seen on load but never covers the site's own bottom
+    // controls (shopping assistant, checkout bar, cookie notice). Sandbox builds only — never in production.
     bar.style.cssText =
-      'position:fixed;inset-inline:0;bottom:0;z-index:2147483647;background:#A4262C;color:#fff;' +
-      'font:600 13px/1.4 system-ui,sans-serif;text-align:center;padding:6px 12px;pointer-events:none';
-    document.body.appendChild(bar);
+      'position:relative;z-index:2147483647;background:#A4262C;color:#fff;' +
+      'font:600 12px/1.4 system-ui,sans-serif;text-align:center;padding:4px 12px;pointer-events:none';
+    document.body.prepend(bar);
   };
   if (document.body) mount();
   else document.addEventListener('DOMContentLoaded', mount, { once: true });

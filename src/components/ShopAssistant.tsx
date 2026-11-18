@@ -87,7 +87,7 @@ const ShopAssistant: React.FC = () => {
       )}
 
       {open && (
-        <div className="fixed z-[95] inset-x-0 bottom-0 sm:inset-x-auto sm:end-6 sm:bottom-6 sm:w-[400px]" role="dialog" aria-label={isAr ? 'مساعد التسوق' : 'Shopping assistant'} data-testid="assistant-panel">
+        <div className="fixed z-[105] inset-x-0 bottom-0 sm:inset-x-auto sm:end-6 sm:bottom-6 sm:w-[400px]" role="dialog" aria-label={isAr ? 'مساعد التسوق' : 'Shopping assistant'} data-testid="assistant-panel">
           <div className="flex flex-col h-[78vh] sm:h-[620px] bg-paper rounded-t-[1.75rem] sm:rounded-[1.75rem] shadow-lift ring-1 ring-ink-900/10 overflow-hidden">
             <div className="flex items-center gap-3 bg-ink-900 text-white px-4 py-3.5">
               <span className="w-9 h-9 rounded-2xl bg-gold-400 text-ink-900 flex items-center justify-center shrink-0"><Sparkles size={18} /></span>
