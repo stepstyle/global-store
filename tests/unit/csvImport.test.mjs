@@ -2,7 +2,7 @@
 //   node --test tests/unit/csvImport.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planCsvImport, csvImportMessageAr, createProductsIfAbsent, ProductExistsError, CREATE_CHUNK } from '../../src/services/csvImport.ts';
+import { planCsvImport, csvImportMessageAr, createProductsIfAbsent, ProductExistsError, CREATE_CHUNK, checkCsvRow } from '../../src/services/csvImport.ts';
 
 const c = (row, id, extra = {}) => ({ row, product: { id, name: id, price: 1, stock: 5, ...extra } });
 
@@ -73,4 +73,40 @@ test('ProductExistsError (single "add product"): Arabic message naming the id, n
   const e = new ProductExistsError(['p1']);
   assert.match(e.message, /p1/);
   assert.match(e.message, /لم يُعدَّل المنتج الموجود/);
+});
+
+// ------------------------------------------------------------------ incomplete rows (no placeholders)
+const CATS = ['Stationery', 'Games', 'BabyGear', 'Gifts'];
+const IMG = 'https://res.cloudinary.com/demo/image/upload/v1/a.webp';
+const full = (x = {}) => ({ id: 'p-A017', nameAr: 'دفتر 100 ورقة', nameEn: 'Notebook', price: '1.25', stock: '12', category: 'Stationery', image: IMG, description: '', ...x });
+
+test('a complete row is accepted exactly as written (no defaults added)', () => {
+  const r = checkCsvRow(full({ images: `${IMG}|https://res.cloudinary.com/demo/image/upload/v1/b.webp`, subCategory: 'notebooks', originalPrice: '2' }), CATS);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.fields, {
+    id: 'p-A017', name: 'دفتر 100 ورقة', nameEn: 'Notebook', price: 1.25, stock: 12, category: 'Stationery', description: '',
+    image: IMG, images: [IMG, 'https://res.cloudinary.com/demo/image/upload/v1/b.webp'], originalPrice: 2, subCategory: 'notebooks',
+  });
+  assert.equal(checkCsvRow(full({ stock: '0' }), CATS).ok, true, 'stock 0 is a real value');
+});
+
+test('missing / invalid id, name, price, stock, category or image -> refused, never filled in', () => {
+  const errs = (x) => { const r = checkCsvRow(full(x), CATS); assert.equal(r.ok, false, JSON.stringify(x)); return r.errors; };
+  assert.deepEqual(errs({ id: '' }), ['MISSING_ID'], 'no generated id: a re-import could duplicate');
+  assert.deepEqual(errs({ nameAr: '', nameEn: '' }), ['MISSING_NAME']);
+  assert.deepEqual(errs({ price: '' }), ['MISSING_PRICE']);
+  for (const p of ['0', '-1', 'abc', '3,5', '1.2.3']) assert.deepEqual(errs({ price: p }), ['INVALID_PRICE'], p);
+  assert.deepEqual(errs({ stock: '' }), ['MISSING_STOCK'], 'no default stock 0');
+  for (const s of ['-2', '1.5', 'many']) assert.deepEqual(errs({ stock: s }), ['INVALID_STOCK'], s);
+  assert.deepEqual(errs({ category: '' }), ['MISSING_CATEGORY'], 'no default Stationery');
+  assert.deepEqual(errs({ category: 'Toys' }), ['UNKNOWN_CATEGORY']);
+  assert.deepEqual(errs({ image: '' }), ['MISSING_IMAGE'], 'no demo picture');
+  for (const u of ['https://picsum.photos/400/400', 'http://res.cloudinary.com/x.jpg', 'not a url', 'https://via.placeholder.com/300']) assert.deepEqual(errs({ image: u }), ['INVALID_IMAGE'], u);
+  assert.deepEqual(errs({ id: '', price: '', image: '' }), ['MISSING_ID', 'MISSING_PRICE', 'MISSING_IMAGE'], 'every problem is reported');
+});
+
+test('the admin message lists every reason of an incomplete row in Arabic', () => {
+  const m = csvImportMessageAr(1, [{ row: 3, id: 'p-A2', reason: 'MISSING_PRICE', details: ['MISSING_PRICE', 'MISSING_IMAGE'] }, { row: 5, id: '', reason: 'MISSING_ID', details: ['MISSING_ID'] }]);
+  assert.match(m, /السطر 3 \(p-A2\): لا يوجد سعر، لا توجد صورة/);
+  assert.match(m, /السطر 5: لا يوجد معرّف/);
 });

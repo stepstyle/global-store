@@ -40,7 +40,8 @@ import { isFirebaseInitialized, setFirebaseConfig, removeFirebaseConfig } from '
 import { uploadToCloudinary } from '../services/cloudinary';
 import { IS_LIVE, BACKEND_ENABLED } from '../config/deployEnv';
 import { isWorkerManaged, inventoryState, INVENTORY_LABEL_AR, canCancel, deleteBlockedReason, changeStatusViaWorker, problemLineAr, type StatusFailure } from '../services/adminOrders';
-import { planCsvImport, csvImportMessageAr, type CsvCandidate } from '../services/csvImport';
+import { planCsvImport, csvImportMessageAr, checkCsvRow, type CsvCandidate, type CsvRejection } from '../services/csvImport';
+import { CATEGORIES } from '../constants';
 
 const PAGE_SIZE = 100;
 
@@ -684,77 +685,48 @@ const AdminDashboard: React.FC = () => {
 
       const rows = parsed.data || [];
       const candidates: CsvCandidate<Product>[] = [];
+      const incomplete: CsvRejection[] = [];
+      // categories the store really uses: the defined list + those of the existing products (e.g. BabyGear, Gifts)
+      const allowedCategories = new Set<string>([...CATEGORIES.map((c) => c.id), ...products.map((p: any) => String(p.category || '')).filter(Boolean)]);
 
       rows.forEach((row, idx) => {
-        const name = (row.name || (row as any).Name || (row as any).productName || '').toString().trim();
-
-        const nameAr = (row as any).nameAr ? String((row as any).nameAr).trim() : String((row as any).nameAR || '').trim();
-        const nameEn = (row as any).nameEn ? String((row as any).nameEn).trim() : String((row as any).nameEN || '').trim();
-
-        const priceStr = (row.price || (row as any).Price || '').toString().trim();
-        const stockStr = (row.stock || (row as any).Stock || '0').toString().trim();
-
-        const categoryRaw = (row.category || (row as any).Category || 'Stationery').toString().trim();
-        const rawSub = (row as any).subCategory || (row as any).subcategory || (row as any).sub || '';
-
-        if (!name && !nameAr && !nameEn) return;
-        if (!priceStr) return;
-
-        const id = (row.id || (row as any).ID || '').toString().trim() || `p-${Date.now()}-${idx}`;
-
-        const images: string[] = [];
-        const image1 = (row.image || (row as any).Image || '').toString().trim();
-        if (image1) images.push(image1);
-
-        const imagesPipe = (row.images || (row as any).Images || '').toString().trim();
-        if (imagesPipe) {
-          imagesPipe
-            .split('|')
-            .map((s) => s.trim())
-            .filter(Boolean)
-            .forEach((u) => images.push(u));
-        }
-
-        for (let i = 2; i <= 10; i++) {
-          const key = `image${i}`;
-          const altKey = `Image${i}`;
-          const val = ((row as any)[key] || (row as any)[altKey] || '').toString().trim();
-          if (val) images.push(val);
-        }
-
-        const primaryImage = images[0] || `https://picsum.photos/400/400?random=${idx + 1}`;
-
+        // row number as the admin sees it in a spreadsheet (line 1 = the header)
+        const rowNo = idx + 2;
+        if (!Object.values(row).some((v) => String(v ?? '').trim())) return;
+        // a row missing its id, name, price, stock, category or a real image is REFUSED — never filled with a
+        // placeholder (no demo picture, no price 0, no default category, no "No description")
+        const check = checkCsvRow(row, allowedCategories);
+        if ('errors' in check) { incomplete.push({ row: rowNo, id: check.id, reason: check.errors[0], details: check.errors }); return; }
+        const f = check.fields;
         const product: Product = {
-          id,
-          name: nameAr || name || nameEn || '',
-          nameEn: nameEn || name || nameAr || '',
-          price: Number(priceStr) || 0,
-          originalPrice: (row as any).originalPrice ? Number((row as any).originalPrice) : undefined,
-          category: normalizeCategory(categoryRaw),
-          ...(rawSub ? { subCategory: normalizeSubCategory(rawSub) } : {}),
-          stock: Number(stockStr) || 0,
-          description: (row.description || (row as any).Description || 'No description').toString(),
+          id: f.id,
+          name: f.name,
+          nameEn: f.nameEn,
+          price: f.price,
+          ...(f.originalPrice ? { originalPrice: f.originalPrice } : {}),
+          category: f.category as Category,
+          ...(f.subCategory ? { subCategory: normalizeSubCategory(f.subCategory) } : {}),
+          stock: f.stock,
+          description: f.description,
           details: (row as any).details ? String((row as any).details) : undefined,
           brand: (row as any).brand ? String((row as any).brand) : undefined,
           videoUrl: (row.videoUrl || (row as any).VideoUrl || (row as any).video || '').toString().trim() || undefined,
           isNew: (row as any).isNew ? ['true', '1', 'yes', 'y'].includes(String((row as any).isNew).toLowerCase()) : undefined,
-          image: primaryImage,
-          images: images.length > 0 ? images : [],
+          image: f.image,
+          images: f.images,
           rating: 0,
           reviews: 0,
           ratingAvg: 0,
           ratingCount: 0,
         };
-
-        // row number as the admin sees it in a spreadsheet (line 1 = the header)
-        candidates.push({ row: idx + 2, product: normalizeProductForSave(product) });
+        candidates.push({ row: rowNo, product: normalizeProductForSave(product) });
       });
 
       try {
         // CSV never changes an existing product (stock, colours / sizes, ratings, price …): rows with an existing id
         // are refused — checked against the loaded list AND again in the Firestore transaction that creates them
         const plan = planCsvImport(candidates, products.map((p: any) => String(p.id)));
-        const rejected = [...plan.rejected];
+        const rejected = [...incomplete, ...plan.rejected];
         let added = 0;
         if (plan.accepted.length > 0) {
           const r = await importNewProducts(plan.accepted.map((c) => c.product));
