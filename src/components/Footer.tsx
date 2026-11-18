@@ -144,10 +144,6 @@ const Footer: React.FC = () => {
                 <span className="text-slate-500 shrink-0">💳</span>
                 <span>{L(STORE_INFO.paymentAr, STORE_INFO.paymentEn)}</span>
               </li>
-              <li className="flex items-center gap-2">
-                <span className="text-slate-500 shrink-0">🎁</span>
-                <span>{L(STORE_INFO.freeShippingAr, STORE_INFO.freeShippingEn)}</span>
-              </li>
             </ul>
 
             {/* الأيقونات الاجتماعية */}
@@ -171,7 +167,7 @@ const Footer: React.FC = () => {
             <ul className="space-y-2.5 text-sm flex flex-col">
               {[
                 { label: L('تسوق جميع المنتجات', 'Shop All Products'), to: internalLinks.shop },
-                { label: L('شاهد العروض الخاصة', 'View Special Offers'), to: internalLinks.offers },
+                { label: L('مستلزمات وركوب الأطفال', 'Ride-ons & Baby'), to: '/shop?category=BabyGear' },
                 { label: L('قسم الألعاب', 'Games Section'), to: internalLinks.games },
                 { label: L('قسم القرطاسية', 'Stationery Section'), to: internalLinks.stationery },
                 { label: L('عن المتجر', 'About Us'), to: internalLinks.about },

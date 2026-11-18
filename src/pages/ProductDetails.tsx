@@ -3,8 +3,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useParams } from 'react-router-dom';
 import {
   Star, ShoppingCart, Heart, Share2, Truck, RefreshCw, Bell, X, Trash2,
-  EyeOff, Eye, MessageSquare, Minus, Plus, Shield, Play, Volume2, VolumeX, ImageOff, Loader2, CheckCircle2
+  EyeOff, Eye, MessageSquare, Minus, Plus, Shield, Play, Volume2, VolumeX, ImageOff, Loader2, CheckCircle2, MessageCircle
 } from 'lucide-react';
+import { STORE_PHONE_INTL } from '../config/contact';
 
 import Button from '../components/Button';
 import ProductCard from '../components/ProductCard';
@@ -710,15 +711,31 @@ const ProductDetails: React.FC = () => {
                     <input value={qty} onChange={onChangeQty} className="w-10 text-center font-black text-slate-900 text-lg outline-none bg-transparent" />
                     <button onClick={incQty} className="p-3 text-slate-600 hover:bg-white rounded-xl transition-all shadow-sm" disabled={qty >= stock}><Plus size={20} /></button>
                   </div>
-                  <Button onClick={() => isInStock ? addToCartWithQty(product, qty) : setShowNotifyModal(true)} className={`flex-1 flex items-center justify-center gap-2 py-4 sm:py-5 rounded-2xl text-lg font-black transition-all shadow-lg ${isInStock ? 'bg-slate-900 text-white hover:bg-yellow-400 hover:text-slate-900' : 'bg-slate-200 text-slate-500'}`}>
+                  <Button onClick={() => isInStock ? addToCartWithQty(product, qty) : setShowNotifyModal(true)} className={`flex-1 flex items-center justify-center gap-2 py-4 sm:py-5 rounded-2xl text-lg font-bold transition-all shadow-lg ${isInStock ? 'bg-ink-900 text-white hover:bg-gold-500' : 'bg-paper-200 text-ink-400'}`}>
                     {isInStock ? <><ShoppingCart size={22} /> {tt('addToCart', 'أضف للسلة', 'Add to Cart')}</> : <><Bell size={22} /> {tt('notifyMe', 'أعلمني عند التوفر', 'Notify Me')}</>}
                   </Button>
                 </div>
+                {/* WhatsApp question about THIS product (opens WhatsApp only: no order, no cart or stock change) */}
+                <a
+                  data-testid="product-whatsapp"
+                  href={`https://wa.me/${STORE_PHONE_INTL}?text=${encodeURIComponent([
+                    'مرحباً مكتبة دير شرف 👋',
+                    'أرغب بالاستفسار عن هذا المنتج:',
+                    `*${productTitle}*`,
+                    ...(selectedVariant?.label && selectedVariant.label !== '.' ? [`الخيار المحدد: ${selectedVariant.label}`] : []),
+                    typeof window !== 'undefined' ? window.location.href : '',
+                  ].filter(Boolean).join('\n'))}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-3 inline-flex w-full sm:w-auto self-start items-center justify-center gap-2 rounded-full border border-emerald-600/30 bg-emerald-50 px-5 py-2.5 text-[14px] font-bold text-emerald-800 hover:bg-emerald-100 transition"
+                >
+                  <MessageCircle size={17} /> {language === 'ar' ? 'استفسر عبر واتساب' : 'Ask on WhatsApp'}
+                </a>
               </div>
-              <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3 border-t border-slate-100 pt-6">
-                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl text-sm font-bold text-slate-600"><Truck size={20} className="text-slate-400" /> {tt('fastDelivery', 'توصيل سريع', 'Fast Delivery')}</div>
-                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl text-sm font-bold text-slate-600"><Shield size={20} className="text-slate-400" /> {tt('securePayment', 'دفع آمن', 'Secure Payment')}</div>
-                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl text-sm font-bold text-slate-600"><RefreshCw size={20} className="text-slate-400" /> {tt('freeReturn', 'إرجاع مرن', 'Easy Return')}</div>
+              <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3 border-t border-paper-300 pt-6">
+                <div className="flex items-center gap-3 p-3 bg-paper-100 rounded-xl text-sm font-semibold text-ink-700"><Truck size={20} className="text-gold-600" /> {language === 'ar' ? 'توصيل لكل المحافظات' : 'Delivery across Jordan'}</div>
+                <div className="flex items-center gap-3 p-3 bg-paper-100 rounded-xl text-sm font-semibold text-ink-700"><Shield size={20} className="text-gold-600" /> {language === 'ar' ? 'الدفع عند الاستلام أو CliQ' : 'Cash on delivery or CliQ'}</div>
+                <div className="flex items-center gap-3 p-3 bg-paper-100 rounded-xl text-sm font-semibold text-ink-700"><RefreshCw size={20} className="text-gold-600" /> {language === 'ar' ? 'استبدال العطل المصنعي خلال 24 ساعة' : 'Factory defects: 24h exchange'}</div>
               </div>
             </div>
           </div>

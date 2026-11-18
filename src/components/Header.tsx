@@ -168,7 +168,7 @@ const Header: React.FC = () => {
       labelAr: 'مستلزمات وركوب', labelEn: 'Baby Gear & Ride-ons',
       icon: Truck, 
       categoryUrl: 'BabyGear',
-      promo: { ar: 'توصيل مجاني للسيارات والبسكليتات', en: 'Free delivery on cars & bikes', code: 'FREERIDE' },
+      
       groups: [
         {
           titleAr: 'مركبات الأطفال', titleEn: 'Kids Ride-ons',
@@ -355,8 +355,7 @@ const Header: React.FC = () => {
 
   const topBarItems = useMemo(
     () => [
-      { id: 'ship', icon: '🚚', ar: 'توصيل سريع خلال 24-48 ساعة', en: 'Fast delivery within 24–48 hours', to: '/tracking' },
-      { id: 'deals', icon: '🎁', ar: 'عروض أسبوعية حصرية — اضغط للمشاهدة', en: 'Exclusive weekly deals — tap to view', to: '/shop?category=Offers' },
+      { id: 'ship', icon: '🚚', ar: 'توصيل لكل محافظات الأردن', en: 'Delivery across Jordan', to: '/tracking' },
       { id: 'support', icon: '📞', ar: `الدعم: ${STORE_PHONE_LOCAL}`, en: `Support: ${STORE_PHONE_LOCAL}`, to: '/contact' },
     ],
     []
@@ -399,7 +398,7 @@ const Header: React.FC = () => {
     <>
       {/* 🚀 الإعلان في أعلى نقطة بالموقع تماماً */}
       <AnnouncementBanner 
-        isActive={true} 
+        isActive={false} 
         isRtl={isRtl}
         messageAr="أهلاً بك في الإطلاق التجريبي! ✨ نقوم يومياً برفع منتجات جديدة. جميع المعروض الآن متوفر وجاهز للطلب."
         messageEn="Welcome to our Soft Launch! ✨ We are adding new products daily. All displayed items are ready to order."

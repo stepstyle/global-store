@@ -8,6 +8,8 @@ import Footer from './components/Footer';
 import CartDrawer from './components/CartDrawer';
 import QuickViewModal from './components/QuickViewModal';
 import CookieBanner from './components/CookieBanner';
+import ShopAssistant from './components/ShopAssistant';
+import InfoPage from './pages/InfoPage';
 import { ToastContainer } from './components/Toast';
 import { addToast, removeToast as removeQueuedToast } from './services/toastQueue';
 import AdminGuard from './components/AdminGuard';
@@ -359,11 +361,12 @@ const App: React.FC = () => {
     }}>
       <HashRouter>
         <ScrollToTop />
-        <div className={`flex flex-col min-h-screen bg-slate-50 ${language === 'ar' ? 'font-ar' : 'font-en'}`}>
+        <div className={`flex flex-col min-h-screen bg-paper ${language === 'ar' ? 'font-ar' : 'font-en'}`}>
           <Header />
           <CartDrawer />
           <QuickViewModal product={quickViewProduct} isOpen={!!quickViewProduct} onClose={() => setQuickViewProduct(null)} />
           <CookieBanner />
+          <ShopAssistant />
           {/* Toast System (restored: removed by mistake in 1bf3d27, so every showToast was invisible) */}
           <ToastContainer toasts={toasts} onClose={removeToast} closeLabel={language === 'ar' ? 'إغلاق' : 'Close'} />
 
@@ -385,6 +388,9 @@ const App: React.FC = () => {
                 <Route path="/checkout" element={<Checkout />} />
                 <Route path="/order-success/:id" element={<OrderSuccess />} />
                 <Route path="/my-orders" element={<MyOrders />} />
+                <Route path="/about" element={<InfoPage />} />
+                <Route path="/contact" element={<InfoPage />} />
+                <Route path="/privacy" element={<InfoPage />} />
                 {/* 🛡️ AdminGuard used here properly */}
                 <Route path="/admin-secure" element={<AdminGuard><AdminDashboard /></AdminGuard>} />
                 {AiDiscoveryLab && <Route path="/dev/ai-discovery" element={<AiDiscoveryLab />} />}

@@ -396,7 +396,7 @@ const Login: React.FC = () => {
   if (isLoading && !formData.email) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-        <Loader2 className="animate-spin text-[#3B82F6] mb-4" size={48} />
+        <Loader2 className="animate-spin text-[#C08A2B] mb-4" size={48} />
         <h2 className="text-xl font-black text-slate-800">{tt('جاري التحقق من الحساب...', 'Verifying account...')}</h2>
         <p className="text-sm font-bold text-slate-500 mt-2">{tt('يرجى الانتظار لحظات', 'Please wait a moment')}</p>
       </div>
@@ -405,48 +405,46 @@ const Login: React.FC = () => {
 
   return (
     <div
-      className={`relative min-h-screen w-full flex items-center justify-center p-6 overflow-hidden bg-slate-50 ${
+      className={`relative min-h-screen w-full grid lg:grid-cols-2 bg-paper ${
         isRtl ? 'font-sans text-right' : 'font-sans text-left'
       }`}
       dir={isRtl ? 'rtl' : 'ltr'}
     >
-      <div className="absolute inset-0 z-0">
-        <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-[#EAB308]/20 via-white/50 to-[#3B82F6]/20" />
-
-        <div className="absolute inset-0 opacity-[0.04] pointer-events-none select-none">
-          <PencilRuler size={280} className="absolute -top-10 -left-10 rotate-12 text-[#EAB308]" />
-          <Palette size={200} className="absolute top-1/4 left-1/4 -rotate-12 text-[#EAB308]" />
-          <Gift size={220} className="absolute bottom-20 left-10 rotate-12 text-[#EAB308]" />
-          <Gamepad2 size={320} className="absolute -bottom-20 -right-10 -rotate-12 text-[#3B82F6]" />
-          <Rocket size={180} className="absolute top-20 right-20 rotate-45 text-[#3B82F6]" />
-          <Laptop size={240} className="absolute bottom-1/3 right-1/4 opacity-60 text-[#3B82F6]" />
+      <aside className="hidden lg:flex relative overflow-hidden bg-ink-900 text-white p-12 xl:p-16 flex-col justify-between">
+        <div className="absolute inset-0 bg-ink-glow" aria-hidden />
+        <div className="relative flex items-center gap-3">
+          <span className="w-12 h-12 rounded-2xl bg-white/10 ring-1 ring-gold-300/50 flex items-center justify-center font-heading font-bold text-2xl text-gold-300">{isRtl ? 'د' : 'D'}</span>
+          <div><div className="font-heading font-bold text-xl">{tt('مكتبة دير شرف', 'Dair Sharaf')}</div><div className="text-gold-200 text-sm">{tt('العلمية · منذ 2000', 'Library · since 2000')}</div></div>
         </div>
-      </div>
+        <div className="relative">
+          <h2 className="font-heading font-bold text-4xl xl:text-5xl leading-tight">{tt('أهلًا بك في مكتبتك', 'Welcome to your library')}<span className="block text-gold-300 mt-2">{tt('تابع طلباتك بسهولة', 'Follow your orders easily')}</span></h2>
+          <p className="mt-5 text-ink-100/85 leading-8 max-w-md">{tt('سجّل الدخول لمتابعة طلباتك، حفظ عناوينك، وإضافة منتجاتك المفضلة — أو تسوّق مباشرة كضيف.', 'Sign in to follow orders, save addresses and keep a wishlist — or shop as a guest.')}</p>
+        </div>
+        <div className="relative grid grid-cols-3 gap-3 text-sm">{[tt('توصيل لكل المحافظات', 'Nationwide delivery'), tt('الدفع عند الاستلام', 'Cash on delivery'), tt('دعم عبر واتساب', 'WhatsApp support')].map((x) => (<div key={x} className="rounded-2xl bg-white/[0.07] ring-1 ring-white/10 px-3 py-3 text-ink-100">{x}</div>))}</div>
+      </aside>
 
       <SEO title={title} description={desc} />
 
-      <div className="relative z-10 w-full max-w-[480px] animate-in fade-in zoom-in-95 duration-1000">
-        <div className="bg-white/95 backdrop-blur-md rounded-[3rem] shadow-[0_40px_100px_rgba(15,23,42,0.12)] border border-white overflow-hidden">
-          <div className="p-8 md:p-12">
-            <div className="flex flex-col items-center mb-10">
-              <div className="w-16 h-16 bg-gradient-to-br from-[#EAB308] to-[#3B82F6] rounded-[1.6rem] flex items-center justify-center text-white font-black text-3xl shadow-xl shadow-blue-500/20 mb-4 transform hover:rotate-12 transition-transform duration-500">
-                A
-              </div>
+      <div className="relative z-10 w-full max-w-[480px] mx-auto self-center px-4 py-8 sm:p-8 animate-in fade-in duration-700">
+        <div className="bg-white rounded-[2rem] shadow-lift ring-1 ring-ink-900/[0.06] overflow-hidden">
+          <div className="p-6 sm:p-10">
+            <div className="flex flex-col items-center mb-8">
+              <div className="w-14 h-14 bg-ink-900 rounded-2xl flex items-center justify-center font-heading font-bold text-2xl text-gold-300 ring-1 ring-gold-300/40 mb-3">{isRtl ? 'د' : 'D'}</div>
               <div className="text-center">
-                <h1 className="text-2xl font-black text-slate-900 tracking-tight">Dair Sharaf</h1>
-                <p className="text-[11px] font-bold tracking-[0.4em] uppercase text-slate-400">TECH & ART</p>
+                <h1 className="font-heading text-[22px] font-bold text-ink-900">{isLoginMode ? tt('تسجيل الدخول', 'Sign in') : tt('إنشاء حساب جديد', 'Create an account')}</h1>
+                <p className="text-[13px] text-ink-400 mt-1">{tt('مكتبة دير شرف العلمية', 'Dair Sharaf Library')}</p>
               </div>
             </div>
 
-            <div className="flex gap-1 mb-8 bg-slate-100/80 p-1.5 rounded-2xl border border-slate-200/50">
+            <div className="flex gap-1 mb-8 bg-paper-200 p-1.5 rounded-2xl">
               <button
                 type="button"
                 onClick={() => {
                   setIsLoginMode(true);
                   clearMainFeedback();
                 }}
-                className={`flex-1 py-3 text-xs rounded-xl transition-all duration-500 ${
-                  isLoginMode ? 'bg-white shadow-md text-slate-900 font-black scale-100' : 'text-slate-500 font-bold opacity-60'
+                className={`flex-1 py-3 text-[13.5px] rounded-xl transition-all duration-500 ${
+                  isLoginMode ? 'bg-white shadow-soft text-ink-900 font-bold' : 'text-slate-500 font-bold opacity-60'
                 }`}
                 disabled={isLoading}
               >
@@ -458,8 +456,8 @@ const Login: React.FC = () => {
                   setIsLoginMode(false);
                   clearMainFeedback();
                 }}
-                className={`flex-1 py-3 text-xs rounded-xl transition-all duration-500 ${
-                  !isLoginMode ? 'bg-white shadow-md text-slate-900 font-black scale-100' : 'text-slate-500 font-bold opacity-60'
+                className={`flex-1 py-3 text-[13.5px] rounded-xl transition-all duration-500 ${
+                  !isLoginMode ? 'bg-white shadow-soft text-ink-900 font-bold' : 'text-slate-500 font-bold opacity-60'
                 }`}
                 disabled={isLoading}
               >
@@ -503,7 +501,7 @@ const Login: React.FC = () => {
                     <input
                       name="name"
                       type="text"
-                      className={`w-full h-16 sm:h-20 ltr:pl-12 rtl:pr-12 rounded-2xl bg-slate-50 border focus:bg-white focus:border-[#EAB308] focus:ring-4 focus:ring-[#EAB308]/5 outline-none transition-all font-bold text-slate-700 shadow-sm text-lg ${
+                      className={`w-full h-16 sm:h-20 ltr:pl-12 rtl:pr-12 rounded-2xl bg-paper-100 border focus:bg-white focus:border-[#C08A2B] focus:ring-4 focus:ring-[#C08A2B]/5 outline-none transition-all font-bold text-slate-700 shadow-sm text-lg ${
                         fieldErrors.name ? 'border-red-300' : 'border-slate-100'
                       }`}
                       placeholder={tt('الاسم الكامل', 'Full Name')}
@@ -513,7 +511,7 @@ const Login: React.FC = () => {
                     />
                     <UserIcon
                       className={`absolute ltr:left-4 rtl:right-4 top-1/2 -translate-y-1/2 transition-colors ${
-                        fieldErrors.name ? 'text-red-400' : 'text-slate-400 group-focus-within:text-[#EAB308]'
+                        fieldErrors.name ? 'text-red-400' : 'text-slate-400 group-focus-within:text-[#C08A2B]'
                       }`}
                       size={20}
                     />
@@ -527,7 +525,7 @@ const Login: React.FC = () => {
                   <input
                     name="email"
                     type="email"
-                    className={`w-full ltr:pl-12 rtl:pr-12 ltr:pr-12 rtl:pl-12 h-16 sm:h-20 rounded-2xl bg-slate-50 border focus:bg-white focus:border-[#3B82F6] focus:ring-4 focus:ring-[#3B82F6]/5 outline-none transition-all font-bold text-slate-700 tracking-wider shadow-sm text-lg ${
+                    className={`w-full ltr:pl-12 rtl:pr-12 ltr:pr-12 rtl:pl-12 h-16 sm:h-20 rounded-2xl bg-paper-100 border focus:bg-white focus:border-[#C08A2B] focus:ring-4 focus:ring-[#C08A2B]/5 outline-none transition-all font-bold text-slate-700 tracking-wider shadow-sm text-lg ${
                       fieldErrors.email ? 'border-red-300' : 'border-slate-100'
                     }`}
                     placeholder={tt('البريد الإلكتروني', 'Email Address')}
@@ -537,7 +535,7 @@ const Login: React.FC = () => {
                   />
                   <Mail
                     className={`absolute ltr:left-4 rtl:right-4 top-1/2 -translate-y-1/2 transition-colors ${
-                      fieldErrors.email ? 'text-red-400' : 'text-slate-400 group-focus-within:text-[#3B82F6]'
+                      fieldErrors.email ? 'text-red-400' : 'text-slate-400 group-focus-within:text-[#C08A2B]'
                     }`}
                     size={20}
                   />
@@ -550,7 +548,7 @@ const Login: React.FC = () => {
                   <input
                     name="password"
                     type={showPass ? 'text' : 'password'}
-                    className={`w-full ltr:pl-12 rtl:pr-12 ltr:pr-12 rtl:pl-12 h-16 sm:h-20 rounded-2xl bg-slate-50 border focus:bg-white focus:border-[#3B82F6] focus:ring-4 focus:ring-[#3B82F6]/5 outline-none transition-all font-bold text-slate-700 tracking-widest shadow-sm text-xl ${
+                    className={`w-full ltr:pl-12 rtl:pr-12 ltr:pr-12 rtl:pl-12 h-16 sm:h-20 rounded-2xl bg-paper-100 border focus:bg-white focus:border-[#C08A2B] focus:ring-4 focus:ring-[#C08A2B]/5 outline-none transition-all font-bold text-slate-700 tracking-widest shadow-sm text-xl ${
                       fieldErrors.password ? 'border-red-300' : 'border-slate-100'
                     }`}
                     placeholder={tt('كلمة المرور', 'Password')}
@@ -560,7 +558,7 @@ const Login: React.FC = () => {
                   />
                   <Lock
                     className={`absolute ltr:left-4 rtl:right-4 top-1/2 -translate-y-1/2 transition-colors ${
-                      fieldErrors.password ? 'text-red-400' : 'text-slate-400 group-focus-within:text-[#3B82F6]'
+                      fieldErrors.password ? 'text-red-400' : 'text-slate-400 group-focus-within:text-[#C08A2B]'
                     }`}
                     size={20}
                   />
@@ -587,7 +585,7 @@ const Login: React.FC = () => {
                       setResetAlert({ type: '', message: '' });
                       setFieldErrors((prev) => ({ ...prev, resetEmail: '' }));
                     }}
-                    className="text-xs font-black text-slate-400 hover:text-[#3B82F6] transition-colors"
+                    className="text-xs font-black text-slate-400 hover:text-[#C08A2B] transition-colors"
                   >
                     {tt('نسيت كلمة المرور؟', 'Forgot Password?')}
                   </button>
@@ -597,7 +595,7 @@ const Login: React.FC = () => {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full h-16 sm:h-20 rounded-2xl bg-gradient-to-r from-[#EAB308] to-[#3B82F6] text-white font-black text-xl shadow-lg shadow-blue-500/20 hover:shadow-orange-500/20 hover:scale-[1.02] active:scale-95 transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:scale-100 mt-2 flex justify-center items-center"
+                className="w-full h-16 sm:h-20 rounded-2xl bg-ink-900 hover:bg-gold-500 text-white font-black text-xl shadow-lg shadow-ink-900/20  hover:scale-[1.02] active:scale-95 transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:scale-100 mt-2 flex justify-center items-center"
               >
                 {isLoading ? (
                   <Loader2 className="animate-spin" size={28} />
@@ -647,8 +645,8 @@ const Login: React.FC = () => {
           </div>
         </div>
 
-        <p className="mt-8 text-center text-[10px] font-bold text-slate-400 uppercase tracking-[0.4em]">
-          Dair Sharaf Experience • Tech & Art 2026
+        <p className="mt-6 text-center text-[12px] font-semibold text-ink-400">
+          {tt('يمكنك أيضًا الطلب كضيف دون إنشاء حساب.', 'You can also order as a guest, no account needed.')}
         </p>
       </div>
 
@@ -698,7 +696,7 @@ const Login: React.FC = () => {
                 <div className="relative group">
                   <input
                     type="email"
-                    className={`w-full ltr:pl-12 rtl:pr-12 h-16 rounded-2xl bg-slate-50 border focus:bg-white focus:border-[#3B82F6] focus:ring-4 focus:ring-[#3B82F6]/10 outline-none transition-all font-bold text-slate-700 tracking-wider text-lg ${
+                    className={`w-full ltr:pl-12 rtl:pr-12 h-16 rounded-2xl bg-paper-100 border focus:bg-white focus:border-[#C08A2B] focus:ring-4 focus:ring-[#C08A2B]/10 outline-none transition-all font-bold text-slate-700 tracking-wider text-lg ${
                       fieldErrors.resetEmail ? 'border-red-300' : 'border-slate-200'
                     }`}
                     placeholder={tt('البريد الإلكتروني', 'Email Address')}
@@ -715,7 +713,7 @@ const Login: React.FC = () => {
                   />
                   <Mail
                     className={`absolute ltr:left-4 rtl:right-4 top-1/2 -translate-y-1/2 transition-colors ${
-                      fieldErrors.resetEmail ? 'text-red-400' : 'text-slate-400 group-focus-within:text-[#3B82F6]'
+                      fieldErrors.resetEmail ? 'text-red-400' : 'text-slate-400 group-focus-within:text-[#C08A2B]'
                     }`}
                     size={20}
                   />

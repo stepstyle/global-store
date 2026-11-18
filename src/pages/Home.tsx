@@ -115,7 +115,7 @@ const Home: React.FC = () => {
               <span className="block text-gold-300 mt-1">{L('بعناية مكتبة دير شرف', 'chosen with care')}</span>
             </h1>
             <p className="mt-5 text-[15px] sm:text-[17px] leading-8 text-ink-100/85 max-w-xl">
-              {L('قرطاسية أصلية، ألعاب تعليمية آمنة، مستلزمات مدرسية وهدايا — نختارها بأنفسنا ونوصلها لباب بيتك في كل المحافظات.', 'Genuine stationery, safe educational toys, school supplies and gifts — hand-picked and delivered to your door.')}
+              {L('قرطاسية، ألعاب تعليمية، مستلزمات مدرسية وهدايا — نختارها بأنفسنا ونوصلها لباب بيتك في كل المحافظات.', 'Genuine stationery, safe educational toys, school supplies and gifts — hand-picked and delivered to your door.')}
             </p>
 
             <form onSubmit={onSearch} className="mt-7 flex items-center gap-2 bg-white rounded-full p-1.5 ps-5 max-w-xl shadow-lift">
@@ -139,7 +139,7 @@ const Home: React.FC = () => {
             <dl className="mt-9 grid grid-cols-3 gap-2 sm:gap-3 max-w-lg">
               {[
                 { v: list.length ? `${list.length}+` : '100+', l: L('منتج متوفر', 'products') },
-                { v: L('كل المحافظات', 'Nationwide'), l: L('توصيل سريع', 'fast delivery') },
+                { v: L('كل المحافظات', 'Nationwide'), l: L('توصيل', 'delivery') },
                 { v: L('عند الاستلام', 'On delivery'), l: L('ادفع براحتك', 'pay when it arrives') },
               ].map((s) => (
                 <div key={s.l} className="min-w-0 rounded-2xl bg-white/[0.06] ring-1 ring-white/10 px-2.5 sm:px-3 py-3">
@@ -180,9 +180,9 @@ const Home: React.FC = () => {
       <section className="border-b border-ink-900/[0.06] bg-white">
         <div className="ds-container grid grid-cols-2 lg:grid-cols-4 gap-y-5 gap-x-4 py-6">
           {[
-            { Icon: Truck, t: L('توصيل لكل المحافظات', 'Nationwide delivery'), d: L('خلال 24–48 ساعة', 'within 24–48h') },
+            { Icon: Truck, t: L('توصيل لكل المحافظات', 'Nationwide delivery'), d: L('عادي أو سريع حسب المنطقة', 'standard or express') },
             { Icon: Wallet, t: L('الدفع عند الاستلام', 'Cash on delivery'), d: L('أو تحويل CliQ', 'or CliQ transfer') },
-            { Icon: ShieldCheck, t: L('منتجات أصلية', 'Genuine products'), d: L('نختارها بأنفسنا', 'hand-picked') },
+            { Icon: ShieldCheck, t: L('مختارة بعناية', 'Carefully chosen'), d: L('من مكتبة الحي منذ 2000', 'since 2000') },
             { Icon: Headset, t: L('دعم مباشر', 'Real support'), d: L('عبر واتساب', 'on WhatsApp') },
           ].map(({ Icon, t: tt, d }) => (
             <div key={tt} className="flex items-center gap-3">

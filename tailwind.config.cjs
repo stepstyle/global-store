@@ -1,10 +1,12 @@
 /** @type {import('tailwindcss').Config} */
+const defaultColors = require('tailwindcss/colors');
 
 // Dair Sharaf — "Scholar" identity: deep ink navy (structure, trust), refined gold (premium accent, pencil heritage),
 // warm paper cream (backgrounds) and a royal blue for links / interactive accents.
 // The existing components use `primary` (was pencil yellow), `secondary` / `sky` (was sky blue) everywhere: redefining
 // those scales here restyles the whole site consistently — checkout and dashboard included — without touching logic.
-const ink = { 50: '#F2F4F8', 100: '#E1E6EF', 200: '#C3CCDD', 300: '#94A3BF', 400: '#64769A', 500: '#45577D', 600: '#2F4066', 700: '#22325A', 800: '#172548', 900: '#0F1B38', 950: '#0A1227' };
+// a moderate navy (owner's choice ~#28446D) instead of the near-black of the first draft; text keeps strong contrast
+const ink = { 50: '#F3F6FA', 100: '#E3E9F2', 200: '#C6D2E3', 300: '#9CAFCA', 400: '#6E86AB', 500: '#526B92', 600: '#41597F', 700: '#365079', 800: '#2F4A73', 900: '#28446D', 950: '#1E3556' };
 const gold = { 50: '#FBF7EC', 100: '#F6EBCB', 200: '#ECD59A', 300: '#E0BC69', 400: '#D4A645', 500: '#C08A2B', 600: '#A06F1F', 700: '#7E571A', 800: '#5E4116', 900: '#3F2C10' };
 const royal = { 50: '#EEF3FA', 100: '#DCE7F4', 200: '#B7CDE8', 300: '#88ACD7', 400: '#5786C1', 500: '#3567A8', 600: '#28528C', 700: '#204272', 800: '#1B375E', 900: '#172E4E', 950: '#0E1D33' };
 const paper = { DEFAULT: '#FAF7F1', 50: '#FFFDF9', 100: '#FAF7F1', 200: '#F3EDE1', 300: '#E8DFCC' };
@@ -25,6 +27,8 @@ module.exports = {
         violet: royal,
         purple: ink,
         black: ink[950],
+        // the darkest greys of the older pages (cart, checkout, dashboard buttons / headings) become the identity navy
+        slate: { ...defaultColors.slate, 800: ink[800], 900: ink[900], 950: ink[950] },
         primary: { DEFAULT: gold[400], dark: gold[600], light: gold[100] },
         secondary: { DEFAULT: royal[500], dark: royal[700], light: royal[100] },
         'primary-DEFAULT': gold[400],
