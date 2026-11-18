@@ -224,7 +224,7 @@ test('workers-ai adapter with a FAKE AI binding: redacted text only, JSON schema
   assert.equal(r.status, 200);
   assert.deepEqual(r.body.intent, { age: { min: 5, max: 5, phrase: '' }, categories: ['ArtSupplies'] });
   assert.equal(seen.length, 1);
-  assert.equal(seen[0].model, '@cf/meta/llama-3.1-8b-instruct');
+  assert.equal(seen[0].model, '@cf/meta/llama-4-scout-17b-16e-instruct');
   assert.equal(seen[0].input.response_format.type, 'json_schema');
   const user = seen[0].input.messages.find((m) => m.role === 'user').content;
   assert.ok(!user.includes('0799999999'));
@@ -300,4 +300,22 @@ test('site + Worker failing in every way: search still answers with the LOCAL re
   assert.equal(r.engine, 'local');
   assert.match(r.aiFallbackReason, /provider error/);
   assert.deepEqual(r.results.map((x) => x.id), local.results.map((x) => x.id));
+});
+
+test('production config: only the real model, explicitly enabled, prod origins only, hard daily / rate caps, KV required', async () => {
+  const { loadConfig } = await import('../src/config.js');
+  const ai = { run: async () => ({}) };
+  const kv = { get: async () => null, put: async () => {} };
+  const ok = { ENVIRONMENT: 'production', AI_PROVIDER: 'workers-ai', AI_ENABLED: 'true', AI: ai, AI_KV: kv, DAILY_AI_LIMIT: '300', RATE_LIMIT_PER_MIN: '10', ALLOWED_ORIGINS: 'https://dairsharaf.com,https://www.dairsharaf.com' };
+  assert.equal(loadConfig(ok).ok, true, JSON.stringify(loadConfig(ok).errors));
+  for (const [name, o] of Object.entries({
+    'fake provider': { AI_PROVIDER: 'fake' }, 'not enabled': { AI_ENABLED: 'false' }, 'no AI binding': { AI: undefined },
+    'daily cap too high': { DAILY_AI_LIMIT: '501' }, 'rate too high': { RATE_LIMIT_PER_MIN: '21' }, 'no KV': { AI_KV: undefined },
+    'other origin': { ALLOWED_ORIGINS: 'https://dairsharaf.com,https://evil.example' }, 'http origin': { ALLOWED_ORIGINS: 'http://dairsharaf.com' },
+    'a key variable': { CF_API_TOKEN: 'x' },
+  })) {
+    assert.equal(loadConfig({ ...ok, ...o }).ok, false, name);
+  }
+  // staging still never accepts the production site
+  assert.equal(loadConfig({ ...ok, ENVIRONMENT: 'staging' }).ok, false);
 });

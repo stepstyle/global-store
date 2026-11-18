@@ -79,7 +79,9 @@ export function workersAiProvider(ai, model, { maxOutputTokens = 160 } = {}) {
         const u = out.usage;
         console.log(JSON.stringify({ svc: 'ai-discovery', event: 'ai_usage', model, prompt_tokens: Number(u.prompt_tokens) || 0, completion_tokens: Number(u.completion_tokens) || 0 }));
       }
-      const raw = out && typeof out === 'object' && 'response' in out ? out.response : out;
+      // older Workers AI models answer { response }, newer ones (e.g. Gemma 4) the OpenAI shape { choices[0].message.content }
+      const choice = out && typeof out === 'object' && Array.isArray(out.choices) ? out.choices[0]?.message?.content : undefined;
+      const raw = choice !== undefined ? choice : out && typeof out === 'object' && 'response' in out ? out.response : out;
       if (raw && typeof raw === 'object') return raw;
       if (typeof raw !== 'string') return null;
       const s = raw.indexOf('{');

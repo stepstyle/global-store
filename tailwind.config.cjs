@@ -6,7 +6,8 @@ const defaultColors = require('tailwindcss/colors');
 // The existing components use `primary` (was pencil yellow), `secondary` / `sky` (was sky blue) everywhere: redefining
 // those scales here restyles the whole site consistently — checkout and dashboard included — without touching logic.
 // a moderate navy (owner's choice ~#28446D) instead of the near-black of the first draft; text keeps strong contrast
-const ink = { 50: '#F3F6FA', 100: '#E3E9F2', 200: '#C6D2E3', 300: '#9CAFCA', 400: '#6E86AB', 500: '#526B92', 600: '#41597F', 700: '#365079', 800: '#2F4A73', 900: '#28446D', 950: '#1E3556' };
+// ink-900 = #35547B (owner's choice: one step lighter than #28446D); 950 stays dark enough for body text contrast
+const ink = { 50: '#F4F7FB', 100: '#E5EBF3', 200: '#C9D5E5', 300: '#A1B4CD', 400: '#7790B2', 500: '#5C7499', 600: '#4D6890', 700: '#456189', 800: '#3D5A82', 900: '#35547B', 950: '#263F5F' };
 const gold = { 50: '#FBF7EC', 100: '#F6EBCB', 200: '#ECD59A', 300: '#E0BC69', 400: '#D4A645', 500: '#C08A2B', 600: '#A06F1F', 700: '#7E571A', 800: '#5E4116', 900: '#3F2C10' };
 const royal = { 50: '#EEF3FA', 100: '#DCE7F4', 200: '#B7CDE8', 300: '#88ACD7', 400: '#5786C1', 500: '#3567A8', 600: '#28528C', 700: '#204272', 800: '#1B375E', 900: '#172E4E', 950: '#0E1D33' };
 const paper = { DEFAULT: '#FAF7F1', 50: '#FFFDF9', 100: '#FAF7F1', 200: '#F3EDE1', 300: '#E8DFCC' };

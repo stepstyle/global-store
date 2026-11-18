@@ -6,6 +6,7 @@ import {
   EyeOff, Eye, MessageSquare, Minus, Plus, Shield, Play, Volume2, VolumeX, ImageOff, Loader2, CheckCircle2, MessageCircle
 } from 'lucide-react';
 import { STORE_PHONE_INTL } from '../config/contact';
+import { IS_LIVE } from '../config/deployEnv';
 
 import Button from '../components/Button';
 import ProductCard from '../components/ProductCard';
@@ -723,7 +724,8 @@ const ProductDetails: React.FC = () => {
                     'أرغب بالاستفسار عن هذا المنتج:',
                     `*${productTitle}*`,
                     ...(selectedVariant?.label && selectedVariant.label !== '.' ? [`الخيار المحدد: ${selectedVariant.label}`] : []),
-                    typeof window !== 'undefined' ? window.location.href : '',
+                    // the live site always links to the canonical domain; previews / local copies link to themselves
+                    IS_LIVE ? `https://dairsharaf.com/#/product/${encodeURIComponent(String(product.id))}` : typeof window !== 'undefined' ? window.location.href : '',
                   ].filter(Boolean).join('\n'))}`}
                   target="_blank"
                   rel="noopener noreferrer"

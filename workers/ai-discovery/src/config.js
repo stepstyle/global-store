@@ -21,13 +21,14 @@ const int = (v, d, lo, hi) => {
 export function loadConfig(env = {}) {
   const errors = [];
   const environment = str(env.ENVIRONMENT);
-  if (!['staging', 'local'].includes(environment)) errors.push('ENVIRONMENT must be staging or local (this service never runs in production)');
+  if (!['staging', 'local', 'production'].includes(environment)) errors.push('ENVIRONMENT must be staging, local or production');
+  const isProd = environment === 'production';
 
   const provider = str(env.AI_PROVIDER) || 'fake';
   if (!PROVIDERS.includes(provider)) errors.push(`AI_PROVIDER must be one of ${PROVIDERS.join('|')}`);
   const aiEnabled = str(env.AI_ENABLED) === 'true';
   if (provider === 'workers-ai') {
-    if (environment !== 'staging') errors.push('workers-ai provider is only allowed in staging');
+    if (environment === 'local') errors.push('workers-ai provider is only allowed in staging or production');
     if (!aiEnabled) errors.push('workers-ai provider needs AI_ENABLED=true (explicit opt-in)');
     if (!env.AI || typeof env.AI.run !== 'function') errors.push('workers-ai provider needs the AI binding');
   }
@@ -35,7 +36,9 @@ export function loadConfig(env = {}) {
   if (!FAKE_MODES.includes(fakeMode)) errors.push(`FAKE_MODE must be one of ${FAKE_MODES.join('|')}`);
   if (provider !== 'fake' && str(env.FAKE_MODE)) errors.push('FAKE_MODE is only for the fake provider');
 
-  const model = str(env.AI_MODEL) || '@cf/meta/llama-3.1-8b-instruct';
+  // llama-3.1-8b-instruct was retired by Workers AI (HTTP 410). llama-4-scout: no "thinking" step (the JSON fits the
+  // small output budget), good Arabic understanding, ~7 Neurons per request (measured 2026-11-18)
+  const model = str(env.AI_MODEL) || '@cf/meta/llama-4-scout-17b-16e-instruct';
   if (!/^@cf\/[a-z0-9._/-]{3,80}$/i.test(model)) errors.push('AI_MODEL must be a Workers AI model id (@cf/...)');
   const timeoutMs = int(env.AI_TIMEOUT_MS, 2500, 100, 8000);
   if (timeoutMs === null) errors.push('AI_TIMEOUT_MS must be an integer 100..8000');
@@ -53,8 +56,17 @@ export function loadConfig(env = {}) {
     let u = null;
     try { u = new URL(o); } catch { /* invalid */ }
     if (!u || u.origin !== o) { errors.push(`ALLOWED_ORIGINS entry is not an origin: ${o}`); continue; }
-    if (PROD_SITE_HOSTS.includes(u.hostname)) errors.push('ALLOWED_ORIGINS must not contain the production site');
+    if (!isProd && PROD_SITE_HOSTS.includes(u.hostname)) errors.push('ALLOWED_ORIGINS must not contain the production site (staging / local)');
+    if (isProd && (u.protocol !== 'https:' || !PROD_SITE_HOSTS.includes(u.hostname))) errors.push('production ALLOWED_ORIGINS: only https://dairsharaf.com and https://www.dairsharaf.com');
     if (u.protocol === 'http:' && u.hostname !== '127.0.0.1') errors.push('http origins are allowed for 127.0.0.1 only');
+  }
+  // production: the real model only, explicitly enabled, with a HARD daily cap that keeps usage inside Workers AI's free
+  // daily allocation (10,000 Neurons/day; ~7 Neurons per request -> 500 requests ≈ 3,500 Neurons at most)
+  if (isProd) {
+    if (provider !== 'workers-ai' || !aiEnabled) errors.push('production requires AI_PROVIDER=workers-ai and AI_ENABLED=true');
+    if (dailyLimit !== null && dailyLimit > 500) errors.push('production DAILY_AI_LIMIT must be at most 500');
+    if (ratePerMin !== null && ratePerMin > 20) errors.push('production RATE_LIMIT_PER_MIN must be at most 20');
+    if (!env.AI_KV) errors.push('production requires the AI_KV binding (shared daily counter + cache)');
   }
 
   for (const k of Object.keys(env)) {

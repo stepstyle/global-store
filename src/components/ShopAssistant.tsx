@@ -9,7 +9,7 @@
 // Workers AI, daily + per-minute limits, no key in the browser), unclear requests are understood with its help;
 // otherwise (or on any error / timeout) the local Arabic understanding is used. The panel says which one answered.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Sparkles, X, Send, ArrowUpLeft, Loader2 } from 'lucide-react';
 import { useCart } from '../App';
 import { BACKEND_ENABLED } from '../config/deployEnv';
@@ -29,8 +29,12 @@ const SUGGESTIONS = [
   'ألوان ودفاتر رسم',
 ];
 
+// pages where a floating button would cover the page's own primary actions (checkout, cart, login, dashboard)
+const HIDDEN_ON = /^\/(checkout|cart|login|admin|order-success)/;
+
 const ShopAssistant: React.FC = () => {
-  const { products, language } = useCart() as any;
+  const { products, language, isCartOpen } = useCart() as any;
+  const { pathname } = useLocation();
   const isAr = (language ?? 'ar') === 'ar';
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
@@ -57,6 +61,8 @@ const ShopAssistant: React.FC = () => {
       setBusy(false);
     }
   }, [busy, list]);
+
+  if (isCartOpen || HIDDEN_ON.test(pathname)) return null;
 
   return (
     <>
