@@ -408,12 +408,11 @@ const Header: React.FC = () => {
       <header
         className={[
           'sticky top-0 z-50 w-full font-sans transition-all duration-300',
-          'bg-gradient-to-r from-primary-dark via-white/10 to-secondary-dark',
-          'backdrop-blur-md border-b border-white/20',
-          isScrolled ? 'shadow-xl' : 'shadow-lg',
+          'bg-white/95 backdrop-blur-md border-b border-ink-900/10',
+          isScrolled ? 'shadow-soft' : '',
         ].join(' ')}
       >
-        <div className="border-b border-white/15 bg-black/15">
+        <div className="bg-ink-900">
           <div className="w-full px-5 sm:px-6 lg:px-14 2xl:px-24">
             <div className="h-10 flex items-center justify-between gap-3">
               <div
@@ -446,30 +445,31 @@ const Header: React.FC = () => {
 
         <div className={`w-full flex items-center justify-between px-5 sm:px-6 lg:px-14 2xl:px-24 transition-all duration-300 ${isScrolled ? 'h-14 lg:h-[72px]' : 'h-16 lg:h-20'}`}>
           
-          <Link to="/" className="flex items-center group shrink-0 min-w-0" onClick={handleHomeClick}>
-            <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center text-white font-extrabold text-xl shadow-lg group-hover:rotate-12 transition-transform duration-300 backdrop-blur-sm border border-white/30 shrink-0">
-              A
+          <Link to="/" className="flex items-center group shrink-0 min-w-0" onClick={handleHomeClick} aria-label={L('مكتبة دير شرف العلمية — الرئيسية', 'Dair Sharaf Library — Home')}>
+            <div className="relative w-11 h-11 rounded-2xl bg-ink-900 flex items-center justify-center shrink-0 shadow-soft ring-1 ring-gold-400/40">
+              <span className="font-heading font-bold text-[22px] leading-none text-gold-300 translate-y-[-1px]">{isRtl ? 'د' : 'D'}</span>
+              <span className="absolute -bottom-1 -end-1 w-3.5 h-3.5 rounded-full bg-gold-400 border-2 border-white" />
             </div>
-            <div className="flex flex-col ms-3 min-w-0">
-              <span className="text-[18px] sm:text-[20px] font-heading font-extrabold tracking-tight text-slate-900 group-hover:text-white transition-colors duration-300 truncate">
-                Dair Sharaf
+            <div className="flex flex-col ms-3 min-w-0 leading-tight">
+              <span className="text-[17px] sm:text-[19px] font-heading font-bold text-ink-900 truncate">
+                {L('مكتبة دير شرف', 'Dair Sharaf')}
               </span>
-              <span className="text-[10px] sm:text-[11px] font-semibold tracking-[0.18em] uppercase text-slate-800/90 group-hover:text-slate-100 transition-colors duration-300 truncate">
-                TECH & ART
+              <span className="text-[11px] sm:text-[12px] font-semibold text-gold-600 truncate">
+                {L('العلمية · منذ 2000', 'Library · since 2000')}
               </span>
             </div>
           </Link>
 
           <nav ref={desktopNavRef} className="hidden lg:flex items-center justify-center flex-1 space-s-2 px-4">
             
-            <Link to="/" onClick={handleHomeClick} className={`text-sm font-bold transition-colors duration-300 relative py-2 px-3 rounded-lg group flex items-center gap-2 ${isActivePath('/') ? 'text-slate-900 bg-white/30 shadow-sm' : 'text-slate-900 hover:bg-white/20 hover:text-slate-950 hover:shadow-sm'}`}>
+            <Link to="/" onClick={handleHomeClick} className={`text-sm font-bold transition-colors duration-300 relative py-2 px-3 rounded-lg group flex items-center gap-2 ${isActivePath('/') ? 'text-slate-900 bg-paper-200 text-ink-900' : 'text-slate-900 hover:bg-paper-200 hover:text-slate-950 hover:shadow-sm'}`}>
               <Home size={18} />
               <span>{t('home')}</span>
             </Link>
 
             {MEGA_MENU_DATA.map((menu) => (
               <div key={menu.id} className="relative" onMouseEnter={() => openDropdownSafe(menu.id)} onMouseLeave={closeDropdownDelayed}>
-                <button type="button" className="text-sm font-bold text-slate-900 hover:bg-white/20 hover:shadow-sm transition-all py-2 px-3 rounded-lg flex items-center gap-2">
+                <button type="button" className="text-sm font-bold text-slate-900 hover:bg-paper-200 hover:shadow-sm transition-all py-2 px-3 rounded-lg flex items-center gap-2">
                   <menu.icon size={18} />
                   <span>{L(menu.labelAr, menu.labelEn)}</span>
                   <ChevronDown size={16} className={`opacity-70 transition-transform ${openDropdown === menu.id ? 'rotate-180 opacity-100' : ''}`} />
@@ -537,7 +537,7 @@ const Header: React.FC = () => {
                   <input
                     type="search"
                     placeholder={t('search')}
-                    className="w-72 2xl:w-80 ps-4 pe-10 py-2.5 bg-white/90 border border-white/40 rounded-full text-sm text-slate-800 placeholder:text-slate-400 shadow-sm outline-none transition-all duration-300 focus:bg-white focus:border-white/70 focus:ring-4 focus:ring-white/25"
+                    className="w-72 2xl:w-80 ps-4 pe-10 py-2.5 bg-paper border border-ink-900/10 rounded-full text-sm text-slate-800 placeholder:text-slate-400 shadow-sm outline-none transition-all duration-300 focus:bg-white"
                     value={searchQuery}
                     onChange={(e) => { setSearchQuery(e.target.value); setShowSuggestions(true); }}
                     onFocus={() => setShowSuggestions(true)}
@@ -582,26 +582,26 @@ const Header: React.FC = () => {
             <div className="flex items-center gap-2 sm:gap-3">
               <button 
                 onClick={() => setIsMobileSearchOpen(true)} 
-                className="xl:hidden p-2 text-slate-900 hover:bg-white/20 rounded-full transition-colors active:scale-95" 
+                className="xl:hidden p-2 text-slate-900 hover:bg-paper-200 rounded-full transition-colors active:scale-95" 
                 title={t('search')}
               >
                 <Search size={22} strokeWidth={2.5} />
               </button>
 
-              <button onClick={openWishlist} className="relative p-2 text-slate-900 hover:bg-white/20 rounded-full transition-colors active:scale-95 hidden sm:block">
+              <button onClick={openWishlist} className="relative p-2 text-slate-900 hover:bg-paper-200 rounded-full transition-colors active:scale-95 hidden sm:block">
                 <Heart size={22} strokeWidth={2.5} />
-                {wishlistCount > 0 && <span className="absolute top-0 end-0 w-4 h-4 bg-red-600 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">{wishlistCount}</span>}
+                {wishlistCount > 0 && <span className="absolute top-0 end-0 w-4 h-4 bg-gold-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">{wishlistCount}</span>}
               </button>
 
-              <button onClick={() => { closeAllOverlays(); setIsCartOpen(true); }} className="relative p-2 text-slate-900 hover:bg-white/20 rounded-full transition-colors active:scale-95">
+              <button onClick={() => { closeAllOverlays(); setIsCartOpen(true); }} className="relative p-2 text-slate-900 hover:bg-paper-200 rounded-full transition-colors active:scale-95">
                 <ShoppingBag size={22} strokeWidth={2.5} />
-                {cartCount > 0 && <span className="absolute top-0 end-0 w-4 h-4 bg-slate-900 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">{cartCount}</span>}
+                {cartCount > 0 && <span className="absolute top-0 end-0 w-4 h-4 bg-ink-900 text-gold-200 text-[10px] flex items-center justify-center rounded-full border-2 border-white">{cartCount}</span>}
               </button>
 
               <div ref={userMenuRef} className="relative hidden lg:block" onMouseEnter={user ? openUserMenuSafe : undefined} onMouseLeave={user ? closeUserMenuDelayed : undefined}>
                 {user ? (
                   <>
-                    <button onClick={() => setIsUserMenuOpen((v) => !v)} className="flex items-center gap-2 ms-1 px-2 py-1.5 rounded-full bg-white/80 hover:bg-white border border-white/60 shadow-sm transition-all">
+                    <button onClick={() => setIsUserMenuOpen((v) => !v)} className="flex items-center gap-2 ms-1 px-2 py-1.5 rounded-full bg-paper hover:bg-paper-200 border border-ink-900/10 shadow-sm transition-all">
                       <div className="w-9 h-9 rounded-xl bg-secondary-DEFAULT text-white flex items-center justify-center font-bold">
                         {user.name?.charAt(0)?.toUpperCase()}
                       </div>
@@ -628,13 +628,13 @@ const Header: React.FC = () => {
                     )}
                   </>
                 ) : (
-                  <button onClick={() => goTo('/login')} className="ms-1 p-2.5 rounded-full bg-white/80 hover:bg-white shadow-sm transition-all text-slate-900">
+                  <button onClick={() => goTo('/login')} className="ms-1 p-2.5 rounded-full bg-ink-900 hover:bg-ink-800 shadow-sm transition-all text-gold-200">
                     <LogIn size={20} />
                   </button>
                 )}
               </div>
 
-              <button onClick={() => setIsMenuOpen(true)} className="lg:hidden p-2 text-slate-900 hover:bg-white/20 rounded-full transition-colors active:scale-95">
+              <button onClick={() => setIsMenuOpen(true)} className="lg:hidden p-2 text-slate-900 hover:bg-paper-200 rounded-full transition-colors active:scale-95">
                 <Menu size={28} strokeWidth={2.5} />
               </button>
             </div>

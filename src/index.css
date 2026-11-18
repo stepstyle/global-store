@@ -2,7 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Custom base tweaks */
+/* ============================================================
+   Dair Sharaf — "Scholar" identity (ink navy · gold · paper)
+   ============================================================ */
 html {
   overflow-y: scroll;
   scroll-behavior: smooth;
@@ -12,22 +14,47 @@ html {
 }
 
 body {
-  font-family: 'Cairo', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-family: 'IBM Plex Sans Arabic', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   overflow-x: hidden;
+  background-color: #faf7f1;
+  color: #0f1b38;
+}
+
+h1, h2, h3, h4, .font-heading {
+  font-family: 'Readex Pro', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+/* the old pages used a near-white slate background: the whole site now sits on warm paper */
+.bg-slate-50 { background-color: #faf7f1 !important; }
+.min-h-screen.bg-white { background-color: #faf7f1; }
+
+/* calmer, consistent form fields everywhere (checkout, login, dashboard) */
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), select, textarea {
+  border-color: #e4dccb;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: #c08a2b !important;
+  box-shadow: 0 0 0 4px rgba(192, 138, 43, 0.15) !important;
+  outline: none;
 }
 
 .scrollbar-hide::-webkit-scrollbar { display: none; }
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
 
-::selection { background-color: #f9e032; color: #333; }
+::selection { background-color: #ecd59a; color: #0f1b38; }
 
 ::-webkit-scrollbar { width: 10px; }
-::-webkit-scrollbar-track { background: #f1f5f9; }
-::-webkit-scrollbar-thumb {
-  background: linear-gradient(to bottom, #f9e032, #7fc8f1);
-  border-radius: 5px;
-  border: 2px solid #f1f5f9;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(to bottom, #d4b918, #5a9bd5);
+::-webkit-scrollbar-track { background: #f3ede1; }
+::-webkit-scrollbar-thumb { background: #22325a; border-radius: 6px; border: 2px solid #f3ede1; }
+::-webkit-scrollbar-thumb:hover { background: #c08a2b; }
+
+/* small helpers for the new pages */
+@layer components {
+  .ds-container { @apply w-full max-w-[1320px] mx-auto px-4 sm:px-6 lg:px-10; }
+  .ds-eyebrow { @apply inline-flex items-center gap-2 text-[12px] font-bold tracking-wide text-gold-600; }
+  .ds-title { @apply font-heading font-bold text-ink-900 text-2xl sm:text-3xl lg:text-[2.6rem] leading-tight; }
+  .ds-btn-gold { @apply inline-flex items-center justify-center gap-2 rounded-full bg-gold-500 text-white font-bold px-6 py-3.5 shadow-gold hover:bg-gold-600 active:scale-[0.98] transition; }
+  .ds-btn-ink { @apply inline-flex items-center justify-center gap-2 rounded-full bg-ink-900 text-white font-bold px-6 py-3.5 hover:bg-ink-800 active:scale-[0.98] transition; }
+  .ds-btn-ghost { @apply inline-flex items-center justify-center gap-2 rounded-full border border-ink-900/15 text-ink-900 font-bold px-6 py-3.5 hover:bg-white active:scale-[0.98] transition; }
 }

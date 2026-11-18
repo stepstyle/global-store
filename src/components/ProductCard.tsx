@@ -192,75 +192,34 @@ const ProductCard: React.FC<ProductCardProps> = ({
     transformOrigin: 'center'
   } : {};
 
+  const CATEGORY_AR: Record<string, string> = { Games: 'ألعاب', Stationery: 'قرطاسية', BabyGear: 'مستلزمات وركوب', Gifts: 'هدايا', Offers: 'عروض' };
+  const categoryText = language === 'ar' ? CATEGORY_AR[categoryLabel] || categoryLabel : categoryLabel;
+  const discountPct = (product as any).originalPrice && Number((product as any).originalPrice) > Number(product.price)
+    ? Math.round((1 - Number(product.price) / Number((product as any).originalPrice)) * 100)
+    : 0;
+
   return (
     <div
       className={[
-        'group relative bg-white rounded-[2rem]',
-        'border border-slate-100 shadow-sm',
-        'hover:shadow-2xl hover:shadow-slate-200/50 hover:border-slate-200 transition-all duration-500',
-        'flex flex-col h-full',
-        'transform-gpu will-change-transform',
-        disableLift ? 'overflow-visible' : 'overflow-hidden hover:-translate-y-1.5',
+        'group relative flex flex-col h-full bg-white rounded-3xl',
+        'ring-1 ring-ink-900/[0.06] shadow-soft',
+        'transition-all duration-500 hover:shadow-lift hover:ring-gold-300/60',
+        disableLift ? 'overflow-visible' : 'overflow-hidden hover:-translate-y-1',
       ].join(' ')}
       data-product-id={product.id}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* 🏷️ حاوية الشارات العلوية (الخصم + مؤشر الفيديو) */}
-      <div className="absolute top-4 start-4 z-30 flex flex-col gap-2">
-        {badge && (
-          <div
-            className={[
-              'text-white text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full shadow-lg',
-              (product as any).originalPrice ? 'bg-rose-500 shadow-rose-500/30' : 'bg-black shadow-black/30',
-            ].join(' ')}
-          >
-            {badge}
-          </div>
-        )}
-        
-        {/* 🎥 شارة الفيديو */}
-        {product.videoUrl && (
-          <div className="flex items-center justify-center gap-1.5 bg-sky-50 border border-sky-100 text-sky-600 text-[9px] font-black uppercase px-2 py-1.5 rounded-full shadow-md backdrop-blur-sm animate-in fade-in zoom-in">
-            <PlaySquare size={12} className="fill-current" />
-            <span>{L('فيديو', 'Video')}</span>
-          </div>
-        )}
-      </div>
-
-      {/* 🔘 أزرار التفاعل السريعة */}
-      <div className="absolute top-4 end-4 z-30 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-x-4 rtl:-translate-x-4 group-hover:translate-x-0 rtl:group-hover:translate-x-0">
-        <button
-          onClick={onClickWishlist}
-          className={`p-2.5 rounded-2xl shadow-md transition-all duration-300 ${isLiked ? 'bg-rose-50 text-rose-500' : 'bg-white/90 backdrop-blur text-slate-400 hover:text-rose-500 hover:bg-white hover:scale-110'}`}
-          aria-label={isLiked ? L('إزالة من المفضلة', 'Remove from wishlist') : L('إضافة للمفضلة', 'Add to wishlist')}
-          type="button"
-        >
-          <Heart size={18} fill={isLiked ? 'currentColor' : 'none'} strokeWidth={2.5} />
-        </button>
-
-        {onQuickView && (
-          <button
-            onClick={onClickQuickView}
-            className="p-2.5 rounded-2xl bg-white/90 backdrop-blur text-slate-400 hover:text-sky-500 hover:bg-white hover:scale-110 shadow-md transition-all duration-300"
-            aria-label={L('عرض سريع', 'Quick view')}
-            type="button"
-          >
-            <Eye size={18} strokeWidth={2.5} />
-          </button>
-        )}
-      </div>
-
-      {/* 📸 صورة المنتج */}
-      <Link to={productLink} className="block relative bg-slate-50/50" aria-label={productTitle}>
-        <div className={`relative w-full aspect-square overflow-hidden ${product.imageFit === 'cover' ? '' : 'p-6'}`}>
+      {/* image on a warm paper stage */}
+      <Link to={productLink} className="block relative m-2 mb-0 rounded-[1.25rem] overflow-hidden bg-gradient-to-b from-paper-100 to-paper-200" aria-label={productTitle}>
+        <div className={`relative w-full aspect-[4/4.3] ${product.imageFit === 'cover' ? '' : 'p-4 sm:p-6'}`}>
           {image1 ? (
             <div className="w-full h-full relative" style={imgStyle}>
               <LazyImage
                 src={image1}
                 alt={productTitle}
                 containerClassName="w-full h-full"
-                className={`w-full h-full mix-blend-multiply transition-transform duration-700 ease-out group-hover:scale-[1.05] pointer-events-none ${imgFit}`}
+                className={`w-full h-full mix-blend-multiply transition-transform duration-700 ease-out group-hover:scale-[1.06] pointer-events-none ${imgFit}`}
                 loading={priority ? 'eager' : 'lazy'}
                 fetchPriority={priority ? 'high' : 'auto'}
                 cloudinarySize={mainCloudinarySize}
@@ -269,146 +228,123 @@ const ProductCard: React.FC<ProductCardProps> = ({
               />
             </div>
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-slate-300 text-sm font-bold">
-              {L('لا توجد صورة', 'No Image')}
-            </div>
+            <div className="w-full h-full flex items-center justify-center text-ink-300 text-sm font-bold">{L('لا توجد صورة', 'No Image')}</div>
           )}
-          
-          {/* صورة التمرير (Hover Image) */}
           {image2 && (
-            <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-white ${product.imageFit === 'cover' ? '' : 'p-6'}`}>
+            <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-paper-100 ${product.imageFit === 'cover' ? '' : 'p-4 sm:p-6'}`}>
               <div className="w-full h-full relative" style={imgStyle}>
-                <LazyImage
-                  src={image2}
-                  alt={productTitle}
-                  containerClassName="w-full h-full"
-                  className={`w-full h-full mix-blend-multiply transition-transform duration-700 ease-out group-hover:scale-[1.05] pointer-events-none ${imgFit}`}
-                  loading="lazy"
-                  fetchPriority="low"
-                  cloudinarySize={460}
-                  expectedDisplayWidth={280}
-                  aspectRatioHint="1 / 1"
-                />
+                <LazyImage src={image2} alt={productTitle} containerClassName="w-full h-full" className={`w-full h-full mix-blend-multiply pointer-events-none ${imgFit}`} loading="lazy" fetchPriority="low" cloudinarySize={460} expectedDisplayWidth={280} aspectRatioHint="1 / 1" />
               </div>
             </div>
+          )}
+          {!isInStock && (
+            <div className="absolute inset-x-3 bottom-3 rounded-full bg-ink-900/85 text-white text-[11px] font-bold text-center py-1.5 backdrop-blur">{L('نفدت الكمية', 'Sold out')}</div>
           )}
         </div>
       </Link>
 
-      {/* 📝 تفاصيل المنتج */}
-      <div className="p-5 sm:p-6 flex flex-col flex-1 bg-white">
-        <div className="mb-2.5 flex items-center justify-between gap-2">
-          {/* التصنيف (Badge) */}
-          <span className="text-[9px] text-sky-500 font-black uppercase tracking-widest bg-sky-50 border border-sky-100 px-2.5 py-1 rounded-lg truncate max-w-[55%]" title={categoryLabel}>
-            {categoryLabel}
+      {/* badges */}
+      <div className="absolute top-4 start-4 z-20 flex flex-col items-start gap-1.5">
+        {discountPct > 0 ? (
+          <span className="rounded-full bg-gold-500 text-white text-[11px] font-bold px-2.5 py-1 shadow-gold">-{discountPct}%</span>
+        ) : badge ? (
+          <span className="rounded-full bg-ink-900 text-gold-200 text-[11px] font-bold px-2.5 py-1">{badge}</span>
+        ) : null}
+        {product.videoUrl && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-white/95 text-royal-700 text-[10px] font-bold px-2 py-1 ring-1 ring-ink-900/10">
+            <PlaySquare size={11} /> {L('فيديو', 'Video')}
           </span>
-
-          {/* التقييم */}
-          <button
-            type="button"
-            onClick={onClickReviews}
-            className="flex items-center gap-1.5 hover:opacity-80 active:scale-[0.99] transition-opacity"
-            title={L('عرض التقييمات', 'Open reviews')}
-            aria-label={L('عرض التقييمات', 'Open reviews')}
-          >
-            {renderStars(rating.avg)}
-            <span className="text-[11px] text-slate-400 font-bold tabular-nums">({rating.count})</span>
-          </button>
-        </div>
-
-        {/* عنوان المنتج */}
-        <Link to={productLink} className="block mb-2 transition-colors group-hover:text-sky-500">
-          <h3 className="font-black text-slate-900 line-clamp-2 text-sm sm:text-base leading-snug">{productTitle}</h3>
-        </Link>
-
-        {/* 🚀 مؤشر وجود خيارات (ألوان/أحجام) */}
-        {hasVariants && (
-          <div className="mb-2.5 flex items-center gap-1.5">
-            <Palette size={14} className="text-amber-500" />
-            <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100">
-              {L('متوفر بخيارات متعددة', 'Available in options')}
-            </span>
-          </div>
         )}
+      </div>
 
-        {/* 🔢 أزرار اختيار الكمية والمخزون */}
-        <div className="mb-4 mt-auto flex flex-col gap-1.5">
-          <div className="text-[10px] font-bold text-slate-400">
-            {isInStock ? (
-              <span className="text-emerald-500">{L(`متوفر: ${stock}`, `In stock: ${stock}`)}</span>
-            ) : (
-              <span className="text-red-500">{L('غير متوفر', 'Out of stock')}</span>
-            )}
-          </div>
-          
-          {/* إخفاء اختيار الكمية إذا كان فيه خيارات (نوجهه لصفحة المنتج ليختار) */}
-          {!hasVariants && (
-            <div className="flex items-center gap-2">
-              <div className="flex items-center bg-slate-50 border border-slate-100 rounded-xl p-1">
-                <button
-                  type="button"
-                  onClick={decQty}
-                  disabled={!isInStock || qty <= 1}
-                  className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-all disabled:opacity-30 disabled:hover:bg-transparent shadow-sm"
-                  aria-label={L('تقليل الكمية', 'Decrease quantity')}
-                >
-                  <Minus size={14} strokeWidth={3} />
-                </button>
+      {/* wishlist (always visible: phones have no hover) + quick view */}
+      <div className="absolute top-4 end-4 z-20 flex flex-col gap-2">
+        <button
+          onClick={onClickWishlist}
+          className={`w-9 h-9 rounded-full flex items-center justify-center shadow-soft transition-all duration-300 ${isLiked ? 'bg-ink-900 text-gold-300' : 'bg-white/95 text-ink-400 hover:text-ink-900'}`}
+          aria-label={isLiked ? L('إزالة من المفضلة', 'Remove from wishlist') : L('إضافة للمفضلة', 'Add to wishlist')}
+          type="button"
+        >
+          <Heart size={16} fill={isLiked ? 'currentColor' : 'none'} strokeWidth={2.2} />
+        </button>
+        {onQuickView && (
+          <button
+            onClick={onClickQuickView}
+            className="hidden sm:flex w-9 h-9 rounded-full items-center justify-center bg-white/95 text-ink-400 hover:text-ink-900 shadow-soft opacity-0 group-hover:opacity-100 transition-all duration-300"
+            aria-label={L('عرض سريع', 'Quick view')}
+            type="button"
+          >
+            <Eye size={16} strokeWidth={2.2} />
+          </button>
+        )}
+      </div>
 
-                <input
-                  value={String(qty)}
-                  onChange={onChangeQty}
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  disabled={!isInStock}
-                  className="w-8 sm:w-10 text-center bg-transparent text-sm font-black tabular-nums focus:outline-none disabled:opacity-50 text-slate-800"
-                  aria-label={L('الكمية', 'Quantity')}
-                />
-
-                <button
-                  type="button"
-                  onClick={incQty}
-                  disabled={!isInStock || qty >= stock}
-                  className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-all disabled:opacity-30 disabled:hover:bg-transparent shadow-sm"
-                  aria-label={L('زيادة الكمية', 'Increase quantity')}
-                >
-                  <Plus size={14} strokeWidth={3} />
-                </button>
-              </div>
-            </div>
+      {/* details */}
+      <div className="flex flex-col flex-1 px-3.5 sm:px-5 pt-3.5 pb-4 sm:pb-5">
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <span className="text-[11px] font-semibold text-gold-600 truncate" title={categoryLabel}>{categoryText}</span>
+          {rating.count > 0 && (
+            <button type="button" onClick={onClickReviews} className="flex items-center gap-1 text-[11px] font-semibold text-ink-400 hover:text-ink-900" aria-label={L('عرض التقييمات', 'Open reviews')}>
+              <Star size={12} className="text-gold-400" fill="currentColor" />
+              <span className="tabular-nums">{rating.avg.toFixed(1)}</span>
+            </button>
           )}
         </div>
 
-        {/* 💰 قسم السعر وزر الإضافة للسلة */}
-        <div className="pt-4 flex items-center justify-between border-t border-slate-100 border-dashed gap-2">
-          <div className="flex flex-col">
-            <span className="font-black text-lg text-slate-900 tabular-nums leading-none">
-              {Number(product.price ?? 0)}
-              <span className="text-[10px] font-black ms-1 text-slate-400 uppercase">JOD</span>
-            </span>
-            {(product as any).originalPrice && (
-              <span className="text-[11px] text-slate-400 font-bold line-through decoration-slate-300 decoration-2 tabular-nums mt-1">
-                {Number((product as any).originalPrice)} <span className="ms-0.5 uppercase">JOD</span>
+        <Link to={productLink} className="block mb-2">
+          <h3 className="font-heading font-semibold text-ink-900 text-[14px] sm:text-[15.5px] leading-snug line-clamp-2 min-h-[2.6em] group-hover:text-royal-700 transition-colors">{productTitle}</h3>
+        </Link>
+
+        {hasVariants && (
+          <div className="mb-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-royal-600">
+            <Palette size={13} /> {L('ألوان أو مقاسات متعددة', 'Several options')}
+          </div>
+        )}
+
+        <div className="mt-auto">
+          <div className="flex items-end justify-between gap-2">
+            <div className="flex flex-col leading-none">
+              {(product as any).originalPrice && (
+                <span className="text-[12px] text-ink-300 font-semibold line-through tabular-nums mb-1">{Number((product as any).originalPrice)} {L('د.أ', 'JOD')}</span>
+              )}
+              <span className="font-heading font-bold text-ink-900 text-[18px] sm:text-[20px] tabular-nums">
+                {Number(product.price ?? 0)}
+                <span className="text-[11px] font-semibold text-gold-600 ms-1">{L('د.أ', 'JOD')}</span>
               </span>
-            )}
+            </div>
+
+            <button
+              onClick={onClickCart}
+              disabled={!isInStock}
+              className={`shrink-0 inline-flex items-center justify-center gap-1.5 h-10 rounded-full text-[13px] font-bold transition-all duration-300 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${hasVariants ? 'px-3.5 bg-paper-200 text-ink-900 hover:bg-gold-100' : 'w-10 sm:w-auto sm:px-4 bg-ink-900 text-white hover:bg-gold-500'}`}
+              aria-label={isInStock ? (hasVariants ? L('اختر', 'Select') : L('أضف للسلة', 'Add to cart')) : L('غير متوفر', 'Out of stock')}
+              type="button"
+            >
+              {hasVariants ? (
+                <span>{L('اختر', 'Choose')}</span>
+              ) : (
+                <>
+                  <ShoppingCart size={17} strokeWidth={2.2} />
+                  <span className="hidden sm:inline">{L('أضف', 'Add')}</span>
+                </>
+              )}
+            </button>
           </div>
 
-          <button
-            onClick={onClickCart}
-            disabled={!isInStock}
-            className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-extrabold transition-all duration-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none group/btn ${hasVariants ? 'bg-amber-400 hover:bg-amber-500 text-slate-900 shadow-lg shadow-amber-400/30' : 'bg-sky-400 hover:bg-sky-500 text-white shadow-lg shadow-sky-400/30'}`}
-            aria-label={isInStock ? (hasVariants ? L('اختر', 'Select') : L('أضف للسلة', 'Add to cart')) : L('غير متوفر', 'Out of stock')}
-            type="button"
-          >
-            {hasVariants ? (
-              <span className="inline-block px-2">{L('تحديد خيار', 'Select Option')}</span>
-            ) : (
-              <>
-                <ShoppingCart size={18} strokeWidth={2.5} className="group-hover/btn:scale-110 transition-transform" />
-                <span className="hidden sm:inline-block">{L('أضف', 'Add')}</span>
-              </>
-            )}
-          </button>
+          {!hasVariants && isInStock && (
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <div className="flex items-center rounded-full bg-paper-100 ring-1 ring-ink-900/[0.06] p-0.5">
+                <button type="button" onClick={decQty} disabled={qty <= 1} className="w-7 h-7 rounded-full flex items-center justify-center text-ink-500 hover:bg-white disabled:opacity-30" aria-label={L('تقليل الكمية', 'Decrease quantity')}>
+                  <Minus size={13} strokeWidth={2.6} />
+                </button>
+                <input value={String(qty)} onChange={onChangeQty} inputMode="numeric" pattern="[0-9]*" className="w-7 text-center bg-transparent text-[13px] font-bold tabular-nums focus:outline-none text-ink-900 !border-0 !shadow-none" aria-label={L('الكمية', 'Quantity')} />
+                <button type="button" onClick={incQty} disabled={qty >= stock} className="w-7 h-7 rounded-full flex items-center justify-center text-ink-500 hover:bg-white disabled:opacity-30" aria-label={L('زيادة الكمية', 'Increase quantity')}>
+                  <Plus size={13} strokeWidth={2.6} />
+                </button>
+              </div>
+              <span className="text-[11px] font-semibold text-emerald-700">{stock <= 5 ? L(`باقي ${stock} فقط`, `Only ${stock} left`) : L('متوفر', 'In stock')}</span>
+            </div>
+          )}
         </div>
       </div>
     </div>

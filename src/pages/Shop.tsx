@@ -695,7 +695,7 @@ const Shop: React.FC = () => {
             {isLoading ? (
               <ProductSkeletonGrid count={12} />
             ) : paginatedProducts.length > 0 ? (
-              <div className="grid grid-cols-1 gap-6 animate-in fade-in slide-in-from-bottom-6 duration-700 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 sm:gap-5 animate-in fade-in slide-in-from-bottom-6 duration-700 md:grid-cols-3 2xl:grid-cols-4">
                 {paginatedProducts.map((p: any, idx: number) => (
                   <ProductCard
                     key={p.id}

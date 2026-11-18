@@ -85,17 +85,17 @@ const Footer: React.FC = () => {
   }), []);
 
   return (
-    <footer className="mt-8 bg-slate-950 text-slate-200 text-start font-sans relative">
+    <footer className="mt-0 bg-ink-950 text-ink-100 text-start font-sans relative overflow-hidden">
       {/* الشريط الملون في أعلى الفوتر */}
-      <div className="w-full h-1.5 bg-gradient-to-r rtl:bg-gradient-to-l from-primary-DEFAULT to-secondary-DEFAULT" />
+      <div className="w-full h-1 bg-gradient-to-r from-gold-600 via-gold-300 to-gold-600" />
 
       <div className="container mx-auto px-4 lg:px-8 py-12">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10">
           
           {/* 1️⃣ الشعار والنشرة البريدية (مدمجة هنا لتوفير المساحة وتشجيع الاشتراك) */}
           <div>
-            <h3 className="text-2xl font-extrabold text-white">{L(STORE_INFO.nameAr, STORE_INFO.nameEn)}</h3>
-            <p className="mt-3 text-sm text-slate-300 leading-relaxed mb-6">
+            <div className="flex items-center gap-3"><span className="w-12 h-12 rounded-2xl bg-white/5 ring-1 ring-gold-400/40 flex items-center justify-center font-heading font-bold text-2xl text-gold-300">{isRTL ? 'د' : 'D'}</span><h3 className="text-[22px] font-heading font-bold text-white leading-tight">{L(STORE_INFO.nameAr, STORE_INFO.nameEn)}</h3></div>
+            <p className="mt-3 text-sm text-ink-200 leading-relaxed mb-6">
               {L(STORE_INFO.sloganAr, STORE_INFO.sloganEn)}
             </p>
 
@@ -111,11 +111,11 @@ const Footer: React.FC = () => {
                   value={email}
                   onChange={(e) => { setNewsletterMsg(''); setEmail(e.target.value); }}
                   placeholder={L('بريدك الإلكتروني...', 'Your email address...')}
-                  className="w-full bg-slate-800/50 border border-slate-700 rounded-xl ps-4 pe-24 py-2.5 text-sm focus:ring-2 focus:ring-secondary-DEFAULT outline-none text-white transition-all placeholder:text-slate-500"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl ps-4 pe-24 py-2.5 text-sm focus:ring-2 focus:ring-secondary-DEFAULT outline-none text-white transition-all placeholder:text-slate-500"
                 />
                 <button 
                   type="submit"
-                  className="absolute top-1 end-1 bottom-1 bg-secondary-DEFAULT hover:bg-secondary-dark text-white text-xs font-bold px-3 rounded-lg transition-colors"
+                  className="absolute top-1 end-1 bottom-1 bg-gold-500 hover:bg-gold-600 text-white text-xs font-bold px-3 rounded-lg transition-colors"
                 >
                   {L('اشترك', 'Subscribe')}
                 </button>
@@ -130,8 +130,8 @@ const Footer: React.FC = () => {
 
           {/* 2️⃣ معلومات المتجر وطرق التواصل */}
           <div>
-            <h4 className="text-white font-extrabold mb-5 text-lg">{L('معلومات المتجر', 'Store Info')}</h4>
-            <ul className="space-y-3 text-sm text-slate-300">
+            <h4 className="text-gold-300 font-heading font-semibold mb-5 text-[15px]">{L('معلومات المتجر', 'Store Info')}</h4>
+            <ul className="space-y-3 text-sm text-ink-200">
               <li className="flex items-start gap-2">
                 <MapPin size={16} className="text-slate-500 mt-0.5 shrink-0" />
                 <span>{L(STORE_INFO.addressAr, STORE_INFO.addressEn)}</span>
@@ -167,7 +167,7 @@ const Footer: React.FC = () => {
 
           {/* 3️⃣ روابط سريعة */}
           <div>
-            <h4 className="text-white font-extrabold mb-5 text-lg">{L('روابط سريعة', 'Quick Links')}</h4>
+            <h4 className="text-gold-300 font-heading font-semibold mb-5 text-[15px]">{L('روابط سريعة', 'Quick Links')}</h4>
             <ul className="space-y-2.5 text-sm flex flex-col">
               {[
                 { label: L('تسوق جميع المنتجات', 'Shop All Products'), to: internalLinks.shop },
@@ -178,7 +178,7 @@ const Footer: React.FC = () => {
                 { label: L('تواصل معنا', 'Contact Us'), to: internalLinks.contact },
               ].map((link, idx) => (
                 <li key={idx}>
-                  <Link to={link.to} onClick={scrollToTopInstant} className="inline-block text-slate-400 hover:text-white hover:translate-x-1 rtl:hover:-translate-x-1 transition-all">
+                  <Link to={link.to} onClick={scrollToTopInstant} className="inline-block text-ink-200 hover:text-gold-300 hover:translate-x-1 rtl:hover:-translate-x-1 transition-all">
                     {link.label}
                   </Link>
                 </li>
@@ -188,24 +188,24 @@ const Footer: React.FC = () => {
 
           {/* 4️⃣ السياسات (مدمجة كـ Accordion لتوفير المساحة) */}
           <div>
-            <h4 className="text-white font-extrabold mb-5 text-lg">{L('السياسات', 'Policies')}</h4>
+            <h4 className="text-gold-300 font-heading font-semibold mb-5 text-[15px]">{L('السياسات', 'Policies')}</h4>
             <div className="space-y-3">
-              <details className="group rounded-xl bg-slate-900 border border-slate-800 p-3.5 transition-all open:bg-slate-800/50">
+              <details className="group rounded-xl bg-white/[0.04] border border-white/10 p-3.5 transition-all open:bg-slate-800/50">
                 <summary className="cursor-pointer text-sm font-semibold text-slate-200 group-hover:text-white transition-colors flex items-center justify-between outline-none">
                   {L('سياسة الإرجاع والاستبدال', 'Returns Policy')}
                   <span className="text-slate-500 group-open:rotate-180 transition-transform">▼</span>
                 </summary>
-                <div className="mt-3 text-sm text-slate-400 leading-relaxed border-t border-slate-800 pt-3">
+                <div className="mt-3 text-sm text-slate-400 leading-relaxed border-t border-white/10 pt-3">
                   <p>إرجاع أو استبدال خلال 24 ساعة في حال وجود عطل مصنعي فقط، بشرط الحفاظ على حالة المنتج والتغليف الأصلي.</p>
                 </div>
               </details>
 
-              <details className="group rounded-xl bg-slate-900 border border-slate-800 p-3.5 transition-all open:bg-slate-800/50">
+              <details className="group rounded-xl bg-white/[0.04] border border-white/10 p-3.5 transition-all open:bg-slate-800/50">
                 <summary className="cursor-pointer text-sm font-semibold text-slate-200 group-hover:text-white transition-colors flex items-center justify-between outline-none">
                   {L('سياسة الخصوصية', 'Privacy Policy')}
                   <span className="text-slate-500 group-open:rotate-180 transition-transform">▼</span>
                 </summary>
-                <div className="mt-3 text-sm text-slate-400 leading-relaxed border-t border-slate-800 pt-3">
+                <div className="mt-3 text-sm text-slate-400 leading-relaxed border-t border-white/10 pt-3">
                   <p>بياناتك محمية تماماً ونستخدمها فقط لإتمام الطلب وتوصيله. لا نقوم ببيع أو مشاركة بياناتك مع أي أطراف إعلانية خارجية.</p>
                 </div>
               </details>
@@ -217,18 +217,18 @@ const Footer: React.FC = () => {
         {/* =========================
             ✅ الشريط السفلي (حقوق النشر)
            ========================= */}
-        <div className="mt-12 pt-6 border-t border-slate-800 flex flex-col md:flex-row justify-between items-center text-xs text-slate-500 gap-4">
+        <div className="mt-12 pt-6 border-t border-white/10 flex flex-col md:flex-row justify-between items-center text-xs text-slate-500 gap-4">
           <p className="text-center md:text-start order-2 md:order-1">
             © {year} {L(STORE_INFO.nameAr, STORE_INFO.nameEn)}. {L('جميع الحقوق محفوظة.', 'All rights reserved.')}
           </p>
 
           <div className="flex flex-wrap justify-center gap-4 sm:gap-6 items-center order-1 md:order-2">
-            <a href={STORE_INFO.phoneTel} className="flex items-center gap-1.5 hover:text-slate-300 transition-colors" aria-label="Call support">
+            <a href={STORE_INFO.phoneTel} className="flex items-center gap-1.5 hover:text-ink-200 transition-colors" aria-label="Call support">
               <span>📞</span>
               <span dir="ltr" className="font-semibold tracking-wider">{STORE_INFO.phoneDisplay}</span>
             </a>
 
-            <a href={`mailto:${STORE_INFO.email}`} className="flex items-center gap-1.5 hover:text-slate-300 transition-colors" aria-label="Email support">
+            <a href={`mailto:${STORE_INFO.email}`} className="flex items-center gap-1.5 hover:text-ink-200 transition-colors" aria-label="Email support">
               <Mail size={14} />
               <span>{STORE_INFO.email}</span>
             </a>

@@ -70,8 +70,9 @@ const avgRating = (items: ReviewDoc[]) => {
 
 const formatMoneyJOD = (value: any) => {
   const n = Number(value);
-  if (!Number.isFinite(n)) return `0.00 JOD`;
-  return `${n.toFixed(2)} JOD`;
+  const unit = typeof document !== 'undefined' && document.documentElement.lang === 'en' ? 'JOD' : 'د.أ';
+  if (!Number.isFinite(n)) return `0.00 ${unit}`;
+  return `${n.toFixed(2)} ${unit}`;
 };
 
 const clampInt = (v: any, min: number, max: number) => {
@@ -624,7 +625,7 @@ const ProductDetails: React.FC = () => {
 
             <div className="p-6 lg:p-10 flex flex-col justify-center">
               <div className="flex items-center justify-between mb-4">
-                <span className="bg-slate-100 text-slate-700 px-4 py-1.5 rounded-full text-xs font-extrabold uppercase tracking-wider">{product.category}</span>
+                <span className="bg-gold-50 text-gold-700 ring-1 ring-gold-200 px-4 py-1.5 rounded-full text-xs font-bold">{language === 'ar' ? ({ Games: 'ألعاب', Stationery: 'قرطاسية', BabyGear: 'مستلزمات وركوب', Gifts: 'هدايا', Offers: 'عروض' } as Record<string, string>)[String(product.category)] || product.category : product.category}</span>
                 <button onClick={handleShare} className="text-slate-400 hover:text-slate-900 transition-colors bg-white border border-slate-100 shadow-sm p-2 rounded-full">
                   <Share2 size={16} />
                 </button>
@@ -699,7 +700,7 @@ const ProductDetails: React.FC = () => {
 
                 <div className="flex items-baseline gap-4 mb-6">
                   {/* السعر */}
-                  <span className="text-4xl font-black text-slate-900">{formatMoneyJOD(displayPrice)}</span>
+                  <span className="font-heading text-4xl font-bold text-ink-900">{formatMoneyJOD(displayPrice)}</span>
                   {/* 🚀 السعر القديم يظهر الآن دائماً وبثقة تامة! */}
                   {displayOriginalPrice && <span className="text-lg font-bold text-slate-400 line-through">{formatMoneyJOD(displayOriginalPrice)}</span>}
                 </div>

@@ -1,596 +1,304 @@
-// src/pages/Home.tsx
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// src/pages/Home.tsx — "Scholar" redesign: ink navy hero with real products, departments, curated rails.
+import React, { useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  Search,
-  ArrowLeft,
-  TrendingUp,
-  Truck,
-  ShieldCheck,
-  RefreshCcw,
-  Headset,
-  ChevronLeft,
-  ChevronRight,
-  Facebook,
-  Instagram,
-  MapPin,
-  MessageCircle,
-  Gamepad2,
-  PencilRuler,
-  Gift,
-  Shapes,
-  Baby,
-  Blocks,
-  Dices,
-  Palette,
-  PenTool,
-  Backpack,
-  NotebookPen,
-  PartyPopper,
-  Package,
-  Sparkles,
-  Heart,
-  GraduationCap,
-  Sparkle
+  Search, ArrowLeft, ArrowRight, Truck, ShieldCheck, Wallet, Headset, Sparkles, MessageCircle, Facebook, Instagram, MapPin,
+  GraduationCap, Gift, Blocks, Bike, Star,
 } from 'lucide-react';
 
-import Button from '../components/Button';
 import ProductCard from '../components/ProductCard';
 import { useCart } from '../App';
 import SEO from '../components/SEO';
 import { ProductSkeletonGrid } from '../components/Skeleton';
 import { shopTo } from '../config/nav';
 import { STORE_WHATSAPP_URL } from '../config/contact';
-// 🚀 استدعاء المكتشف الذكي
-import SmartFinder from '../components/SmartFinder'; 
-
-type HeroImageSet = {
-  s600: string;
-  s1200: string;
-  s1920: string;
-};
-
-type HeroSlide = {
-  key: string;
-  badge: string;
-  title1: string;
-  title2: string;
-  desc: string;
-  ctaText: string;
-  ctaLink: string;
-  image: HeroImageSet;
-  emoji: string;
-};
-
-const FALLBACK_HERO: HeroImageSet = {
-  s600: '/images/hero-school-19202.webp',
-  s1200: '/images/hero-school-19202.webp',
-  s1920: '/images/hero-school-19202.webp',
-};
-
-const ROTATE_MS = 6500;
+import SmartFinder from '../components/SmartFinder';
 
 const FB_URL = 'https://www.facebook.com/maktabatdayrsharafaleilmia/';
 const IG_URL = 'https://www.instagram.com/deirsharaf/';
 const MAPS_URL = 'https://maps.app.goo.gl/JeK1tvF4jysnLgjM9?g_st=iw';
-const WA_URL = STORE_WHATSAPP_URL;
 
-// Mobile quick access (first screen): the store's main departments, same routes as the header menu.
-const QUICK_CATEGORIES = [
-  { category: 'Stationery', labelAr: 'القرطاسية', labelEn: 'Stationery', image: '/images/categories/pens.png' },
-  { category: 'Games', labelAr: 'الألعاب', labelEn: 'Toys', image: '/images/categories/blocks.png' },
-  { category: 'BabyGear', labelAr: 'مركبات الأطفال', labelEn: 'Ride-ons', image: '/images/categories/bicycles.png' },
-  { category: 'Gifts', labelAr: 'الهدايا', labelEn: 'Gifts', image: '/images/categories/gift-boxes.png' },
-  { category: 'Offers', labelAr: 'العروض', labelEn: 'Offers', image: '/images/categories/discount.png' },
+const DEPARTMENTS = [
+  { category: 'Stationery', ar: 'القرطاسية', en: 'Stationery', subAr: 'دفاتر، أقلام، ألوان وأدوات هندسة', subEn: 'Notebooks, pens, colours & geometry', image: '/images/categories/notebooks.png', Icon: GraduationCap, tone: 'from-royal-50 to-paper-100' },
+  { category: 'Games', ar: 'الألعاب', en: 'Toys', subAr: 'تعليمية، تركيب، منتسوري وألعاب جماعية', subEn: 'Educational, building, Montessori', image: '/images/categories/blocks.png', Icon: Blocks, tone: 'from-gold-50 to-paper-100' },
+  { category: 'BabyGear', ar: 'مستلزمات وركوب', en: 'Ride-ons & Baby', subAr: 'بسكليتات، سيارات ركوب وعربيات', subEn: 'Bikes, ride-on cars & strollers', image: '/images/categories/bicycles.png', Icon: Bike, tone: 'from-emerald-50 to-paper-100' },
+  { category: 'Gifts', ar: 'الهدايا', en: 'Gifts', subAr: 'صناديق هدايا وتغليف وحفلات', subEn: 'Gift boxes, wrapping & parties', image: '/images/categories/gift-boxes.png', Icon: Gift, tone: 'from-rose-50 to-paper-100' },
 ];
 
-const GAMES_SHOWCASE = [
-  { sub: 'montessori', labelAr: 'ألعاب اطفال ', labelEn: 'Montessori', Icon: Shapes, image: '/images/categories/montessori.png' },
-  { sub: 'girls-toys', labelAr: 'ألعاب للبنات', labelEn: 'Girls Toys', Icon: Heart, image: '/images/categories/girls.png' },
-  { sub: 'boys-toys', labelAr: 'ألعاب للأولاد', labelEn: 'Boys Toys', Icon: Gamepad2, image: '/images/categories/boys.png' },
-  { sub: 'building-blocks', labelAr: 'العاب التركيب', labelEn: 'Building Blocks', Icon: Blocks, image: '/images/categories/blocks.png' },
-  { sub: 'group-games', labelAr: 'العاب جماعية', labelEn: 'Group Games', Icon: Dices, image: '/images/categories/group.png' },
+const TOY_CHIPS = [
+  { sub: 'montessori', ar: 'منتسوري', en: 'Montessori' },
+  { sub: 'building-blocks', ar: 'ألعاب التركيب', en: 'Building blocks' },
+  { sub: 'boys-toys', ar: 'للأولاد', en: 'Boys' },
+  { sub: 'girls-toys', ar: 'للبنات', en: 'Girls' },
+  { sub: 'baby-toys', ar: 'ألعاب البيبي', en: 'Baby' },
+  { sub: 'group-games', ar: 'ألعاب جماعية', en: 'Group games' },
+  { sub: 'premium-toys', ar: 'ألعاب مميزة', en: 'Premium' },
 ];
 
-const BABY_GEAR_SHOWCASE = [
-  { sub: 'bicycles', labelAr: 'بسكليتات', labelEn: 'Bicycles', Icon: Sparkles, image: '/images/categories/bicycles.png' },
-  { sub: 'ride-on-cars', labelAr: 'سيارات ركوب', labelEn: 'Ride-on Cars', Icon: Truck, image: '/images/categories/cars.png' },
-  { sub: 'scooters', labelAr: 'سكوترات', labelEn: 'Scooters', Icon: Sparkles, image: '/images/categories/scooters.png' },
-  { sub: 'strollers', labelAr: 'عربيات الأطفال', labelEn: 'Strollers', Icon: Baby, image: '/images/categories/strollers.png' },
-  { sub: 'playmats', labelAr: 'سجاد لعب', labelEn: 'Playmats', Icon: Shapes, image: '/images/categories/playmats.png' },
-];
-
-const STATIONERY_SHOWCASE = [
-  { sub: 'school-bags', labelAr: 'حقائب مدرسية', labelEn: 'School Bags', Icon: Backpack, image: '/images/categories/bags.png' },
-  { sub: 'notebooks', labelAr: 'دفاتر مدرسية', labelEn: 'Notebooks', Icon: NotebookPen, image: '/images/categories/notebooks.png' },
-  { sub: 'pens-ballpoint', labelAr: 'أقلام حبر', labelEn: 'Pens', Icon: PenTool, image: '/images/categories/pens.png' },
-  { sub: 'colors-markers', labelAr: 'ألوان وماركرز', labelEn: 'Colors', Icon: Palette, image: '/images/categories/colors.png' },
-  { sub: 'geometry-rulers', labelAr: 'أدوات هندسية', labelEn: 'Geometry Tools', Icon: PencilRuler, image: '/images/categories/geometry.png' },
-];
-
-const GIFTS_SHOWCASE = [
-  { sub: 'gift-boxes', labelAr: 'صناديق هدايا', labelEn: 'Gift Boxes', Icon: Gift, image: '/images/categories/gift-boxes.png' },
-  { sub: 'wrapping-paper', labelAr: 'تغليف هدايا', labelEn: 'Gift Wrap', Icon: Package, image: '/images/categories/wrap.png' },
-  { sub: 'party-supplies', labelAr: 'مستلزمات حفلات', labelEn: 'Party Supplies', Icon: PartyPopper, image: '/images/categories/party.png' },
-  { sub: 'bundle', labelAr: 'باكجات التوفير', labelEn: 'Bundles', Icon: Package, image: '/images/categories/bundles.png' },
-  { sub: 'discount', labelAr: 'خصومات حصرية', labelEn: 'Discounts', Icon: Sparkle, image: '/images/categories/discount.png' },
-];
-
-type CardVariant = 'games' | 'stationery' | 'gifts' | 'babygear';
-
-type SubCardProps = {
-  title: string;
-  Icon: any;
-  image: string;
-  to: string;
-  variant: CardVariant;
-  subtitle: string;
+const toMillis = (v: any): number => {
+  if (!v) return 0;
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string') return Date.parse(v) || 0;
+  if (typeof v?.toMillis === 'function') return v.toMillis();
+  if (typeof v?.seconds === 'number') return v.seconds * 1000;
+  return 0;
 };
+const firstImage = (p: any) => (Array.isArray(p?.images) && p.images[0]) || p?.image || '';
 
-const SubCard: React.FC<SubCardProps> = ({ title, Icon, image, to, subtitle }) => {
-  const [imgError, setImgError] = useState(false);
-
-  return (
-    <Link
-      to={to}
-      className="group flex flex-col bg-white rounded-3xl border border-slate-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)] overflow-hidden transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_20px_40px_-15px_rgba(14,165,233,0.15)] hover:border-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-100"
-      aria-label={title}
-    >
-      <div className="relative w-full aspect-square bg-slate-50 flex items-center justify-center overflow-hidden">
-        {image && !imgError ? (
-          <img 
-            src={image} 
-            alt={title} 
-            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" 
-            draggable={false}
-            loading="eager"          
-            decoding="sync"
-            fetchpriority="high"
-           onError={() => setImgError(true)}
-          />
-        ) : (
-          <Icon size={48} strokeWidth={1.5} className="text-slate-300 transition-all duration-500 group-hover:text-sky-500 group-hover:scale-110" />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
-      </div>
-      <div className="p-4 sm:p-5 flex flex-col items-center text-center bg-white z-10 border-t border-slate-50">
-        <h3 className="text-sm sm:text-base font-black text-slate-800 tracking-tight group-hover:text-sky-600 transition-colors duration-300 line-clamp-1">{title}</h3>
-        <p className="mt-1 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">{subtitle}</p>
-      </div>
-    </Link>
-  );
-};
-
-type CategorySectionProps = {
-  titleAr: string;
-  titleEn: string;
-  descAr: string;
-  descEn: string;
-  viewAllTo: string;
-  Icon: any;
-  variant: CardVariant;
-  items: Array<{ sub: string; labelAr: string; labelEn: string; Icon: any; image: string }>;
-  toFn: (sub: string) => string;
-  L: (ar: string, en: string) => string;
-};
-
-const CategorySection: React.FC<CategorySectionProps> = ({ titleAr, titleEn, descAr, descEn, viewAllTo, Icon, items, toFn, variant, L }) => (
-  <section className="py-10 lg:py-14">
-    <div className="container mx-auto px-4 lg:px-8">
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6 lg:mb-8">
-        <div className="text-center sm:text-start">
-          <div className="inline-flex items-center gap-2 mb-2">
-            <span className="inline-flex w-10 h-10 rounded-2xl bg-white border border-slate-200 shadow-sm items-center justify-center">
-              <Icon size={18} className="text-secondary-DEFAULT" />
-            </span>
-            <span className="text-xs font-bold tracking-widest uppercase text-slate-500">
-              {L('تسوّق حسب الفئة', 'Shop by Category')}
-            </span>
-          </div>
-          <h2 className="text-2xl lg:text-3xl font-heading font-extrabold text-slate-900 leading-tight">
-            {L(titleAr, titleEn)}
-          </h2>
-          <p className="mt-2 text-sm lg:text-base text-slate-500 max-w-xl mx-auto sm:mx-0">
-            {L(descAr, descEn)}
-          </p>
-        </div>
-
-        <Link
-          to={viewAllTo}
-          className="inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 bg-white border border-slate-200 text-slate-800 font-semibold hover:border-secondary-DEFAULT hover:text-secondary-DEFAULT transition"
-          aria-label="View all"
-        >
-          {L('عرض الكل', 'View All')}
-          <ArrowLeft size={16} className="rtl:rotate-0 ltr:rotate-180" />
-        </Link>
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4 lg:gap-5">
-        {items.map((it, index) => {
-          const title = L(it.labelAr, it.labelEn);
-          return (
-            <SubCard
-              key={`${it.sub}-${index}`}
-              title={title}
-              Icon={it.Icon}
-              image={it.image}
-              to={toFn(it.sub)}
-              variant={variant}
-              subtitle={L('تصفّح المنتجات', 'Browse products')}
-            />
-          );
-        })}
-      </div>
+const SectionHead: React.FC<{ eyebrow: string; title: string; to?: string; cta?: string; isRtl: boolean }> = ({ eyebrow, title, to, cta, isRtl }) => (
+  <div className="flex items-end justify-between gap-4 mb-6 sm:mb-8">
+    <div>
+      <div className="ds-eyebrow mb-2"><span className="w-6 h-px bg-gold-400" />{eyebrow}</div>
+      <h2 className="ds-title">{title}</h2>
     </div>
-  </section>
+    {to && cta && (
+      <Link to={to} className="hidden sm:inline-flex items-center gap-2 text-[14px] font-bold text-ink-900 hover:text-gold-600 transition-colors shrink-0">
+        {cta} {isRtl ? <ArrowLeft size={16} /> : <ArrowRight size={16} />}
+      </Link>
+    )}
+  </div>
 );
 
 const Home: React.FC = () => {
   const { products, addToCart, toggleWishlist, wishlist, openQuickView, t, language, isLoading } = useCart() as any;
-
-  const isRTL = useMemo(() => (language ?? 'ar') === 'ar', [language]);
-  const L = useCallback((ar: string, en: string) => ((language ?? 'ar') === 'ar' ? ar : en), [language]);
-
+  const isRtl = (language ?? 'ar') === 'ar';
+  const L = useCallback((ar: string, en: string) => (isRtl ? ar : en), [isRtl]);
   const navigate = useNavigate();
-  const [quickQuery, setQuickQuery] = useState('');
-  const onQuickSearch = (e: React.FormEvent) => {
+  const [q, setQ] = useState('');
+  const list: any[] = useMemo(() => (Array.isArray(products) ? products : []), [products]);
+
+  const onSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    const q = quickQuery.trim();
-    navigate(q ? `/shop?search=${encodeURIComponent(q)}` : '/shop');
+    const s = q.trim();
+    navigate(s ? `/shop?search=${encodeURIComponent(s)}` : '/shop');
   };
 
-  // «العروض» shows only while the Offers category has products (same rule as the shop's category filter), so it never
-  // opens an empty page. It reappears by itself as soon as a product is filed under Offers.
-  const quickCategories = useMemo(() => {
-    const hasOffers = Array.isArray(products) && products.some((p: any) => p?.category === 'Offers');
-    return QUICK_CATEGORIES.filter((c) => c.category !== 'Offers' || hasOffers);
-  }, [products]);
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const p of list) c[p.category] = (c[p.category] || 0) + 1;
+    return c;
+  }, [list]);
 
-  const slides = useMemo<HeroSlide[]>(() => [
-    {
-      key: 'back-to-school',
-      badge: String((t('hero_badge') as string) ?? L('جديد الموسم: تشكيلة العودة للمدارس', 'New season: Back to School picks')),
-      title1: L('مكتبة دير شرف', 'Dair Sharaf'),
-      title2: L('العلمية', 'Scientific Store'),
-      desc: L('قرطاسية، حقائب، أدوات ذكية… كل ما تحتاجه العائلة والطلاب بجودة عالية.', 'Stationery, bags, and smart essentials — everything students and families need with great quality.'),
-      ctaText: L('تسوق القرطاسية', 'Shop Stationery'),
-      ctaLink: shopTo('Stationery'),
-      image: FALLBACK_HERO,
-      emoji: '🎒',
-    },
-    {
-      key: 'toys',
-      badge: L('الأكثر طلبًا للأطفال', 'Most Popular for Kids'),
-      title1: L('ألعاب', 'Safe Toys'),
-      title2: L('آمنة وتعليمية', 'and Educational'),
-      desc: L('ألعاب مختارة بعناية حسب العمر لتنمية المهارات وإضافة المرح لكل طفل.', 'Carefully selected toys by age to build skills and add fun for every child.'),
-      ctaText: L('تسوق الألعاب', 'Shop Games'),
-      ctaLink: shopTo('Games'),
-      image: FALLBACK_HERO,
-      emoji: '🧸',
-    },
-    {
-      key: 'gifts',
-      badge: L('هدايا لكل المناسبات', 'Gifts for Every Occasion'),
-      title1: L('هدايا', 'Special Gifts'),
-      title2: L('تليق بالمناسبات', 'for Every Moment'),
-      desc: L('اختيارات راقية للهدايا واللوازم المكتبية والمنتجات الجميلة للمناسبات.', 'Premium picks for gifts, office supplies, and beautiful items for special moments.'),
-      ctaText: L('تسوق الهدايا', 'Shop Gifts'),
-      ctaLink: shopTo('Gifts'),
-      image: FALLBACK_HERO,
-      emoji: '🎁',
-    },
-  ], [t, language, L]);
+  const latest = useMemo(() => [...list].sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt)), [list]);
+  const newArrivals = useMemo(() => {
+    const flagged = latest.filter((p) => p.isNew);
+    return (flagged.length >= 4 ? flagged : latest).slice(0, 8);
+  }, [latest]);
+  const stationery = useMemo(() => latest.filter((p) => p.category === 'Stationery').slice(0, 8), [latest]);
+  const toys = useMemo(() => latest.filter((p) => p.category === 'Games').slice(0, 4), [latest]);
+  const heroPicks = useMemo(() => {
+    const byCat = (c: string) => latest.find((p) => p.category === c && firstImage(p));
+    const picks = [byCat('Games'), byCat('Stationery'), byCat('BabyGear')].filter(Boolean);
+    for (const p of latest) if (picks.length < 3 && firstImage(p) && !picks.includes(p)) picks.push(p);
+    return picks.slice(0, 3);
+  }, [latest]);
 
-  const [activeSlide, setActiveSlide] = useState<number>(0);
-  const [isPaused, setIsPaused] = useState(false);
-
-  const goNext = useCallback(() => setActiveSlide((s) => (slides.length ? (s + 1) % slides.length : 0)), [slides.length]);
-  const goPrev = useCallback(() => setActiveSlide((s) => (slides.length ? (s - 1 + slides.length) % slides.length : 0)), [slides.length]);
-
-  const dragStartX = useRef<number | null>(null);
-  const dragging = useRef<boolean>(false);
-
-  const onPointerDown = (e: React.PointerEvent) => {
-    dragging.current = true;
-    dragStartX.current = e.clientX;
-  };
-
-  const onPointerUp = (e: React.PointerEvent) => {
-    if (!dragging.current || dragStartX.current == null) return;
-    const delta = e.clientX - dragStartX.current;
-    dragging.current = false;
-    dragStartX.current = null;
-    if (Math.abs(delta) < 40) return;
-    if (delta < 0) { isRTL ? goPrev() : goNext(); } else { isRTL ? goNext() : goPrev(); }
-  };
-
-  const onPointerLeave = () => {
-    dragging.current = false;
-    dragStartX.current = null;
-  };
-
-  useEffect(() => {
-    if (activeSlide >= slides.length) setActiveSlide(0);
-  }, [slides.length, activeSlide]);
-
-  useEffect(() => {
-    if (slides.length <= 1 || isPaused) return;
-    const id = window.setInterval(() => setActiveSlide((s) => (s + 1) % slides.length), ROTATE_MS);
-    return () => window.clearInterval(id);
-  }, [slides.length, isPaused]);
-
-  const slide = slides[activeSlide] ?? slides[0];
-
-  const featuredProducts = useMemo(() => {
-    const list = Array.isArray(products) ? products : [];
-    const picked = list.filter((p: any) => !!p?.isFeatured).slice(0, 4);
-    return picked.length ? picked : list.slice(0, 4);
-  }, [products]);
-
-  const trustItems = useMemo(() => [
-    { Icon: Truck, labelAr: 'شحن سريع', labelEn: 'Fast Shipping' },
-    { Icon: ShieldCheck, labelAr: 'دفع آمن', labelEn: 'Secure Payment' },
-    { Icon: RefreshCcw, labelAr: 'استرجاع سهل', labelEn: 'Easy Returns' },
-    { Icon: Headset, labelAr: 'دعم سريع', labelEn: 'Quick Support' },
-  ], []);
+  const card = (p: any, i: number) => (
+    <ProductCard key={p.id} product={p} onAddToCart={addToCart} onToggleWishlist={toggleWishlist} onQuickView={openQuickView} isLiked={wishlist.has(p.id)} priority={i < 2} />
+  );
 
   return (
-    <div className="min-h-screen">
-      <SEO title={String(t('home') ?? 'Home')} description={slide?.desc} type="website" />
+    <div className="bg-paper">
+      <SEO title={String(t('home') ?? 'Home')} description={L('مكتبة دير شرف العلمية: قرطاسية، ألعاب تعليمية، مستلزمات مدرسية وهدايا مع توصيل لكل المحافظات.', 'Dair Sharaf Library: stationery, educational toys, school supplies and gifts.')} type="website" />
 
-      {/* Mobile quick access: search + departments on the first screen (desktop already has both in the header) */}
-      <section className="lg:hidden bg-white border-b border-slate-100" aria-label={L('بحث وأقسام', 'Search and departments')}>
-        <div className="container mx-auto px-4 pt-4 pb-3">
-          <form onSubmit={onQuickSearch} role="search" className="relative">
-            <label htmlFor="home-quick-search" className="sr-only">{L('ابحث في المتجر', 'Search the store')}</label>
-            <input
-              id="home-quick-search"
-              type="search"
-              enterKeyHint="search"
-              value={quickQuery}
-              onChange={(e) => setQuickQuery(e.target.value)}
-              placeholder={L('دوّر على قلم، شنطة، لعبة…', 'Search pens, bags, toys…')}
-              className="w-full h-12 ps-11 pe-4 rounded-2xl bg-slate-50 border-2 border-slate-200 text-[15px] font-semibold text-ink placeholder:text-slate-400 outline-none focus:border-secondary-DEFAULT focus:bg-white transition-colors"
-            />
-            <button type="submit" aria-label={L('بحث', 'Search')} className="absolute start-1.5 top-1.5 w-9 h-9 rounded-xl bg-primary-DEFAULT text-ink flex items-center justify-center">
-              <Search size={18} strokeWidth={2.5} />
-            </button>
-          </form>
-
-          <nav aria-label={L('الأقسام', 'Departments')} className="mt-3 -mx-4 px-4 flex gap-3 overflow-x-auto scrollbar-hide">
-            {quickCategories.map((c) => (
-              <Link key={c.category} to={shopTo(c.category)} className="shrink-0 w-[68px] flex flex-col items-center gap-1.5 text-center group">
-                <span className="w-[60px] h-[60px] rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden flex items-center justify-center group-active:scale-95 transition-transform">
-                  <img src={c.image} alt="" width={60} height={60} loading="eager" decoding="async" className="w-full h-full object-cover" />
-                </span>
-                <span className="text-[12px] font-bold text-ink leading-tight">{L(c.labelAr, c.labelEn)}</span>
-              </Link>
-            ))}
-          </nav>
-        </div>
-      </section>
-
-      {/* Hero Section */}
-      <section
-        className="relative overflow-hidden bg-slate-50 py-8 lg:py-28"
-        onMouseEnter={() => setIsPaused(true)}
-        onMouseLeave={() => setIsPaused(false)}
-        onFocusCapture={() => setIsPaused(true)}
-        onBlurCapture={() => setIsPaused(false)}
-        onPointerDown={onPointerDown}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerLeave}
-        onPointerLeave={onPointerLeave}
-        style={{ touchAction: 'pan-y' }}
-      >
-        <div className="absolute top-0 end-0 w-3/4 lg:w-1/2 h-full rtl:bg-gradient-to-r ltr:bg-gradient-to-l from-primary-light/50 to-transparent rtl:rounded-br-[100px] ltr:rounded-bl-[100px] pointer-events-none" />
-        <div className="absolute bottom-0 start-0 w-2/3 lg:w-1/3 h-2/3 bg-gradient-to-t from-secondary-light/50 to-transparent rtl:rounded-tl-[100px] ltr:rounded-tr-[100px] pointer-events-none" />
-        <div className="absolute top-20 start-20 w-16 h-16 bg-primary-DEFAULT/20 rounded-full blur-2xl animate-pulse" />
-
-        <div className="container mx-auto px-4 lg:px-8 relative z-10">
-          <div className="flex flex-col lg:flex-row items-center gap-12">
-            
-            <div className="flex-1 text-center lg:text-start order-2 lg:order-1">
-              <div className="mb-6">
-                <h1 className="text-3xl sm:text-4xl lg:text-6xl font-heading font-extrabold text-slate-900 tracking-tight leading-[1.15]">
-                  {L('مكتبة دير شرف العلمية', 'Dair Sharaf Scientific Library')}
-                </h1>
-
-                <div className="mt-2 flex items-center justify-center lg:justify-start gap-3 text-slate-500">
-                  <span className="text-sm sm:text-base font-semibold">{L('منذ عام 2000', 'Since 2000')}</span>
-                  <span className="w-1 h-1 rounded-full bg-slate-300" />
-                  
-                  <div className="flex items-center gap-2">
-                    {[
-                      { href: FB_URL, icon: Facebook, color: '#1877F2', label: 'Facebook' },
-                      { href: IG_URL, icon: Instagram, color: '#E1306C', label: 'Instagram' },
-                      { href: WA_URL, icon: MessageCircle, color: '#25D366', label: 'WhatsApp' },
-                      { href: MAPS_URL, icon: MapPin, color: '#EA4335', label: 'Maps' }
-                    ].map((item, idx) => (
-                      <a
-                        key={idx}
-                        href={item.href}
-                        target="_blank"
-                        rel="noreferrer"
-                        aria-label={item.label}
-                        className="w-10 h-10 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-center transition hover:-translate-y-[1px] hover:shadow-md active:scale-95"
-                      >
-                        <item.icon size={18} style={{ color: item.color }} />
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="inline-flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-100 mb-5">
-                <span className="text-lg" aria-hidden="true">{slide?.emoji}</span>
-                <span className="text-sm font-semibold text-slate-700">{slide?.badge}</span>
-              </div>
-
-              <p className="text-base sm:text-lg text-slate-600 mb-7 max-w-xl mx-auto lg:mx-0 leading-relaxed">
-                {slide?.desc}
-              </p>
-
-              <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
-                <Link to={slide?.ctaLink || '/shop'} aria-label="Primary CTA">
-                  <Button size="lg" className="rounded-full w-full sm:w-auto px-7">{slide?.ctaText}</Button>
-                </Link>
-                <Link to={shopTo('Offers')} aria-label="View offers">
-                  <Button variant="outline" size="lg" className="rounded-full w-full sm:w-auto px-7">
-                    {String(t('viewOffers') ?? L('شاهد العروض', 'View Offers'))}
-                  </Button>
-                </Link>
-              </div>
-
-              <div className="mt-8 grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl mx-auto lg:mx-0">
-                {trustItems.map(({ Icon, labelAr, labelEn }, idx) => (
-                  <div key={idx} className="bg-white rounded-2xl border border-slate-200 px-3 py-2 flex items-center gap-2 shadow-sm">
-                    <div className="w-9 h-9 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center">
-                      <Icon className="text-slate-700" size={18} />
-                    </div>
-                    <span className="text-sm font-semibold text-slate-800 whitespace-nowrap">{L(labelAr, labelEn)}</span>
-                  </div>
-                ))}
-              </div>
-
-              {slides.length > 1 && (
-                <div className="mt-6 flex items-center justify-center lg:justify-start gap-3">
-                  <button onClick={() => (isRTL ? goNext() : goPrev())} className="p-2 rounded-full bg-white border border-slate-200 hover:border-secondary-DEFAULT hover:text-secondary-DEFAULT transition focus:outline-none focus:ring-2 focus:ring-secondary-DEFAULT" aria-label="Previous slide">
-                    <ChevronRight size={18} className="rtl:rotate-180 ltr:rotate-0" />
-                  </button>
-                  <div className="flex items-center gap-2">
-                    {slides.map((s, i) => (
-                      <button key={s.key} onClick={() => setActiveSlide(i)} aria-label={`Slide ${i + 1}`} className={`h-2 rounded-full transition-all ${i === activeSlide ? 'w-8 bg-secondary-DEFAULT' : 'w-2 bg-slate-300 hover:bg-slate-400'}`} />
-                    ))}
-                  </div>
-                  <button onClick={() => (isRTL ? goPrev() : goNext())} className="p-2 rounded-full bg-white border border-slate-200 hover:border-secondary-DEFAULT hover:text-secondary-DEFAULT transition focus:outline-none focus:ring-2 focus:ring-secondary-DEFAULT" aria-label="Next slide">
-                    <ChevronLeft size={18} className="rtl:rotate-180 ltr:rotate-0" />
-                  </button>
-                </div>
-              )}
+      {/* ============================ HERO ============================ */}
+      <section className="relative overflow-hidden bg-ink-900 text-white">
+        <div className="absolute inset-0 bg-ink-glow" aria-hidden />
+        <div className="absolute inset-0 opacity-[0.07] bg-paper-grain [background-size:18px_18px]" aria-hidden />
+        <div className="ds-container relative grid grid-cols-1 lg:grid-cols-[1.05fr_1fr] gap-10 lg:gap-14 items-center py-10 sm:py-14 lg:py-20">
+          <div className="min-w-0">
+            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 ring-1 ring-white/15 px-3.5 py-1.5 text-[12px] font-semibold text-gold-200 mb-5">
+              <Sparkles size={14} /> {L('مكتبة عريقة منذ عام 2000', 'A trusted library since 2000')}
             </div>
+            <h1 className="font-heading font-bold text-[34px] leading-[1.15] sm:text-5xl lg:text-[3.6rem] lg:leading-[1.08]">
+              {L('كل ما يحتاجه الطالب والطفل', 'Everything students and kids need,')}
+              <span className="block text-gold-300 mt-1">{L('بعناية مكتبة دير شرف', 'chosen with care')}</span>
+            </h1>
+            <p className="mt-5 text-[15px] sm:text-[17px] leading-8 text-ink-100/85 max-w-xl">
+              {L('قرطاسية أصلية، ألعاب تعليمية آمنة، مستلزمات مدرسية وهدايا — نختارها بأنفسنا ونوصلها لباب بيتك في كل المحافظات.', 'Genuine stationery, safe educational toys, school supplies and gifts — hand-picked and delivered to your door.')}
+            </p>
 
-            {/* On phones the photo pushed every product below the fold; it is shown from lg up only. */}
-            <div className="hidden lg:block flex-1 relative animate-in zoom-in duration-1000 w-full order-1 lg:order-2">
-              <div className="relative z-10 bg-white p-3 lg:p-4 rounded-3xl shadow-2xl lg:rotate-3 lg:hover:rotate-0 transition-transform duration-500">
-                <div className="rounded-2xl bg-slate-100 overflow-hidden">
-                  <img
-                    src={slide?.image?.s1200 || FALLBACK_HERO.s1200}
-                    srcSet={`${slide?.image?.s600 || FALLBACK_HERO.s600} 600w, ${slide?.image?.s1200 || FALLBACK_HERO.s1200} 1200w, ${slide?.image?.s1920 || FALLBACK_HERO.s1920} 1920w`}
-                    sizes="(max-width: 640px) 600px, (max-width: 1024px) 1200px, 1920px"
-                    alt={`${slide?.title1 ?? ''} ${slide?.title2 ?? ''}`.trim()}
-                    className="rounded-2xl w-full object-cover h-[200px] sm:h-[300px] lg:h-[420px]"
-                    loading="eager"
-                    decoding="async"
-                    fetchPriority="high"
-                    draggable={false}
-                    width={1200}
-                    height={800}
-                    style={{ aspectRatio: '3 / 2' }}
-                  />
-                </div>
-
-                <div className="absolute -bottom-6 -end-2 lg:-end-6 bg-white p-3 lg:p-4 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3 scale-90 lg:scale-100">
-                  <div className="bg-green-100 p-2 rounded-full text-green-600">
-                    <TrendingUp size={24} />
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-500 font-bold">{String(t('topSales') ?? L('مبيعات عالية', 'Top Sales'))}</p>
-                    <p className="font-bold text-slate-900">+10k</p>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="absolute top-0 end-0 w-full h-full border-2 border-primary-DEFAULT rounded-3xl -z-10 rtl:-translate-x-3 ltr:translate-x-3 translate-y-3 lg:rtl:-translate-x-4 lg:ltr:translate-x-4 lg:translate-y-4" />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* الأقسام */}
-      <div className="bg-slate-50">
-        <CategorySection titleAr="تسوّق الألعاب حسب الفئة" titleEn="Shop Games by Category" descAr="اختر النوع المناسب بسرعة (ولادي / بناتي / تعليمي...)" descEn="Pick the right type (boys / girls / educational...)" viewAllTo={shopTo('Games')} Icon={Gamepad2} variant="games" items={GAMES_SHOWCASE} toFn={(sub) => shopTo('Games', sub)} L={L} />
-        
-        <CategorySection titleAr="مركبات ومستلزمات الأطفال" titleEn="Kids Ride-ons & Gear" descAr="بسكليتات، سيارات ركوب، ومستلزمات العناية" descEn="Bicycles, ride-on cars, and baby gear" viewAllTo={shopTo('BabyGear')} Icon={Truck} variant="babygear" items={BABY_GEAR_SHOWCASE} toFn={(sub) => shopTo('BabyGear', sub)} L={L} />
-
-        {/* 🚀 مكان المكتشف الذكي الجديد: بين الأقسام */}
-        <section className="py-6 lg:py-10">
-          <div className="container mx-auto px-4 lg:px-8">
-             <SmartFinder products={products} L={L} isRtl={isRTL} />
-          </div>
-        </section>
-
-        <CategorySection titleAr="تسوّق القرطاسية حسب القسم" titleEn="Shop Stationery by Section" descAr="كل مستلزمات المدرسة والمكتب بشكل مرتب" descEn="Neatly organized school & office essentials" viewAllTo={shopTo('Stationery')} Icon={PencilRuler} variant="stationery" items={STATIONERY_SHOWCASE} toFn={(sub) => shopTo('Stationery', sub)} L={L} />
-        
-        <CategorySection titleAr="تسوّق الهدايا حسب النوع" titleEn="Shop Gifts by Type" descAr="هدايا مرتبة لكل المناسبات" descEn="Curated gifts for every occasion" viewAllTo={shopTo('Gifts')} Icon={Gift} variant="gifts" items={GIFTS_SHOWCASE} toFn={(sub) => shopTo('Gifts', sub)} L={L} />
-        
-        <div className="container mx-auto px-4 lg:px-8 pb-6"><div className="h-px bg-gradient-to-r from-transparent via-slate-200 to-transparent" /></div>
-      </div>
-
-      {/* Featured Products */}
-      <section className="py-12 lg:py-20 bg-white">
-        <div className="container mx-auto px-4 lg:px-8">
-          <div className="flex items-end justify-between gap-4 mb-10 lg:mb-16">
-            <div className="text-center sm:text-start w-full sm:w-auto">
-              <span className="text-secondary-DEFAULT font-bold tracking-widest text-xs uppercase mb-2 block">{String(t('ourPicks') ?? 'Our Picks')}</span>
-              <h2 className="text-2xl lg:text-3xl font-heading font-bold text-slate-900">{String(t('featuredProducts') ?? 'Featured Products')}</h2>
-            </div>
-            <Link to="/shop" className="text-secondary-DEFAULT font-semibold flex items-center gap-1 hover:gap-2 transition-all" aria-label="View all products">
-              {String(t('viewAll') ?? 'View All')} <ArrowLeft size={16} className="rtl:rotate-0 ltr:rotate-180" />
-            </Link>
-          </div>
-          {isLoading ? (
-            <ProductSkeletonGrid count={4} />
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              {featuredProducts.map((product: any, idx: number) => (
-                <ProductCard key={product.id} product={product} onAddToCart={addToCart} onToggleWishlist={toggleWishlist} onQuickView={openQuickView} isLiked={wishlist.has(product.id)} priority={idx < 2} />
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* Offer Banner */}
-      <section className="py-10">
-        <div className="container mx-auto px-4 lg:px-8">
-          <div className="relative rounded-3xl overflow-hidden p-8 lg:p-12 flex flex-col md:flex-row items-center justify-between text-center md:text-start bg-gradient-to-r from-slate-900 via-indigo-900 to-slate-900 shadow-2xl">
-            {/* تأثير ولمعان في الخلفية */}
-            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20 pointer-events-none"></div>
-            <div className="absolute -top-20 -right-20 w-64 h-64 bg-indigo-500/30 rounded-full blur-3xl pointer-events-none"></div>
-            
-            <div className="relative z-10 max-w-xl mb-8 md:mb-0">
-              <div className="flex items-center justify-center md:justify-start gap-2 text-amber-400 font-black mb-4 uppercase tracking-widest text-sm">
-                <Sparkles size={18} className="animate-pulse" /> {String(t('specialOffer') ?? 'عرض خاص')}
-              </div>
-              <h2 className="text-3xl lg:text-4xl font-black text-white mb-4 leading-tight drop-shadow-md">
-                {isRTL ? 'خصومات تصل إلى 50% على تشكيلة مختارة' : 'Up to 50% off on selected items'}
-              </h2>
-              <p className="text-indigo-100 text-sm lg:text-base mb-8 leading-relaxed font-semibold">
-                {isRTL ? 'لا تفوت الفرصة! تسوق الآن واحصل على أفضل العروض قبل نفاذ الكمية.' : 'Don\'t miss out! Shop now and get the best deals before stock runs out.'}
-              </p>
-              <Link to={shopTo('Offers')} aria-label="Shop Offer">
-                {/* تعديل الزر ليكون بارز جداً */}
-                <button className="bg-white text-indigo-900 hover:bg-slate-100 px-8 py-3.5 rounded-xl font-black shadow-[0_10px_20px_rgba(0,0,0,0.3)] transition-all hover:-translate-y-1 active:scale-95 flex items-center justify-center gap-2 mx-auto md:mx-0">
-                  {isRTL ? 'تسوق العرض الآن' : 'Shop Offer Now'}
-                </button>
-              </Link>
-            </div>
-            
-            <div className="relative z-10 w-full md:w-1/3 max-w-xs mx-auto md:mx-0">
-              {/* توهج خلف الصورة */}
-              <div className="absolute inset-0 bg-white/10 blur-2xl rounded-full" />
-              <img 
-                src={FALLBACK_HERO.s600} 
-                alt="Offer image" 
-                className="relative w-full h-auto rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.4)] rotate-3 hover:rotate-0 transition-transform duration-500 border-4 border-white/10" 
+            <form onSubmit={onSearch} className="mt-7 flex items-center gap-2 bg-white rounded-full p-1.5 ps-5 max-w-xl shadow-lift">
+              <Search size={19} className="text-ink-400 shrink-0" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                type="search"
+                placeholder={L('ابحث عن قلم، دفتر، لعبة…', 'Search pens, notebooks, toys…')}
+                className="flex-1 min-w-0 bg-transparent text-ink-900 placeholder:text-ink-300 text-[15px] py-2 !border-0 !shadow-none focus:outline-none"
+                aria-label={L('بحث', 'Search')}
               />
+              <button type="submit" className="ds-btn-gold !py-2.5 !px-5 text-[14px]">{L('بحث', 'Search')}</button>
+            </form>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link to="/shop" className="ds-btn-gold">{L('تسوّق كل المنتجات', 'Shop all products')} {isRtl ? <ArrowLeft size={18} /> : <ArrowRight size={18} />}</Link>
+              <Link to={shopTo('Stationery')} className="inline-flex items-center gap-2 rounded-full ring-1 ring-white/25 text-white font-bold px-6 py-3.5 hover:bg-white/10 transition">{L('العودة للمدارس', 'Back to school')}</Link>
+            </div>
+
+            <dl className="mt-9 grid grid-cols-3 gap-2 sm:gap-3 max-w-lg">
+              {[
+                { v: list.length ? `${list.length}+` : '100+', l: L('منتج متوفر', 'products') },
+                { v: L('كل المحافظات', 'Nationwide'), l: L('توصيل سريع', 'fast delivery') },
+                { v: L('عند الاستلام', 'On delivery'), l: L('ادفع براحتك', 'pay when it arrives') },
+              ].map((s) => (
+                <div key={s.l} className="min-w-0 rounded-2xl bg-white/[0.06] ring-1 ring-white/10 px-2.5 sm:px-3 py-3">
+                  <dt className="font-heading font-bold text-[13.5px] sm:text-[19px] leading-snug text-white">{s.v}</dt>
+                  <dd className="text-[11.5px] sm:text-[12.5px] text-ink-200 mt-0.5">{s.l}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+
+          {/* real products collage */}
+          <div className="relative h-[300px] sm:h-[420px] lg:h-[480px]">
+            {heroPicks.map((p, i) => {
+              const pos = [
+                'top-0 end-0 w-[62%] h-[70%] rotate-[2deg]',
+                'bottom-0 start-0 w-[52%] h-[58%] -rotate-[3deg]',
+                'bottom-[8%] end-[6%] w-[36%] h-[40%] rotate-[4deg]',
+              ][i];
+              return (
+                <Link key={p.id} to={`/product/${p.id}`} className={`absolute ${pos} rounded-[1.75rem] bg-paper-100 shadow-lift ring-1 ring-white/20 overflow-hidden group transition-transform duration-500 hover:rotate-0 hover:scale-[1.02]`}>
+                  <img src={firstImage(p)} alt={p.name} className="w-full h-full object-contain p-4 mix-blend-multiply" loading={i === 0 ? 'eager' : 'lazy'} />
+                  <div className="absolute bottom-2.5 inset-x-2.5 rounded-xl bg-white/90 backdrop-blur px-3 py-1.5 flex items-center justify-between gap-2 text-ink-900">
+                    <span className="text-[11.5px] font-semibold truncate">{isRtl ? p.name : p.nameEn || p.name}</span>
+                    <span className="text-[12px] font-bold text-gold-600 shrink-0">{p.price} {L('د.أ', 'JOD')}</span>
+                  </div>
+                </Link>
+              );
+            })}
+            <div className="absolute -top-3 start-[8%] hidden sm:flex items-center gap-2 rounded-2xl bg-white text-ink-900 px-3.5 py-2.5 shadow-lift">
+              <Star size={16} className="text-gold-500" fill="currentColor" />
+              <span className="text-[12.5px] font-bold">{L('مختارة بعناية لكل الأعمار', 'Curated for every age')}</span>
             </div>
           </div>
         </div>
       </section>
 
+      {/* ============================ VALUE STRIP ============================ */}
+      <section className="border-b border-ink-900/[0.06] bg-white">
+        <div className="ds-container grid grid-cols-2 lg:grid-cols-4 gap-y-5 gap-x-4 py-6">
+          {[
+            { Icon: Truck, t: L('توصيل لكل المحافظات', 'Nationwide delivery'), d: L('خلال 24–48 ساعة', 'within 24–48h') },
+            { Icon: Wallet, t: L('الدفع عند الاستلام', 'Cash on delivery'), d: L('أو تحويل CliQ', 'or CliQ transfer') },
+            { Icon: ShieldCheck, t: L('منتجات أصلية', 'Genuine products'), d: L('نختارها بأنفسنا', 'hand-picked') },
+            { Icon: Headset, t: L('دعم مباشر', 'Real support'), d: L('عبر واتساب', 'on WhatsApp') },
+          ].map(({ Icon, t: tt, d }) => (
+            <div key={tt} className="flex items-center gap-3">
+              <span className="w-11 h-11 rounded-2xl bg-paper-200 text-ink-900 flex items-center justify-center shrink-0"><Icon size={20} /></span>
+              <div className="min-w-0">
+                <div className="text-[13.5px] font-bold text-ink-900 truncate">{tt}</div>
+                <div className="text-[12px] text-ink-400 truncate">{d}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ============================ DEPARTMENTS ============================ */}
+      <section className="ds-container py-12 sm:py-16">
+        <SectionHead eyebrow={L('الأقسام', 'Departments')} title={L('تسوّق حسب القسم', 'Shop by department')} to="/shop" cta={L('كل المنتجات', 'All products')} isRtl={isRtl} />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
+          {DEPARTMENTS.map((d) => (
+            <Link key={d.category} to={shopTo(d.category)} className={`group relative overflow-hidden rounded-3xl bg-gradient-to-b ${d.tone} ring-1 ring-ink-900/[0.06] p-4 sm:p-6 min-h-[190px] sm:min-h-[260px] flex flex-col transition-all duration-500 hover:shadow-lift hover:-translate-y-1`}>
+              <div className="flex items-center justify-between">
+                <span className="w-10 h-10 rounded-2xl bg-white/80 text-ink-900 flex items-center justify-center"><d.Icon size={19} /></span>
+                {counts[d.category] ? <span className="text-[11.5px] font-bold text-ink-500 bg-white/70 rounded-full px-2.5 py-1">{counts[d.category]} {L('منتج', 'items')}</span> : null}
+              </div>
+              <img src={d.image} alt="" className="absolute -bottom-3 -end-3 w-[58%] sm:w-[55%] object-contain drop-shadow-xl transition-transform duration-500 group-hover:scale-105 group-hover:-rotate-3" loading="lazy" />
+              <div className="mt-auto relative max-w-[62%]">
+                <h3 className="font-heading font-bold text-ink-900 text-[17px] sm:text-[22px]">{L(d.ar, d.en)}</h3>
+                <p className="hidden sm:block text-[12.5px] leading-6 text-ink-500 mt-1">{L(d.subAr, d.subEn)}</p>
+                <span className="mt-2 inline-flex items-center gap-1 text-[12.5px] font-bold text-gold-600">{L('تصفّح', 'Browse')} {isRtl ? <ArrowLeft size={14} /> : <ArrowRight size={14} />}</span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      {/* ============================ NEW ARRIVALS ============================ */}
+      <section className="ds-container pb-12 sm:pb-16">
+        <SectionHead eyebrow={L('وصل حديثًا', 'Just in')} title={L('أحدث ما أضفناه للمكتبة', 'Newest in the library')} to="/shop" cta={L('عرض الكل', 'View all')} isRtl={isRtl} />
+        {isLoading && !list.length ? (
+          <ProductSkeletonGrid count={8} />
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">{newArrivals.map(card)}</div>
+        )}
+      </section>
+
+      {/* ============================ BACK TO SCHOOL BANNER ============================ */}
+      <section className="ds-container pb-12 sm:pb-16">
+        <div className="relative overflow-hidden rounded-[2rem] bg-gradient-to-l from-gold-500 via-gold-400 to-gold-300 text-ink-900 px-6 sm:px-12 py-10 sm:py-14">
+          <div className="absolute inset-0 opacity-20 bg-paper-grain [background-size:16px_16px]" aria-hidden />
+          <img src="/images/categories/bags.png" alt="" className="absolute -bottom-6 end-2 sm:end-10 w-40 sm:w-72 drop-shadow-2xl" loading="lazy" />
+          <div className="relative max-w-xl">
+            <div className="text-[12.5px] font-bold uppercase tracking-wider text-ink-900/70 mb-2">{L('موسم العودة للمدارس', 'Back to school')}</div>
+            <h2 className="font-heading font-bold text-[26px] sm:text-[38px] leading-tight">{L('جهّز الحقيبة كاملة من مكان واحد', 'Pack the whole school bag in one place')}</h2>
+            <p className="mt-3 text-[14.5px] sm:text-[16px] leading-7 text-ink-900/80">{L('دفاتر، أقلام، ألوان، أدوات هندسة وحقائب — بأسعار مكتبة الحي وجودة تدوم طول السنة.', 'Notebooks, pens, colours, geometry sets and bags — neighbourhood prices, all-year quality.')}</p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link to={shopTo('Stationery')} className="ds-btn-ink">{L('تسوّق القرطاسية', 'Shop stationery')}</Link>
+              <a href={STORE_WHATSAPP_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-white/70 hover:bg-white text-ink-900 font-bold px-6 py-3.5 transition"><MessageCircle size={18} /> {L('أرسل قائمة المدرسة', 'Send the school list')}</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================ STATIONERY ============================ */}
+      {stationery.length > 0 && (
+        <section className="ds-container pb-12 sm:pb-16">
+          <SectionHead eyebrow={L('القرطاسية', 'Stationery')} title={L('أساسيات كل طالب', 'Every student’s essentials')} to={shopTo('Stationery')} cta={L('كل القرطاسية', 'All stationery')} isRtl={isRtl} />
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">{stationery.map(card)}</div>
+        </section>
+      )}
+
+      {/* ============================ TOYS ============================ */}
+      <section className="bg-white border-y border-ink-900/[0.06]">
+        <div className="ds-container py-12 sm:py-16">
+          <SectionHead eyebrow={L('الألعاب', 'Toys')} title={L('ألعاب تُعلّم وتُسعد', 'Toys that teach and delight')} to={shopTo('Games')} cta={L('كل الألعاب', 'All toys')} isRtl={isRtl} />
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0 mb-6">
+            {TOY_CHIPS.map((c) => (
+              <Link key={c.sub} to={shopTo('Games', c.sub)} className="shrink-0 rounded-full bg-paper-100 ring-1 ring-ink-900/[0.07] px-4 py-2 text-[13px] font-bold text-ink-800 hover:bg-ink-900 hover:text-white transition">{L(c.ar, c.en)}</Link>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">{toys.map(card)}</div>
+        </div>
+      </section>
+
+      {/* ============================ SMART FINDER ============================ */}
+      <section className="ds-container py-12 sm:py-16">
+        <div className="rounded-[2rem] bg-white ring-1 ring-ink-900/[0.06] shadow-soft p-4 sm:p-8">
+          <div className="ds-eyebrow mb-2"><span className="w-6 h-px bg-gold-400" />{L('مساعد الاختيار', 'Gift finder')}</div>
+          <h2 className="ds-title mb-5">{L('مش متأكد شو تختار؟ خلّينا نساعدك', 'Not sure what to pick? Let us help')}</h2>
+          <SmartFinder products={products} L={L} isRtl={isRtl} />
+        </div>
+      </section>
+
+      {/* ============================ STORY / CONTACT ============================ */}
+      <section className="ds-container pb-14 sm:pb-20">
+        <div className="grid lg:grid-cols-[1.2fr_1fr] gap-4 sm:gap-6">
+          <div className="rounded-[2rem] bg-ink-900 text-white p-7 sm:p-10 relative overflow-hidden">
+            <div className="absolute inset-0 bg-ink-glow opacity-80" aria-hidden />
+            <div className="relative">
+              <div className="ds-eyebrow !text-gold-300 mb-3"><span className="w-6 h-px bg-gold-300" />{L('قصتنا', 'Our story')}</div>
+              <h2 className="font-heading font-bold text-[26px] sm:text-[34px] leading-tight">{L('مكتبة الحي التي كبرت معكم', 'The neighbourhood library that grew with you')}</h2>
+              <p className="mt-4 text-[15px] leading-8 text-ink-100/85 max-w-xl">{L('منذ عام 2000 ونحن نجهّز الطلاب والعائلات بالقرطاسية والكتب والألعاب. اليوم نفس الاهتمام، ونفس الأسعار العادلة — ومعها متجر إلكتروني يوصلك لكل ما تحتاجه.', 'Since 2000 we have equipped students and families with stationery, books and toys. The same care and fair prices — now online too.')}</p>
+            </div>
+          </div>
+          <div className="rounded-[2rem] bg-white ring-1 ring-ink-900/[0.06] p-7 sm:p-8 flex flex-col">
+            <h3 className="font-heading font-bold text-ink-900 text-[20px]">{L('تواصل معنا', 'Get in touch')}</h3>
+            <p className="text-[14px] text-ink-500 mt-1 mb-5">{L('اسأل عن أي منتج أو أرسل قائمة مدرسة كاملة.', 'Ask about any product or send a full school list.')}</p>
+            <div className="grid gap-2.5">
+              <a href={STORE_WHATSAPP_URL} target="_blank" rel="noreferrer" className="flex items-center gap-3 rounded-2xl bg-emerald-600 text-white px-4 py-3.5 font-bold hover:bg-emerald-700 transition"><MessageCircle size={20} /> {L('واتساب المكتبة', 'WhatsApp')}</a>
+              <div className="grid grid-cols-3 gap-2.5">
+                <a href={FB_URL} target="_blank" rel="noreferrer" className="flex flex-col items-center gap-1.5 rounded-2xl bg-paper-100 py-3.5 text-ink-800 text-[12px] font-bold hover:bg-paper-200 transition"><Facebook size={19} /> Facebook</a>
+                <a href={IG_URL} target="_blank" rel="noreferrer" className="flex flex-col items-center gap-1.5 rounded-2xl bg-paper-100 py-3.5 text-ink-800 text-[12px] font-bold hover:bg-paper-200 transition"><Instagram size={19} /> Instagram</a>
+                <a href={MAPS_URL} target="_blank" rel="noreferrer" className="flex flex-col items-center gap-1.5 rounded-2xl bg-paper-100 py-3.5 text-ink-800 text-[12px] font-bold hover:bg-paper-200 transition"><MapPin size={19} /> {L('الموقع', 'Map')}</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 };
