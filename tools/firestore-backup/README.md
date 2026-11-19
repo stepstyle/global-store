@@ -38,6 +38,17 @@ powershell -ExecutionPolicy Bypass -File tools\firestore-backup\run-backup.ps1 -
 - ثم يستعيد النسخة في محاكٍ محلي ويتحقق من كل مستند (`ok: true`، و`missing` و`extra` و`changed` كلها 0).
 - **احفظ عبارة المرور في مدير كلمات مرور.** بدونها لا يمكن استعادة النسخة.
 
+### التحقق من نسخة موجودة فقط (دون قراءة Firestore ودون مفتاح)
+
+```powershell
+cd C:\Users\GA\Downloads\anta-store-fixed-step1-patched\dev-review
+powershell -ExecutionPolicy Bypass -File tools\firestore-backup\run-verify.ps1 -BackupFile "$env:USERPROFILE\dairsharaf-backups\<الملف>.fsbk"
+```
+
+- يطلب عبارة المرور مرة واحدة في حقل مخفي.
+- يشغّل محاكيًا محليًا جديدًا على منافذ حرة (18500 فما فوق)، ثم يستعيد النسخة ويتحقق منها. بعد ذلك يوقف **المحاكي الذي شغّله فقط**.
+- إن لم يبدأ المحاكي خلال 120 ثانية يتوقف برسالة `ERROR` واضحة، ولا يعلق.
+
 ## 3. حسابات الدخول (Firebase Authentication)، اختياري ومنفصل
 
 ليست جزءًا من Firestore، وهذا الإصدار لا يغيّرها.
