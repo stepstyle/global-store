@@ -15,7 +15,9 @@ const SET_VAL = `const setVal = (el, v) => {
   Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
   el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
 };`;
-const STICKY = `document.querySelector('div.fixed.bottom-0 button')`;
+// the checkout's own bottom action button (by test id: a position-based selector also matched the cookie bar's
+// "decline" button once the bar appeared, so a later "confirm" click silently declined cookies instead)
+const STICKY = `document.querySelector('[data-testid=checkout-sticky-action]')`;
 const OUTCOME = `(location.hash.startsWith('#/order-success/') ? 'success' : (document.querySelector('[data-testid=submit-result]')?.dataset.status || ''))`;
 const CART_LEN = `JSON.parse(localStorage.getItem('anta_cart') || '[]').length`;
 
@@ -340,6 +342,9 @@ export function buildUiScenarios(ctx) {
         await confirm(tab);
         assert.equal(await waitOutcome(tab, 60_000), 'not_confirmed');
         const first = await tab.evaluate(`document.querySelector('[data-testid=submit-order-id]')?.textContent || ''`);
+        // well past the cookie bar's delay: on Checkout it must NOT cover the confirm bar (it once sat on top of it)
+        assert.equal(await tab.evaluate(`!!document.querySelector('[aria-label="ملفات تعريف الارتباط"]')`), false, 'no cookie bar on the checkout page');
+        // the order note (Checkout's textarea, sent with the order) changes after the unconfirmed attempt
         await tab.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('textarea'), 'ملاحظة جديدة بعد المحاولة'); return true; })()`);
         await setUiMode('pass');
         await sleep(200);

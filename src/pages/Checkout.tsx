@@ -1520,6 +1520,7 @@ const Checkout: React.FC = () => {
           </div>
 
           <Button
+            data-testid="checkout-sticky-action"
             onClick={() => {
               if (step === 1) goToShipping();
               else if (step === 2) changeStep(3);

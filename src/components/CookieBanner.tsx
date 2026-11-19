@@ -5,9 +5,14 @@ import { ShieldCheck } from 'lucide-react';
 import { useCart } from '../App';
 import { loadTracking } from '../services/tracking';
 
-const { Link } = ReactRouterDOM as any;
+const { Link, useLocation } = ReactRouterDOM as any;
 
 const COOKIE_KEY = 'anta_cookie_consent_v1';
+/**
+ * Pages where the bar would sit on top of the page's own bottom action (checkout "confirm order" bar on phones,
+ * success page). The choice is asked on any other page; analytics stay off until the customer accepts.
+ */
+const HIDDEN_ON = /^\/(checkout|order-success)/;
 type CookieChoice = 'accepted' | 'declined';
 
 const safeStorage = {
@@ -39,7 +44,9 @@ const scrollToTopInstant = () => {
 
 const CookieBanner: React.FC = () => {
   const { t, language } = useCart() as any;
+  const { pathname } = useLocation();
   const [show, setShow] = useState(false);
+  const visible = show && !HIDDEN_ON.test(pathname || '');
 
   const prefersReducedMotion = useMemo(() => {
     try {
@@ -72,23 +79,24 @@ const CookieBanner: React.FC = () => {
     return () => window.clearTimeout(id);
   }, []);
 
+  // only while the bar is actually on screen (never a silent "decline" from Escape on the checkout page)
   useEffect(() => {
-    if (!show) return;
+    if (!visible) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') decline(); // تم التعديل هنا لحفظ القرار
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [show, decline]); // أضفنا decline للمصفوفة
+  }, [visible, decline]);
 
   // lets other bottom-docked controls (the shopping assistant button) move above the bar while it is shown
   useEffect(() => {
-    if (!show) return;
+    if (!visible) return;
     document.documentElement.setAttribute('data-cookie-bar', '');
     return () => document.documentElement.removeAttribute('data-cookie-bar');
-  }, [show]);
+  }, [visible]);
 
-  if (!show) return null;
+  if (!visible) return null;
 
   // Compact bar docked to the bottom edge: one short line + two buttons, so it never covers the page content
   // (the previous card covered about half of a phone screen). Same storage key and same accept/decline behaviour.

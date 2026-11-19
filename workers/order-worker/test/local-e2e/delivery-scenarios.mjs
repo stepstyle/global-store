@@ -19,7 +19,7 @@ const SET_VAL = `const setVal = (el, v) => {
   Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
   el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
 };`;
-const STICKY = `document.querySelector('div.fixed.bottom-0 button')`;
+const STICKY = `document.querySelector('[data-testid=checkout-sticky-action]')`; // by test id, never by position
 const OUTCOME = `(location.hash.startsWith('#/order-success/') ? 'success' : (document.querySelector('[data-testid=submit-result]')?.dataset.status || ''))`;
 const CART_LEN = `JSON.parse(localStorage.getItem('anta_cart') || '[]').length`;
 const TOASTS = `[...document.querySelectorAll('[data-testid=toast-message]')].map((t) => t.innerText).join('\\n---\\n')`;
