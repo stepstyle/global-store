@@ -101,7 +101,7 @@ say('starting Firestore emulator (demo project) -> wrangler dev --local (sink + 
 const t0 = Date.now();
 const inner = FILES.inner.replace(/\\/g, '/');
 // the UI suite also needs the Auth emulator (real sign-in in the browser); other suites stay Firestore-only
-const only = ['ui', 'delivery'].includes(process.env.E2E_SUITE || 'all') ? '"firestore,auth"' : 'firestore';
+const only = ['ui', 'delivery', 'wheel'].includes(process.env.E2E_SUITE || 'all') ? '"firestore,auth"' : 'firestore';
 // websocket port override (plan.mjs): a temporary copy of firebase.json, everything else identical
 let firebaseJson = FILES.firebaseJson;
 if (PORTS.emulatorWs !== 9152) {

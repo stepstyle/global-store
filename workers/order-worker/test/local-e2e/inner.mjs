@@ -18,6 +18,7 @@ import { makeTestSigner } from '../token-signer.mjs';
 import { launchChrome, openTab } from './cdp.mjs';
 import { buildUiScenarios, runUiScenarios } from './ui-scenarios.mjs';
 import { runDeliveryScenarios, dashboardAdminEmail } from './delivery-scenarios.mjs';
+import { runWheelScenarios, WHEEL_CAMPAIGN_ID } from './wheel-scenarios.mjs';
 import { resolve as resolvePath } from 'node:path';
 import { WORKER_ROOT } from './plan.mjs';
 import { assertLocalPlan, localOnlyFetch } from './guard.mjs';
@@ -26,7 +27,7 @@ import { PLAN, PORTS, URLS, FILES, PROJECT_ID, TURNSTILE_PASS_TOKEN } from './pl
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const TMP = process.env.E2E_TMP;
 const CPU_MODE = process.env.E2E_MODE === 'cpu';
-const SUITE = process.env.E2E_SUITE || 'all'; // all | scenarios | submit | ui | delivery | approval | approval-live
+const SUITE = process.env.E2E_SUITE || 'all'; // all | scenarios | submit | ui | delivery | wheel | approval | approval-live
 const children = [];
 
 function fail(msg) {
@@ -303,7 +304,7 @@ const fs = new Firestore({ projectId: PROJECT_ID, firestoreAuth: 'emulator', url
 // which local rules file the emulator enforces for the browser: compat (default) | transition | final (all test-only)
 // delivery suite: always the rules planned for that rollout (firebase/firestore.rules.on-delivery)
 // E2E_RULES=on-delivery-final (any suite): the proposed final rules for the live site
-const RULES_NAME = process.env.E2E_RULES === 'on-delivery-final' ? 'on-delivery-final' : SUITE === 'delivery' ? 'on-delivery' : ['transition', 'final'].includes(process.env.E2E_RULES) ? process.env.E2E_RULES : 'compat';
+const RULES_NAME = process.env.E2E_RULES === 'on-delivery-final' || (SUITE === 'wheel' && !process.env.E2E_RULES) ? 'on-delivery-final' : SUITE === 'delivery' ? 'on-delivery' : ['transition', 'final'].includes(process.env.E2E_RULES) ? process.env.E2E_RULES : 'compat';
 async function loadCompatRules() {
   const content = readFileSync(RULES_NAME === 'on-delivery-final' ? FILES.onDeliveryFinalRules : RULES_NAME === 'on-delivery' ? FILES.onDeliveryRules : RULES_NAME === 'final' ? FILES.finalRules : RULES_NAME === 'transition' ? FILES.transitionRules : FILES.compatRules, 'utf8');
   console.log(`[inner] emulator rules: firestore.rules.${RULES_NAME} (local test file)`);
@@ -584,6 +585,86 @@ async function runDeliverySuite() {
   });
 }
 
+// ---------------------------------------------------------------- wheel suite (WHEEL_MODE=test, VITE_WHEEL_MODE=test)
+async function runWheelSuite() {
+  const repoRoot = resolvePath(WORKER_ROOT, '../..');
+  const base = `http://127.0.0.1:${PORTS.vite}`;
+  const AUTH = `http://127.0.0.1:${PORTS.authEmulator}`;
+  const authPost = async (path, body, owner = false) => {
+    const r = await fetch(`${AUTH}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...(owner ? { authorization: 'Bearer owner' } : {}) }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(`auth emulator ${path.split('/').pop()} failed (${r.status})`);
+    return j;
+  };
+  await fetch(`${AUTH}/emulator/v1/projects/${PROJECT_ID}/accounts`, { method: 'DELETE' });
+  const admin = { email: dashboardAdminEmail(repoRoot), password: `e2e-${randomBytes(9).toString('hex')}` };
+  const sa = await authPost('/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo-api-key', { email: admin.email, password: admin.password, returnSecureToken: true });
+  await authPost(`/identitytoolkit.googleapis.com/v1/projects/${PROJECT_ID}/accounts:update`, { localId: sa.localId, emailVerified: true, displayName: 'مسؤول اختبار' }, true);
+  const ownerUid = sa.localId;
+  const put = async (path, data) => {
+    const r = await fs.commit([{ update: { name: fs.name(path), fields: encodeFields(data) } }]);
+    if (!r.ok) throw new Error(`put ${path} failed (${r.status})`);
+  };
+  const reseedAll = async () => {
+    await reseed();
+    await put('config/roles', { ownerUid });
+    await put(`users/${ownerUid}`, { id: ownerUid, name: 'مسؤول اختبار', email: admin.email, role: 'admin', orders: [], createdAt: new Date().toISOString() });
+    // TEST campaign: one TEST prize (the synthetic product p-hundred), always won while it lasts
+    await put(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`, {
+      active: true, minOrderJod: 5, budgetJod: 10, noPrizeWeight: 0, giftOnCancel: 'return',
+      startsAt: '2026-01-01T00:00:00Z', endsAt: '2099-01-01T00:00:00Z', terms: 'شروط تجريبية للاختبار المحلي فقط — ليست حملة حقيقية.',
+      prizes: [{ id: 'test-a', label: 'جائزة تجريبية', productId: 'p-hundred', weight: 1, quantity: 3, unitCostJod: 1 }],
+    });
+    await put(`wheelPool/${WHEEL_CAMPAIGN_ID}_test-a`, { remaining: 3 });
+    for (const [uid, u] of googleUsers) await put(`users/${uid}`, u);
+  };
+  const googleUsers = new Map();
+  const log = createWriteStream(join(TMP, 'vite-wheel.log'));
+  const env = {
+    ...process.env,
+    VITE_FIREBASE_TARGET: 'emulator', VITE_FIREBASE_PROJECT_ID: PROJECT_ID,
+    VITE_FIRESTORE_EMULATOR_HOST: `127.0.0.1:${PORTS.emulator}`, VITE_AUTH_EMULATOR_HOST: `127.0.0.1:${PORTS.authEmulator}`,
+    // the browser's ID tokens go through the TEST re-signing proxy (the Worker refuses the emulator's unsigned tokens)
+    VITE_WORKER_URL: `${URLS.mock}/ui`, VITE_ORDER_ADMIN_URL: `${URLS.mock}/ui`,
+    VITE_WHEEL_MODE: 'test',
+  };
+  const vite = spawn(process.execPath, [join(repoRoot, 'node_modules/vite/bin/vite.js'), '--port', String(PORTS.vite), '--strictPort', '--host', '127.0.0.1'], { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  vite.stdout.pipe(log);
+  vite.stderr.pipe(log);
+  children.push({ label: 'vite-wheel', child: vite });
+  await waitReady('vite-wheel', base, 90_000);
+  await launchChrome({ port: PORTS.cdp, tmpDir: TMP, track: (child) => children.push({ label: 'chrome', child }) });
+  uiMode = 'pass';
+  uiAuthMode = 'resign';
+  console.log(`[inner] wheel suite: Worker WHEEL_MODE=test (campaign ${WHEEL_CAMPAIGN_ID}), rules ${RULES_NAME}, Vite ${base} with VITE_WHEEL_MODE=test, headless Chrome`);
+  return runWheelScenarios({
+    base, admin, ownerUid,
+    shotsDir: process.env.E2E_SHOTS_DIR || join(TMP, 'shots'),
+    only: process.env.E2E_ONLY ? new Set(process.env.E2E_ONLY.split(',')) : null,
+    openTab: () => openTab(PORTS.cdp),
+    reseed: reseedAll,
+    get: async (path) => {
+      const d = await fs.get(path);
+      return d.exists ? decodeFields(d.fields) : null;
+    },
+    countOrders: async () => (await fs.runQuery({ from: [{ collectionId: 'orders' }] })).length,
+    /** a Google-linked account in the Auth EMULATOR (provider google.com, verified e-mail) + a password for the Login form */
+    createGoogleCustomer: async ({ email, password, name }) => {
+      const sub = `g${randomBytes(8).toString('hex')}`;
+      const idp = await authPost('/identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=demo-api-key', {
+        postBody: `id_token=${encodeURIComponent(JSON.stringify({ sub, email, email_verified: true, name }))}&providerId=google.com`,
+        requestUri: 'http://localhost', returnSecureToken: true, returnIdpCredential: true,
+      });
+      await authPost(`/identitytoolkit.googleapis.com/v1/projects/${PROJECT_ID}/accounts:update`, { localId: idp.localId, password, emailVerified: true, displayName: name }, true);
+      const u = { id: idp.localId, name, email, role: 'customer', orders: [], createdAt: new Date().toISOString() };
+      googleUsers.set(idp.localId, u);
+      await put(`users/${idp.localId}`, u);
+      return idp.localId;
+    },
+    sinkCalls: async () => (await (await fetch(`${URLS.sink}/calls`, { headers: { 'x-sink-auth': T.read } })).json()).calls || [],
+  });
+}
+
 // ---------------------------------------------------------------- run
 let results = [];
 let cpu = null;
@@ -602,6 +683,9 @@ try {
     ...(SUITE === 'ui' ? { TURNSTILE_MODE: 'log' } : {}),
     // stock on delivery (production settings except Turnstile: the local web app sends no token) + the rollback sync
     ...(SUITE === 'delivery' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', SYNC_DIRECT_STATUS: 'true' } : {}),
+    // prize wheel: TEST mode with a TEST campaign, a random per-run HMAC secret (never written anywhere), production
+    // settings otherwise (except Turnstile: the local web app sends no token)
+    ...(SUITE === 'wheel' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', WHEEL_MODE: 'test', WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(36).toString('base64url') } : {}),
     ...(SUITE === 'approval' ? {
       APPROVAL_MODE: 'telegram', TELEGRAM_CHAT_ID: APPROVAL.chatId, TELEGRAM_ADMIN_USER_IDS: APPROVAL.adminIds.join(','),
       TELEGRAM_WEBHOOK_SECRET: T.webhook, PRICE_CHECK_MODE: 'enforce',
@@ -642,6 +726,8 @@ try {
     results = await runUiSuite();
   } else if (SUITE === 'delivery') {
     results = await runDeliverySuite();
+  } else if (SUITE === 'wheel') {
+    results = await runWheelSuite();
   } else if (SUITE === 'approval-live') {
     results = await runLiveApproval();
   } else if (SUITE === 'approval') {
