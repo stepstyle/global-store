@@ -17,9 +17,10 @@
 //   byte makes it unreadable. Nothing personal is printed: only collection names and document counts.
 // - restore / verify write and read ONLY a loopback emulator and ONLY a demo- project: production can never be written.
 import { createSign, randomBytes, scryptSync, createCipheriv, createDecipheriv, createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, unlinkSync, chmodSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const MAGIC = 'FSBK1';
 const PAGE = 300;
@@ -62,10 +63,25 @@ export function decrypt(buf, passphrase) {
 }
 
 // ------------------------------------------------------------------ REST client
-async function serviceAccountToken() {
-  const email = process.env.FIREBASE_CLIENT_EMAIL;
-  const key = (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
-  if (!email || !key.includes('PRIVATE KEY')) throw new Error('FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY missing');
+/** credentials: a service-account KEY FILE (recommended: a dedicated "Cloud Datastore Viewer" account), else env vars.
+ *  Only client_email + private_key are used; nothing from the file is ever printed. */
+export function loadCredentials(keyFile) {
+  if (keyFile) {
+    let j;
+    try {
+      j = JSON.parse(readFileSync(keyFile, 'utf8'));
+    } catch {
+      throw new Error('cannot read the key file (path or JSON)');
+    }
+    if (!j.client_email || !String(j.private_key || '').includes('PRIVATE KEY')) throw new Error('the key file is not a service-account key');
+    return { email: j.client_email, key: j.private_key };
+  }
+  return { email: process.env.FIREBASE_CLIENT_EMAIL, key: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n') };
+}
+
+async function serviceAccountToken(creds) {
+  const { email, key } = creds || {};
+  if (!email || !String(key || '').includes('PRIVATE KEY')) throw new Error('no credentials: --key-file <service-account.json> (or FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY)');
   const now = Math.floor(Date.now() / 1000);
   const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
   const unsigned = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({ iss: email, scope: 'https://www.googleapis.com/auth/datastore', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 })}`;
@@ -78,7 +94,7 @@ async function serviceAccountToken() {
   return (await r.json()).access_token;
 }
 
-export function client({ project, emulator, readOnly }) {
+export function client({ project, emulator, readOnly, readTime = null, creds = null }) {
   const base = emulator ? `http://${emulator}/v1` : 'https://firestore.googleapis.com/v1';
   const root = `projects/${project}/databases/(default)/documents`;
   let token = emulator ? 'owner' : null;
@@ -87,7 +103,13 @@ export function client({ project, emulator, readOnly }) {
     if (readOnly && !(method === 'GET' || (method === 'POST' && path.endsWith(':listCollectionIds')))) {
       throw new Error(`refused: ${method} is not a read (read-only backup)`);
     }
-    if (!token) token = await serviceAccountToken();
+    // ONE moment for every read (point-in-time): documents written or changed during the backup are seen as they
+    // were at readTime — orders, orderLedger and stockReservations stay consistent with each other
+    if (readTime) {
+      if (method === 'GET') path += `${path.includes('?') ? '&' : '?'}readTime=${encodeURIComponent(readTime)}`;
+      else if (body) body = { ...body, readTime };
+    }
+    if (!token) token = await serviceAccountToken(creds);
     const r = await fetch(`${base}/${path}`, { method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const data = await r.json().catch(() => null);
     if (!r.ok) throw new Error(`${method} ${path.split('?')[0].replace(root, '<root>')} failed (${r.status} ${data?.error?.status || ''})`);
@@ -140,18 +162,118 @@ const countsOf = (docs) => {
 };
 
 // ------------------------------------------------------------------ commands
-export async function backup({ project, out, emulator, ownerApproved, passphrase }) {
+/** the backup file must never land in a git working tree (it could be committed) */
+export function insideGitTree(file) {
+  let d = dirname(resolve(file));
+  for (;;) {
+    if (existsSync(join(d, '.git'))) return true;
+    const up = dirname(d);
+    if (up === d) return false;
+    d = up;
+  }
+}
+/** owner-only file permissions (Windows ACL: current user only; elsewhere 0600) */
+export function restrictFile(file) {
+  if (process.platform === 'win32') {
+    const r = spawnSync('icacls', [file, '/inheritance:r', '/grant:r', `${process.env.USERNAME}:(R,W)`], { encoding: 'utf8', windowsHide: true });
+    if (r.status !== 0) throw new Error('could not restrict the file permissions (icacls)');
+  } else chmodSync(file, 0o600);
+}
+function writeSecret(out, buf) {
+  if (insideGitTree(out)) throw new Error('refused: --out is inside a git working tree (choose a folder outside every repository)');
+  writeFileSync(out, buf, { flag: 'wx' }); // never overwrite an existing backup
+  restrictFile(out);
+}
+
+export async function backup({ project, out, emulator, ownerApproved, passphrase, keyFile = null, readTime = null }) {
   if (!project || !out) throw new Error('backup needs --project and --out');
+  if (!passphrase || passphrase.length < 16) throw new Error('BACKUP_PASSPHRASE must be at least 16 characters');
   if (emulator && !isLoopback(emulator)) throw new Error('--emulator must be a loopback host:port');
   if (!emulator && ownerApproved !== project) {
     throw new Error('PRODUCTION backup refused: add --owner-approved <the same project id> (only with the owner\'s explicit approval)');
   }
-  const c = client({ project, emulator, readOnly: true });
+  if (insideGitTree(out)) throw new Error('refused: --out is inside a git working tree (choose a folder outside every repository)');
+  // ONE point in time for the whole backup (Firestore keeps versions for 1 hour): 2 s in the past, so the moment is
+  // already committed everywhere. A backup that takes longer than ~55 minutes fails instead of mixing moments.
+  // The local EMULATOR does not implement point-in-time reads (list + readTime -> 400), so an emulator backup reads
+  // "now"; the consistency check below covers both cases.
+  const at = readTime || (emulator ? null : new Date(Date.now() - 2_000).toISOString());
+  const started = Date.now();
+  const c = client({ project, emulator, readOnly: true, readTime: at, creds: emulator ? null : loadCredentials(keyFile) });
   const docs = [];
-  for await (const d of walk(c, c.root)) docs.push({ path: relPath(d.name), fields: d.fields || {}, createTime: d.createTime, updateTime: d.updateTime, hash: docHash(d.fields) });
-  const payload = { format: MAGIC, project, source: emulator ? 'emulator' : 'production', takenAt: new Date().toISOString(), counts: countsOf(docs), docs };
-  writeFileSync(out, encrypt(Buffer.from(JSON.stringify(payload)), passphrase));
-  return { documents: docs.length, counts: payload.counts };
+  for await (const d of walk(c, c.root)) {
+    if (Date.now() - started > 55 * 60_000) throw new Error('backup took longer than 55 minutes: the point-in-time read would expire — nothing written');
+    docs.push({ path: relPath(d.name), fields: d.fields || {}, createTime: d.createTime, updateTime: d.updateTime, hash: docHash(d.fields) });
+  }
+  const consistency = checkConsistency(docs);
+  const payload = { format: MAGIC, project, source: emulator ? 'emulator' : 'production', readTime: at, takenAt: new Date().toISOString(), counts: countsOf(docs), consistency, docs };
+  writeSecret(out, encrypt(Buffer.from(JSON.stringify(payload)), passphrase));
+  return { documents: docs.length, readTime: at, counts: payload.counts, consistency };
+}
+
+// ------------------------------------------------------------------ consistency (orders / orderLedger / stockReservations)
+const raw = (v) => {
+  if (!v || typeof v !== 'object') return null;
+  if ('integerValue' in v) return Number(v.integerValue);
+  if ('doubleValue' in v) return Number(v.doubleValue);
+  if ('stringValue' in v) return v.stringValue;
+  if ('booleanValue' in v) return v.booleanValue;
+  if ('nullValue' in v) return null;
+  if ('mapValue' in v) return Object.fromEntries(Object.entries(v.mapValue.fields || {}).map(([k, x]) => [k, raw(x)]));
+  if ('arrayValue' in v) return (v.arrayValue.values || []).map(raw);
+  return null;
+};
+/**
+ * Business invariants that a torn copy (an order arriving while the collections are read one after another) breaks:
+ *  - stockReservations == the sum of the reservations of the ledgers still 'reserved' (per product / variant)
+ *  - (informational) every orderLedger has its orders/ document
+ * Counts only (no order ids, no personal data). Not consistent -> take the backup again at a quiet moment.
+ */
+export function checkConsistency(docs) {
+  const top = (d) => d.path.split('/');
+  const want = new Map();
+  let ledgers = 0;
+  let ledgerWithoutOrder = 0;
+  const orders = new Set(docs.filter((d) => top(d)[0] === 'orders' && top(d).length === 2).map((d) => top(d)[1]));
+  for (const d of docs) {
+    const [coll, id, sub] = top(d);
+    if (coll !== 'orderLedger' || sub) continue;
+    ledgers += 1;
+    if (!orders.has(id)) ledgerWithoutOrder += 1;
+    if (raw(d.fields.inventory) !== 'reserved') continue;
+    for (const r of raw(d.fields.reservations) || []) {
+      const k = `${r?.productId}\u0000${r?.variantId || ''}`;
+      want.set(k, (want.get(k) || 0) + (Number(r?.qty) || 0));
+    }
+  }
+  const have = new Map();
+  for (const d of docs) {
+    const [coll, pid, sub] = top(d);
+    if (coll !== 'stockReservations' || sub) continue;
+    const f = raw({ mapValue: { fields: d.fields } });
+    if (Number(f.product) > 0) have.set(`${pid}\u0000`, Number(f.product));
+    for (const [vid, q] of Object.entries(f.variants || {})) if (Number(q) > 0) have.set(`${pid}\u0000${vid}`, Number(q));
+  }
+  let reservationMismatches = 0;
+  for (const k of new Set([...want.keys(), ...have.keys()])) if ((want.get(k) || 0) !== (have.get(k) || 0)) reservationMismatches += 1;
+  // reservations and ledgers are written in ONE commit by the Worker -> a mismatch means a torn copy.
+  // ledgerWithoutOrder is informational: the owner may delete a cancelled (released) order and keep its ledger.
+  return { consistent: reservationMismatches === 0, ledgers, reservationMismatches, ledgerWithoutOrder };
+}
+
+/** encrypt any file (e.g. a Firebase Auth export) with the same scheme, then overwrite + delete the plaintext */
+export function seal({ inFile, out, passphrase }) {
+  const plain = readFileSync(inFile);
+  writeSecret(out, encrypt(plain, passphrase));
+  decrypt(readFileSync(out), passphrase); // proven readable before the plaintext goes
+  writeFileSync(inFile, randomBytes(plain.length));
+  unlinkSync(inFile);
+  return { sealed: out, bytes: plain.length, plaintextRemoved: !existsSync(inFile) };
+}
+/** decrypt a sealed file to an owner-only file OUTSIDE git (for a local import test only) */
+export function unseal({ inFile, out, passphrase }) {
+  writeSecret(out, decrypt(readFileSync(inFile), passphrase));
+  return { unsealed: out };
 }
 
 function loadBackup(file, passphrase) {
@@ -192,7 +314,13 @@ export async function verify({ inFile, emulator, project, passphrase }) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const a = parseArgs(process.argv.slice(2));
   const passphrase = process.env.BACKUP_PASSPHRASE;
-  const run = { backup: () => backup({ project: a.project, out: a.out, emulator: a.emulator, ownerApproved: a['owner-approved'], passphrase }), restore: () => restore({ inFile: a.in, emulator: a.emulator, project: a.project, passphrase }), verify: () => verify({ inFile: a.in, emulator: a.emulator, project: a.project, passphrase }) }[a.cmd];
+  const run = {
+    backup: () => backup({ project: a.project, out: a.out, emulator: a.emulator, ownerApproved: a['owner-approved'], passphrase, keyFile: a['key-file'] }),
+    restore: () => restore({ inFile: a.in, emulator: a.emulator, project: a.project, passphrase }),
+    verify: () => verify({ inFile: a.in, emulator: a.emulator, project: a.project, passphrase }),
+    seal: async () => seal({ inFile: a.in, out: a.out, passphrase }),
+    unseal: async () => unseal({ inFile: a.in, out: a.out, passphrase }),
+  }[a.cmd];
   if (!run) {
     console.error('usage: backup.mjs backup|restore|verify … (see the header of this file)');
     process.exit(2);

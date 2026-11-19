@@ -104,3 +104,85 @@ test('guards: no production backup without the typed approval; restore never int
 test('docHash is independent of key order', () => {
   assert.equal(docHash({ a: { integerValue: '1' }, b: { stringValue: 'x' } }), docHash({ b: { stringValue: 'x' }, a: { integerValue: '1' } }));
 });
+
+// ---------------- audit additions ----------------
+import { seal, unseal, insideGitTree, loadCredentials } from './backup.mjs';
+import { existsSync as exists2 } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+
+// The EMULATOR does not implement point-in-time reads (probe: list + readTime -> 400 'Only timestamps past epoch',
+// runQuery + readTime -> empty), so the snapshot itself is NOT testable locally. What IS tested: the consistency
+// check that detects a torn copy, whatever the read mechanism.
+test('consistency check: a consistent copy passes; a reservation without its ledger (torn copy) is detected', async () => {
+  const c = client({ project: SRC, emulator: EMU, readOnly: false });
+  const W = (p, fields) => ({ update: { name: `${c.root}/${p}`, fields } });
+  const res = (pid, qty, vid = null) => ({ mapValue: { fields: { productId: { stringValue: pid }, variantId: vid ? { stringValue: vid } : { nullValue: null }, qty: { integerValue: String(qty) } } } });
+  // consistent state: two open orders reserving p1 (2 + 1) and variant v1 of p2 (1); one delivered (no longer counted)
+  await c.call('POST', `${c.root}:commit`, { writes: [
+    W('orderLedger/ORD-1', { inventory: { stringValue: 'reserved' }, reservations: { arrayValue: { values: [res('p1', 2)] } } }),
+    W('orders/ORD-2', { total: { doubleValue: 3 } }),
+    W('orderLedger/ORD-2', { inventory: { stringValue: 'reserved' }, reservations: { arrayValue: { values: [res('p1', 1), res('p2', 1, 'v1')] } } }),
+    W('orders/ORD-3', { total: { doubleValue: 1 } }),
+    W('orderLedger/ORD-3', { inventory: { stringValue: 'deducted' }, reservations: { arrayValue: { values: [res('p1', 5)] } } }),
+    W('stockReservations/p1', { productId: { stringValue: 'p1' }, product: { integerValue: '3' }, variants: { mapValue: { fields: {} } } }),
+    W('stockReservations/p2', { productId: { stringValue: 'p2' }, product: { integerValue: '0' }, variants: { mapValue: { fields: { v1: { integerValue: '1' } } } } }),
+  ] });
+  const ok = await backup({ project: SRC, out: join(dir, 'cons-ok.fsbk'), emulator: EMU, passphrase: PASS });
+  assert.deepEqual(ok.consistency, { consistent: true, ledgers: 3, reservationMismatches: 0, ledgerWithoutOrder: 0 });
+  // torn copy: the reservation of a NEW order is read, its ledger (read earlier) is not there
+  await c.call('POST', `${c.root}:commit`, { writes: [W('stockReservations/p1', { productId: { stringValue: 'p1' }, product: { integerValue: '4' }, variants: { mapValue: { fields: {} } } })] });
+  const torn = await backup({ project: SRC, out: join(dir, 'cons-torn.fsbk'), emulator: EMU, passphrase: PASS });
+  assert.equal(torn.consistency.consistent, false);
+  assert.equal(torn.consistency.reservationMismatches, 1);
+  // a ledger whose (cancelled, released) order was deleted is reported, but is not a torn copy
+  await c.call('POST', `${c.root}:commit`, { writes: [W('stockReservations/p1', { productId: { stringValue: 'p1' }, product: { integerValue: '3' }, variants: { mapValue: { fields: {} } } }), W('orderLedger/ORD-9', { inventory: { stringValue: 'released' } })] });
+  const info = await backup({ project: SRC, out: join(dir, 'cons-info.fsbk'), emulator: EMU, passphrase: PASS });
+  assert.deepEqual({ c: info.consistency.consistent, w: info.consistency.ledgerWithoutOrder }, { c: true, w: 1 });
+});
+
+test('production backups pin ONE read moment (readTime) on every request; emulator backups do not (unsupported there)', async () => {
+  const seen = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { seen.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : null }); return new Response(JSON.stringify(String(url).includes(':listCollectionIds') ? { collectionIds: [] } : {}), { status: 200 }); };
+  try {
+    const c = client({ project: 'any-project', emulator: '127.0.0.1:1', readOnly: true, readTime: '2026-11-19T10:00:00.000Z' });
+    await c.call('POST', `${c.root}:listCollectionIds`, { pageSize: 100 });
+    await c.call('GET', `${c.root}/orders?pageSize=300&showMissing=true`);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(seen[0].body.readTime, '2026-11-19T10:00:00.000Z');
+  assert.match(seen[1].url, /readTime=2026-11-19T10%3A00%3A00\.000Z/);
+});
+
+test('output: never inside a git tree, never overwrites, owner-only permissions', async () => {
+  assert.equal(insideGitTree(join(process.cwd(), 'x.fsbk')), true, 'the repository itself');
+  await assert.rejects(backup({ project: SRC, out: join(process.cwd(), 'leak.fsbk'), emulator: EMU, passphrase: PASS }), /inside a git working tree/);
+  assert.equal(exists2(join(process.cwd(), 'leak.fsbk')), false);
+  await assert.rejects(backup({ project: SRC, out: file, emulator: EMU, passphrase: PASS }), /EEXIST/);
+  if (process.platform === 'win32') {
+    const acl = spawnSync('icacls', [file], { encoding: 'utf8' }).stdout;
+    assert.ok(acl.includes(process.env.USERNAME), 'current user has access');
+    assert.ok(!/BUILTIN\Users|Everyone|Authenticated Users/i.test(acl), 'no broad group access');
+  }
+});
+
+test('seal / unseal (e.g. a Firebase Auth export): plaintext overwritten + removed, round trip exact, wrong passphrase fails', async () => {
+  const plain = join(dir, 'accounts.json');
+  const content = JSON.stringify({ users: [{ localId: 'u1', email: 'x@example.invalid', passwordHash: 'aGFzaA==' }] });
+  writeFileSync(plain, content);
+  const r = seal({ inFile: plain, out: join(dir, 'accounts.fsbk'), passphrase: PASS });
+  assert.equal(r.plaintextRemoved, true);
+  assert.equal(exists2(plain), false);
+  assert.ok(!readFileSync(join(dir, 'accounts.fsbk')).includes(Buffer.from('x@example.invalid')));
+  unseal({ inFile: join(dir, 'accounts.fsbk'), out: join(dir, 'accounts.back.json'), passphrase: PASS });
+  assert.equal(readFileSync(join(dir, 'accounts.back.json'), 'utf8'), content);
+  assert.throws(() => unseal({ inFile: join(dir, 'accounts.fsbk'), out: join(dir, 'nope.json'), passphrase: 'wrong-passphrase-0000000' }), /cannot decrypt/);
+});
+
+test('key file: a non-key / unreadable file is refused without echoing its content', () => {
+  const bad = join(dir, 'bad.json');
+  writeFileSync(bad, JSON.stringify({ secret: 'TOP-SECRET-VALUE' }));
+  assert.throws(() => loadCredentials(bad), (e) => /not a service-account key/.test(e.message) && !e.message.includes('TOP-SECRET'));
+  assert.throws(() => loadCredentials(join(dir, 'missing.json')), /cannot read the key file/);
+});
