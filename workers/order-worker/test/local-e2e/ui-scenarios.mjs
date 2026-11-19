@@ -587,6 +587,24 @@ export function buildUiScenarios(ctx) {
         await ctx.setOrderStatus(orderId, 'delivered');
         await openReviews(tab, ctx.base, 'p-simple');
         await tab.waitFor(REVIEW_FORM, 20_000, 'review form after delivery');
+        // submit it: ONE review document per customer + product (id = product_uid), rating figures by the Worker
+        const submitReview = async (text) => {
+          await tab.evaluate(`(() => { ${SET_VAL} const ta = document.querySelector('textarea[placeholder^="اكتب رأيك"]'); setVal(ta, ${JSON.stringify(text)}); return true; })()`);
+          await tab.evaluate(`document.querySelector('textarea[placeholder^="اكتب رأيك"]').parentElement.querySelector('.justify-end button').click(); true`);
+        };
+        await submitReview('دفتر ممتاز وورقه سميك');
+        await until(async () => !!(await ctx.get(`reviews/p-simple_${uid}`)), 20_000, 'review saved under product_uid');
+        const rv = await ctx.get(`reviews/p-simple_${uid}`);
+        assert.equal(rv.userId, uid);
+        assert.equal(rv.rating, 5);
+        await until(async () => (await ctx.get('products/p-simple'))?.ratingCount === 1, 20_000, 'rating figures computed by the Worker');
+        assert.equal((await ctx.get('products/p-simple')).ratingAvg, 5);
+        // a second submission edits the same review (no second review, count stays 1)
+        await openReviews(tab, ctx.base, 'p-simple');
+        await tab.waitFor(REVIEW_FORM, 20_000, 'review form again');
+        await submitReview('تعديل: ما زلت راضيًا عن الدفتر');
+        await until(async () => String((await ctx.get(`reviews/p-simple_${uid}`))?.comment || '').startsWith('تعديل'), 20_000, 'review edited');
+        assert.equal((await ctx.get('products/p-simple')).ratingCount, 1, 'still one review');
       }],
       ['U19', 'INPUT LIMITS: over-long name blocked at step 1, over-long note blocked before sending (nothing sent, cart kept); a pending attempt keeps its number; fixed data -> SAME number, one order', async (tab) => {
         await setUiMode('pass');

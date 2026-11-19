@@ -4,6 +4,8 @@
 //   POST /create-order          create / adopt an order (idempotent, atomic stock)
 //   GET  /orders/:id/status     { exists, status } only — no personal data
 //   POST /admin/orders/:id/status  dashboard status change; stock deducted on delivery (Firebase ID token of an admin)
+//   POST /orders/:id/claim       link a guest order to the signed-in account (ID token + the order's tracking key)
+//   POST /products/:id/ratings   recompute a product's rating figures from its published reviews (ID token)
 //   GET  /test                  Telegram test message      (x-worker-auth required)
 //   POST /notify-order          resend notifications        (x-worker-auth required)
 //   OPTIONS *                   CORS preflight (allow-listed origins only)
@@ -20,10 +22,14 @@ import { AuthError, bearerToken, verifyFirebaseIdToken } from './auth.js';
 import { handleTelegramWebhook } from './telegram.js';
 import { requireAdmin } from './admin.js';
 import { changeOrderStatus, syncDirectStatusChanges } from './fulfilment.js';
+import { claimOrder } from './claims.js';
+import { recomputeProductRating } from './ratings.js';
 
 const STATUS_PATH = /^\/orders\/([^/]+)\/status$/;
 const ADMIN_STATUS_PATH = /^\/admin\/orders\/([^/]+)\/status$/;
 const SUMMARY_PATH = /^\/orders\/([^/]+)\/summary$/;
+const CLAIM_PATH = /^\/orders\/([^/]+)\/claim$/;
+const RATINGS_PATH = /^\/products\/([^/]+)\/ratings$/;
 
 async function verifyTurnstile(cfg, token, ip) {
   if (!token || !cfg.turnstileSecret) return false;
@@ -37,6 +43,18 @@ async function verifyTurnstile(cfg, token, ip) {
     return data.success === true;
   } catch {
     return false;
+  }
+}
+
+/** A VERIFIED Firebase identity from the Authorization header (required): { ok, uid } or { ok: false, code }. */
+async function signedInUid(request, cfg) {
+  try {
+    const token = bearerToken(request.headers.get('authorization'));
+    if (token === undefined) return { ok: false, code: 'AUTH_REQUIRED' };
+    return { ok: true, uid: (await verifyFirebaseIdToken(token, { projectId: cfg.projectId, jwksUrl: cfg.authJwksUrl })).uid };
+  } catch (e) {
+    if (e instanceof AuthError) return { ok: false, code: 'AUTH_INVALID' };
+    throw e;
   }
 }
 
@@ -143,6 +161,40 @@ async function handle(request, env, ctx, cfg) {
       if (!(e instanceof AuthError)) throw e;
     }
     const r = await orderSummary(fs, id, { key: request.headers.get('x-tracking-key'), authUid });
+    return reply(r.body, r.status);
+  }
+
+  // ---------------- link a guest order to the signed-in account (tracking key = proof) ----------------
+  const cm = url.pathname.match(CLAIM_PATH);
+  if (cm) {
+    if (request.method !== 'POST') return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    if (!(await allowRequest(env, cfg, 'status', ip))) return reply({ ok: false, code: 'RATE_LIMITED' }, 429);
+    let id;
+    try {
+      id = decodeURIComponent(cm[1]);
+    } catch {
+      return reply({ ok: false, code: 'NOT_FOUND' }, 404);
+    }
+    const who = await signedInUid(request, cfg);
+    if (!who.ok) return reply({ ok: false, code: who.code }, 401);
+    const r = await claimOrder(fs, { id, key: request.headers.get('x-tracking-key'), uid: who.uid });
+    return reply(r.body, r.status);
+  }
+
+  // ---------------- product ratings, computed from the published reviews (browsers cannot write them) ----------------
+  const rm = url.pathname.match(RATINGS_PATH);
+  if (rm) {
+    if (request.method !== 'POST') return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    if (!(await allowRequest(env, cfg, 'status', ip))) return reply({ ok: false, code: 'RATE_LIMITED' }, 429);
+    let id;
+    try {
+      id = decodeURIComponent(rm[1]);
+    } catch {
+      return reply({ ok: false, code: 'INVALID_ID' }, 400);
+    }
+    const who = await signedInUid(request, cfg);
+    if (!who.ok) return reply({ ok: false, code: who.code }, 401);
+    const r = await recomputeProductRating(fs, id);
     return reply(r.body, r.status);
   }
 

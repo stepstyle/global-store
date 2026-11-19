@@ -7,7 +7,7 @@ import {
   orderBy,
   getDocs,
   getDoc,
-  addDoc,
+  setDoc,
   updateDoc,
   deleteDoc,
   doc,
@@ -15,7 +15,8 @@ import {
   deleteField,
 } from 'firebase/firestore';
 
-import { db as firebaseDb, isFirebaseInitialized } from './firebase';
+import { db as firebaseDb, isFirebaseInitialized, getFirebaseAuth } from './firebase';
+import { BACKEND_ENABLED } from '../config/deployEnv';
 import type { AppUser, ReviewDoc, ReviewInput, ReviewStatus } from '../types';
 
 // ----------------------
@@ -91,6 +92,18 @@ const calcAggregate = (items: Array<Partial<ReviewDoc>>) => {
   return { avg, count };
 };
 
+/** POST {worker}/products/:id/ratings with the signed-in customer's ID token. Best effort: the review itself is saved. */
+const requestRatingsRecompute = async (pid: string): Promise<void> => {
+  const base = BACKEND_ENABLED ? String(import.meta.env.VITE_ORDER_ADMIN_URL || import.meta.env.VITE_WORKER_URL || '').trim().replace(/\/+$/, '') : '';
+  const token = await getFirebaseAuth()?.currentUser?.getIdToken().catch(() => null);
+  if (!base || !token) return;
+  try {
+    await fetch(`${base}/products/${encodeURIComponent(pid)}/ratings`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+  } catch (e) {
+    console.warn('ratings recompute request failed', e);
+  }
+};
+
 /**
  * 🔄 مزامنة تقييم المنتج وتحديثه في مجموعة المنتجات
  */
@@ -101,20 +114,9 @@ const syncProductAggregate = async (productId: string): Promise<void> => {
   try {
     // Firebase mode
     if (isFirebaseInitialized && firebaseDb) {
-      const col = collection(firebaseDb, 'reviews');
-      const q = query(col, where('productId', '==', pid)); // نجلب الكل لتجنب الـ Composite Index المعقد
-      const snap = await getDocs(q);
-
-      const all = snap.docs.map((d) => d.data() as Partial<ReviewDoc>);
-      const { avg, count } = calcAggregate(all);
-
-      await updateDoc(doc(firebaseDb, 'products', pid), {
-        ratingAvg: avg,
-        ratingCount: count,
-        rating: avg, // Backward compatibility
-        reviews: count, // Backward compatibility
-        updatedAt: serverTimestamp(),
-      });
+      // the product's rating figures are computed by the order Worker from the PUBLISHED reviews (the Firestore rules no
+      // longer let a browser write them); this call only asks it to recompute this product now
+      await requestRatingsRecompute(pid);
       return;
     }
 
@@ -232,7 +234,7 @@ export const reviewsApi = {
 
         if (snap.empty) {
           // Insert new
-          await addDoc(col, {
+          await setDoc(doc(firebaseDb, 'reviews', `${pid}_${uid}`), {
             productId: pid,
             userId: uid,
             userName,

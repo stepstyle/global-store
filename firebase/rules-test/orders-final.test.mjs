@@ -58,7 +58,45 @@ const CASES = [
     async (c) => { await getDoc(doc(c.as(ADMIN), 'stockReservations/p1')); return getDoc(doc(c.as(ADMIN), 'orderLedger/ORD-WORKER01-AAAA')); }],
   ['products: anyone reads; a customer cannot change the price', { live: false, final: false },
     async (c) => { await assertSucceeds(getDoc(doc(c.guest(), 'products/p1'))); return updateDoc(doc(c.as(ALICE), 'products/p1'), { price: 0.01 }); }],
+
+  // ---------------- ratings, reviews, roles ----------------
+  ['a customer sets any star average on a product (ratingAvg 5, ratingCount 999)', { live: true, final: false },
+    (c) => updateDoc(doc(c.as(MALLORY), 'products/p1'), { ratingAvg: 5, ratingCount: 999 })],
+  ['the admin edits a product', { live: true, final: true },
+    (c) => updateDoc(doc(c.as(ADMIN), 'products/p1'), { price: 3 })],
+  ['a customer posts a valid review (id = product_uid)', { live: true, final: true },
+    (c) => setDoc(doc(c.as(MALLORY), `reviews/p1_${MALLORY}`), review('p1', MALLORY))],
+  ['a customer posts reviews under random ids (unlimited reviews on one product)', { live: true, final: false },
+    (c) => setDoc(doc(c.as(MALLORY), 'reviews/any-random-id-1'), review('p1', MALLORY))],
+  ['a customer posts a review in ANOTHER customer\'s name', { live: true, final: false },
+    // a NEW document (p1_ALICE already exists in the seed, so writing there would be an update, not a create)
+    (c) => setDoc(doc(c.as(MALLORY), 'reviews/impersonated-1'), review('p1', ALICE))],
+  ['a review with 50 stars', { live: true, final: false },
+    (c) => setDoc(doc(c.as(MALLORY), `reviews/p1_${MALLORY}`), review('p1', MALLORY, { rating: 50 }))],
+  ['a new review that starts with 100 likes and an "admin" reply', { live: true, final: false },
+    (c) => setDoc(doc(c.as(MALLORY), `reviews/p1_${MALLORY}`), review('p1', MALLORY, { likesCount: 100, adminReply: { text: 'رد رسمي' } }))],
+  ['Alice edits her own review (rating + comment)', { live: true, final: true },
+    (c) => updateDoc(doc(c.as(ALICE), `reviews/p1_${ALICE}`), { rating: 4, comment: 'تعديل' })],
+  ['Alice publishes her own hidden review / writes an admin reply', { live: true, final: false },
+    (c) => updateDoc(doc(c.as(ALICE), `reviews/p1_${ALICE}`), { status: 'published', adminReply: { text: 'x' } })],
+  ['Mallory likes Alice\'s review (only her own like)', { live: true, final: true },
+    (c) => updateDoc(doc(c.as(MALLORY), `reviews/p1_${ALICE}`), { likesBy: { [MALLORY]: true }, likesCount: 1 })],
+  ['Mallory inflates likes (likesCount 999 / adds someone else\'s like)', { live: true, final: false },
+    (c) => updateDoc(doc(c.as(MALLORY), `reviews/p1_${ALICE}`), { likesBy: { [MALLORY]: true, [OWNER]: true }, likesCount: 999 })],
+  ['a user makes herself "admin" in users/{uid}.role', { live: true, final: false },
+    (c) => setDoc(doc(c.as(MALLORY), `users/${MALLORY}`), { id: MALLORY, name: 'm', role: 'admin' })],
+  ['a user creates / updates her own profile (customer)', { live: true, final: true },
+    async (c) => { await setDoc(doc(c.as(MALLORY), `users/${MALLORY}`), { id: MALLORY, name: 'm', role: 'customer' }); return updateDoc(doc(c.as(MALLORY), `users/${MALLORY}`), { name: 'Mallory' }); }],
+  ['an admin reads their OWN admins entry (dashboard check without trusting users.role)', { live: false, final: true },
+    (c) => getDoc(doc(c.as(ADMIN), `admins/${ADMIN}`))],
+  ['a customer reads an admins entry', { live: false, final: false },
+    (c) => getDoc(doc(c.as(MALLORY), `admins/${ADMIN}`))],
+  ['a user reads another user\'s profile', { live: false, final: false },
+    (c) => getDoc(doc(c.as(MALLORY), `users/${ALICE}`))],
 ];
+function review(productId, userId, extra = {}) {
+  return { productId, userId, userName: 'زبون', rating: 5, comment: 'منتج ممتاز', status: 'published', likesCount: 0, likesBy: {}, adminReply: null, ...extra };
+}
 
 const envs = {};
 before(async () => {
@@ -83,6 +121,8 @@ async function seed(env) {
     await setDoc(doc(db, 'orders/ORD-WORKER02-AAAA'), workerOrder('ORD-WORKER02-AAAA', 'released', { status: 'cancelled' }));
     await setDoc(doc(db, 'stockReservations/p1'), { reserved: 1 });
     await setDoc(doc(db, 'orderLedger/ORD-WORKER01-AAAA'), { decision: 'accepted' });
+    await setDoc(doc(db, `reviews/p1_${ALICE}`), review('p1', ALICE, { status: 'hidden' }));
+    await setDoc(doc(db, `users/${ALICE}`), { id: ALICE, name: 'Alice', role: 'customer' });
   });
 }
 

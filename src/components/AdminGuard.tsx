@@ -4,10 +4,14 @@ import { doc, getDoc } from 'firebase/firestore';
 import { useCart } from '../App';
 import { db } from '../services/firebase';
 
+/**
+ * Admin = the owner in config/roles, or a document in admins/{uid} — the same sources the Firestore rules use.
+ * users/{uid}.role is NOT proof (a customer must never open the dashboard by writing "admin" in their own profile);
+ * it is only used in local mock mode, where there is no Firebase and no real data.
+ */
 async function checkIsAdmin(uid: string, role?: string) {
   if (!uid) return false;
-  if (String(role || '').toLowerCase() === 'admin') return true;
-  if (!db) return false;
+  if (!db) return String(role || '').toLowerCase() === 'admin';
 
   try {
     const rolesSnap = await getDoc(doc(db, 'config', 'roles'));

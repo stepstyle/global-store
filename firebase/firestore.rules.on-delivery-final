@@ -43,16 +43,23 @@ service cloud.firestore {
 
     // ✅ المالك فقط يتحكم بالأدمنز
     match /admins/{uid} {
-      allow read: if isOwner();
+      // an admin can read their OWN entry (the dashboard checks it instead of trusting users/{uid}.role)
+      allow read: if isOwner() || isSelf(uid);
       allow create, update, delete: if isOwner();
     }
 
-    // ✅ المنتجات: قراءة للجميع
+    function changed() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+    function isStr(v, max) {
+      return v is string && v.size() <= max;
+    }
+
+    // ✅ المنتجات: قراءة للجميع، والتعديل للأدمن فقط. أرقام التقييم يحسبها الـ Worker من التقييمات المنشورة
+    //    (POST /products/:id/ratings) — لم يعد أي زبون يستطيع كتابة متوسط النجوم أو عددها.
     match /products/{id} {
       allow read: if true;
-      allow create, delete: if isAdmin();
-      // 🚨 تعديل احترافي: السماح للعميل بتحديث أرقام التقييمات فقط داخل المنتج (بدون المساس بالسعر أو الاسم)
-      allow update: if isAdmin() || (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ratingAvg', 'ratingCount', 'rating', 'reviews', 'updatedAt']));
+      allow create, update, delete: if isAdmin();
     }
 
     // ✅ الأقسام: قراءة للجميع، تعديل للأدمن/المالك فقط
@@ -90,21 +97,57 @@ service cloud.firestore {
       allow delete: if isOwner() && !(workerManaged() && stillReserved());
     }
 
-    // ✅ التقييمات:
+    // ✅ التقييمات: عامة للقراءة، بلا بريد إلكتروني. تقييم واحد لكل زبون لكل منتج (معرّف المستند = productId_uid)،
+    //    محتوى مُتحقق منه، والإعجاب يغيّر إعجاب صاحبه فقط. الإخفاء والرد والحذف للأدمن.
+    function reviewKeys() {
+      return ['productId', 'userId', 'userName', 'rating', 'comment', 'status',
+              'likesCount', 'likesBy', 'adminReply', 'createdAt', 'updatedAt'];
+    }
+    function validRating(v) {
+      return v is int && v >= 1 && v <= 5;
+    }
     match /reviews/{id} {
       allow read: if true;
-      allow create: if signedIn();
+
+      allow create: if signedIn()
+        && id == request.resource.data.productId + '_' + request.auth.uid
+        && request.resource.data.keys().hasOnly(reviewKeys())
+        && request.resource.data.userId == request.auth.uid
+        && isStr(request.resource.data.productId, 120)
+        && validRating(request.resource.data.rating)
+        && isStr(request.resource.data.get('comment', ''), 2000)
+        && isStr(request.resource.data.get('userName', ''), 80)
+        && request.resource.data.get('status', 'published') == 'published'
+        && request.resource.data.get('likesCount', 0) == 0
+        && request.resource.data.get('likesBy', {}) == {}
+        && request.resource.data.get('adminReply', null) == null;
+
       allow delete: if isAdmin();
-      // 🚨 تعديل احترافي: السماح بتعديل التقييم لصاحبه، والسماح للآخرين بعمل "لايك" فقط
-      allow update: if isAdmin() ||
-                    (signedIn() && resource.data.userId == request.auth.uid) ||
-                    (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likesBy', 'likesCount', 'updatedAt']));
+
+      allow update: if isAdmin()
+        || (signedIn()
+            && resource.data.userId == request.auth.uid
+            && changed().hasOnly(['rating', 'comment', 'userName', 'userEmail', 'updatedAt'])
+            // userEmail may only be REMOVED (old reviews), never written or changed
+            && (!('userEmail' in changed()) || !('userEmail' in request.resource.data))
+            && validRating(request.resource.data.rating)
+            && isStr(request.resource.data.get('comment', ''), 2000)
+            && isStr(request.resource.data.get('userName', ''), 80))
+        || (signedIn()
+            && changed().hasOnly(['likesBy', 'likesCount', 'updatedAt'])
+            && request.resource.data.likesBy is map
+            && request.resource.data.likesBy.diff(resource.data.get('likesBy', {})).affectedKeys().hasOnly([request.auth.uid])
+            && request.resource.data.likesCount == request.resource.data.likesBy.size());
     }
 
-    // ✅ users:
+    // ✅ users: لا يستطيع المستخدم منح نفسه دورًا (role) أو تغيير معرّفه — صلاحية الأدمن من config/roles و admins فقط
     match /users/{uid} {
       allow read: if isSelf(uid) || isAdmin();
-      allow create, update: if isSelf(uid) || isAdmin();
+      allow create: if isAdmin() || (
+        isSelf(uid)
+        && request.resource.data.get('role', 'customer') == 'customer'
+        && request.resource.data.get('id', uid) == uid);
+      allow update: if isAdmin() || (isSelf(uid) && !changed().hasAny(['role', 'id']));
       allow delete: if isOwner();
     }
 
