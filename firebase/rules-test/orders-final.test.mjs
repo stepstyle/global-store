@@ -56,6 +56,17 @@ const CASES = [
     (c) => deleteDoc(doc(c.as(OWNER), 'orders/ORD-WORKER02-AAAA'))],
   ['a browser reads stockReservations / orderLedger', { live: false, final: false },
     async (c) => { await getDoc(doc(c.as(ADMIN), 'stockReservations/p1')); return getDoc(doc(c.as(ADMIN), 'orderLedger/ORD-WORKER01-AAAA')); }],
+  // ---------------- prize wheel (Worker-only collections; no match in the rules = denied) ----------------
+  ['a customer gives himself wheel chances', { live: false, final: false },
+    (c) => setDoc(doc(c.as(ALICE), `wheelEntitlements/test-campaign_${ALICE}`), { granted: 99, used: 0 })],
+  ['a customer writes a winning spin result', { live: false, final: false },
+    (c) => setDoc(doc(c.as(ALICE), `wheelSpins/test-campaign_${ALICE}_1`), { uid: ALICE, prizeId: 'test-a', status: 'issued' })],
+  ['a customer refills the prize pool', { live: false, final: false },
+    (c) => setDoc(doc(c.as(ALICE), 'wheelPool/test-campaign_test-a'), { remaining: 999 })],
+  ['the admin edits the campaign from the browser (weights / budget)', { live: false, final: false },
+    (c) => setDoc(doc(c.as(ADMIN), 'wheelCampaigns/test-campaign'), { active: true, noPrizeWeight: 0 })],
+  ['a guest reads another customer spin result', { live: false, final: false },
+    (c) => getDoc(doc(c.guest(), `wheelSpins/test-campaign_${ALICE}_1`))],
   ['products: anyone reads; a customer cannot change the price', { live: false, final: false },
     async (c) => { await assertSucceeds(getDoc(doc(c.guest(), 'products/p1'))); return updateDoc(doc(c.as(ALICE), 'products/p1'), { price: 0.01 }); }],
 
