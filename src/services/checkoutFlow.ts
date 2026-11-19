@@ -531,6 +531,13 @@ export function messageFor(r: CheckoutResult): UiMessage | null {
       if (r.code === 'OUT_OF_STOCK') {
         return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'نفدت الكمية المتاحة', titleEn: 'Not enough stock left', bodyAr: 'أحد المنتجات في سلتك لم تعد كميته المطلوبة متوفرة (طُلبت آخر القطع للتو). عدّل الكمية أو احذف المنتج ثم أكّد الطلب من جديد. لم يُنشأ أي طلب، وسلّتك محفوظة.', bodyEn: 'The requested quantity of an item in your cart is no longer available (the last pieces were just ordered). Adjust the quantity or remove the item, then confirm again. No order was created and your cart is kept.' };
       }
+      // prize wheel (test only): the prize could not travel with this order. Nothing was saved; the prize is kept.
+      if (r.code === 'WHEEL_MIN_ORDER') {
+        return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'الهدية تحتاج حدًا أدنى للطلب', titleEn: 'The gift needs a minimum order', bodyAr: 'قيمة المنتجات في طلبك أقل من الحد الأدنى لاستلام هدية العجلة (التوصيل لا يُحتسب). أضف منتجات أو أزل الهدية ثم أكّد من جديد. لم يُنشأ أي طلب، وهديتك محفوظة.', bodyEn: 'Your products total is below the minimum for the wheel gift (delivery not counted). Add items or remove the gift, then confirm again. No order was created and your gift is kept.' };
+      }
+      if (typeof r.code === 'string' && r.code.startsWith('WHEEL_') || typeof r.code === 'string' && r.code.startsWith('CAMPAIGN_')) {
+        return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'تعذّر إرفاق الهدية', titleEn: 'The gift could not be attached', bodyAr: 'الهدية غير متاحة لهذا الطلب (استُخدمت أو انتهت الحملة أو نفدت). أزل الهدية ثم أكّد الطلب. لم يُنشأ أي طلب.', bodyEn: 'The gift is not available for this order (used, campaign ended or out of stock). Remove the gift and confirm again. No order was created.' };
+      }
       if (r.code === 'PAYLOAD_TOO_LARGE') {
         return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'الطلب كبير جدًا', titleEn: 'Order too large', bodyAr: 'قلّل عدد المنتجات أو طول الملاحظات ثم أعد المحاولة.', bodyEn: 'Reduce the items or the note length and try again.' };
       }

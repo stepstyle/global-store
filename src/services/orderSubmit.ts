@@ -53,6 +53,8 @@ export type SubmitOptions = {
   mayHaveBeenSavedBefore?: boolean;
   /** sha-256 hash of this attempt's tracking key (trackingKeyHash()); the key itself never leaves the browser here */
   trackingKeyHash?: string;
+  /** prize wheel (VITE_WHEEL_MODE=test): the prize to receive with this order — sent ONLY with a signed-in order */
+  getWheelSpinId?: () => string | null;
 };
 
 export type NotConfirmedReason = 'timeout' | 'network' | 'server' | 'malformed' | 'unverified';
@@ -357,7 +359,9 @@ export async function submitOrder(order: OrderPayload, opts: SubmitOptions, deps
     const token = opts.getTurnstileToken ? await opts.getTurnstileToken().catch(() => null) : opts.turnstileToken;
     // trackingKeyHash travels NEXT TO the order (not inside it): never part of the payload hash or the content key
     const tkh = typeof opts.trackingKeyHash === 'string' && /^[a-f0-9]{64}$/.test(opts.trackingKeyHash) ? opts.trackingKeyHash : null;
-    const body = JSON.stringify({ order: frozen, ...(token ? { turnstileToken: token } : {}), ...(tkh ? { trackingKeyHash: tkh } : {}) });
+    const spin = needsAuth && opts.getWheelSpinId ? opts.getWheelSpinId() : null;
+    const wheelSpinId = typeof spin === 'string' && /^[a-z0-9-]{1,40}_[A-Za-z0-9_-]{1,128}_\d{1,4}$/.test(spin) ? spin : null;
+    const body = JSON.stringify({ order: frozen, ...(token ? { turnstileToken: token } : {}), ...(tkh ? { trackingKeyHash: tkh } : {}), ...(wheelSpinId ? { wheelSpinId } : {}) });
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     // only an order that BELONGS to an account carries that account's token. A guest payload never does: if someone
     // else signed in on this device meanwhile, resending a guest order must not link it to their account.

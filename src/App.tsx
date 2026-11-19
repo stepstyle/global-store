@@ -26,6 +26,7 @@ import { doc, getDoc, getFirestore } from 'firebase/firestore';
 
 // Lazy Load Pages
 import Account from './pages/Account';
+import { WHEEL_ENABLED } from './services/wheel';
 const Home = React.lazy(() => import('./pages/Home'));
 const Shop = React.lazy(() => import('./pages/Shop'));
 const Cart = React.lazy(() => import('./pages/Cart'));
@@ -38,6 +39,8 @@ const Checkout = React.lazy(() => import('./pages/Checkout'));
 const OrderSuccess = React.lazy(() => import('./pages/OrderSuccess'));
 const MyOrders = React.lazy(() => import('./pages/MyOrders'));
 const AdminAddProduct = React.lazy(() => import('./pages/AdminAddProduct'));
+// prize wheel: TEST builds only (VITE_WHEEL_MODE=test); otherwise the page is not even in the bundle's routes
+const WheelPage = WHEEL_ENABLED ? React.lazy(() => import('./pages/Wheel')) : null;
 // DEV ONLY — AI Product Discovery lab. import.meta.env.DEV is the constant `false` in production builds, so Vite drops
 // this import (and the page chunk) from the published site.
 const AiDiscoveryLab = import.meta.env.DEV ? React.lazy(() => import('./pages/dev/AiDiscoveryLab')) : null;
@@ -405,6 +408,7 @@ const App: React.FC = () => {
                 <Route path="/privacy" element={<InfoPage />} />
                 {/* 🛡️ AdminGuard used here properly */}
                 <Route path="/admin-secure" element={<AdminGuard><AdminDashboard /></AdminGuard>} />
+                {WheelPage && <Route path="/wheel" element={<WheelPage />} />}
                 {AiDiscoveryLab && <Route path="/dev/ai-discovery" element={<AiDiscoveryLab />} />}
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

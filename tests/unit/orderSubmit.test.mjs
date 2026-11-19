@@ -790,3 +790,18 @@ test('422 PRICE_CHANGED (enforce): rejected at once, sent exactly ONCE — never
   assert.deepEqual([r.kind, r.code, r.status], ['rejected', 'PRICE_CHANGED', 422]);
   assert.equal(f.creates().length, 1, 'no retry after a price refusal');
 });
+
+test('wheel prize: the spin id travels NEXT TO a SIGNED-IN order only (never a guest order, never malformed)', async () => {
+  const SPIN = `test-campaign_${UID}_1`;
+  const f = fakeFetch([OK()]);
+  await submitOrder(order({ userId: UID }), opts({ getAuthToken: async () => 'tok-1', getWheelSpinId: () => SPIN }), deps(f));
+  const body = JSON.parse(f.creates()[0].body);
+  assert.equal(body.wheelSpinId, SPIN);
+  assert.equal('wheelSpinId' in body.order, false, 'never part of the order payload (hash unchanged)');
+  const g = fakeFetch([OK()]);
+  await submitOrder(order(), opts({ getWheelSpinId: () => SPIN }), deps(g));
+  assert.equal('wheelSpinId' in JSON.parse(g.creates()[0].body), false, 'guest order: no prize sent');
+  const h = fakeFetch([OK()]);
+  await submitOrder(order({ userId: UID }), opts({ getAuthToken: async () => 'tok-1', getWheelSpinId: () => '../x' }), deps(h));
+  assert.equal('wheelSpinId' in JSON.parse(h.creates()[0].body), false);
+});

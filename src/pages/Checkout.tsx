@@ -44,6 +44,7 @@ const firebaseUid = (): string | null => getFirebaseAuth()?.currentUser?.uid || 
 import SEO from '../components/SEO';
 import LazyImage from '../components/LazyImage';
 import { BACKEND_ENABLED } from '../config/deployEnv';
+import { WHEEL_ENABLED, chosenPrize, choosePrize } from '../services/wheel';
 
 const { useNavigate } = ReactRouterDOM as any;
 
@@ -217,6 +218,10 @@ const Checkout: React.FC = () => {
   const [submitBlocked, setSubmitBlocked] = useState('');
   // Turnstile widget on the payment step; a FRESH single-use token is asked before every send (orderSubmit)
   const turnstile = useTurnstile(TURNSTILE_SITE_KEY, step === 3, isAR ? 'ar' : 'en');
+  // prize wheel (VITE_WHEEL_MODE=test only): the gift chosen on /wheel, sent with a SIGNED-IN order and re-checked by the Worker
+  const [wheelPrize, setWheelPrize] = useState(() => chosenPrize());
+  const wheelPrizeRef = useRef(wheelPrize);
+  wheelPrizeRef.current = wheelPrize;
   const turnstileTokenRef = useRef(turnstile.getToken);
   turnstileTokenRef.current = turnstile.getToken;
   const workerOpts = useMemo<SubmitOptions>(
@@ -225,6 +230,7 @@ const Checkout: React.FC = () => {
       // Worker URL orderSubmit refuses to send. local-test: the loopback Worker validated by firebase-env-guard.
       workerUrl: BACKEND_ENABLED ? String(import.meta.env.VITE_WORKER_URL || '') : '',
       ...(TURNSTILE_SITE_KEY ? { getTurnstileToken: () => turnstileTokenRef.current() } : {}),
+      ...(WHEEL_ENABLED ? { getWheelSpinId: () => wheelPrizeRef.current?.spinId ?? null } : {}),
       // Firebase ID token of the signed-in customer (refreshed on request after a 401); null for guests
       getAuthToken: async (forceRefresh: boolean) => {
         const current = getFirebaseAuth()?.currentUser;
@@ -573,6 +579,8 @@ const Checkout: React.FC = () => {
         sessionStorage.setItem(`order_success_${r.orderId}`, JSON.stringify(r.payload));
       } catch {}
       confirmedOrders().add(r.orderId);
+      // the gift travelled with this (signed-in) order: it is now reserved for it
+      if (wheelPrizeRef.current && firebaseUid()) choosePrize(null);
       lastPayloadRef.current = null;
       setSubmitResult(null);
       clearCart();
@@ -1383,6 +1391,22 @@ const Checkout: React.FC = () => {
                   );
                 })}
               </div>
+
+              {WHEEL_ENABLED && wheelPrize && (
+                <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm" data-testid="checkout-wheel-gift">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-black text-amber-900">🎁 {tr('هدية العجلة', 'Wheel gift')}: {wheelPrize.label}</span>
+                    <button type="button" className="text-xs font-bold text-amber-800 underline" onClick={() => { choosePrize(null); setWheelPrize(null); }}>
+                      {tr('إزالة', 'Remove')}
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-amber-800">
+                    {isLoggedIn
+                      ? tr('مجانًا مع هذا الطلب (0 د.أ). لا تُحتسب في الحد الأدنى.', 'Free with this order (0 JOD). Not counted in the minimum.')
+                      : tr('سجّل الدخول بنفس الحساب الذي ربحت به لتصلك الهدية مع الطلب.', 'Sign in with the account that won it to receive the gift.')}
+                  </p>
+                </div>
+              )}
 
               <div className="bg-slate-50 rounded-3xl p-5 space-y-3">
                 <div className="flex justify-between text-sm font-bold text-slate-500">
