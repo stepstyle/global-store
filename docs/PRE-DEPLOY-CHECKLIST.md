@@ -24,6 +24,17 @@
 3. **دخول Google حقيقي** بحسابك، ثم بحساب زبون آخر إن أمكن، **بعد** نشر الموقع.
 4. **طلب حقيقي واحد صغير** بالدفع عند الاستلام، ثم **إلغاؤه** من لوحة التحكم. تصل رسالة Telegram الحقيقية مرة واحدة.
 5. **الموافقة** على كل مرحلة أدناه، كلٌّ على حدة.
+6. **النسخ الاحتياطي** (وافقت عليه، ويحتاج مفتاحك وعبارة المرور على جهازك): اتبع `tools/firestore-backup/README.md`، البندين 1 و2.
+7. **فحص خطط الخدمات قبل استقبال آلاف الزوار** (`docs/LOAD-AND-LIMITS.md`):
+   - Firebase → Usage and billing: **Blaze** وليس Spark، مع تنبيه ميزانية.
+   - Cloudflare → Workers → `anta-order-v2`: الخطة، وCPU time في Metrics.
+   - Vercel → Settings → Billing: **Pro** للاستخدام التجاري.
+   - Cloudinary → Dashboard: الاستهلاك الشهري.
+   - SendGrid: الخطة الحالية.
+8. **إعدادات الخدمات الخارجية:**
+   - Firebase Auth → Settings → Authorized domains تشمل `dairsharaf.com` و`www.dairsharaf.com` و`auth.dairsharaf.com`.
+   - Cloudflare Turnstile → الموقع → Hostnames تشمل `dairsharaf.com` و`www.dairsharaf.com`.
+   - Vercel → Environment Variables (Production): `VITE_TURNSTILE_SITE_KEY` و`VITE_WORKER_URL` موجودان، و**لا يوجد** `VITE_WHEEL_MODE`.
 
 ## 2. النسخ الاحتياطي والاستعادة
 
@@ -107,3 +118,15 @@
 4. طريقة نشر الموقع: الدمج إلى `main` ثم Push، أو نشر مباشر من الفرع.
 5. السجلات الـ 28 في مراجعة الأسعار: تُصحَّح قبل النشر أو بعده. **لا تمنع النشر**، فالموقع لم يعد يعرض خصمًا وهميًا.
 6. لاحقًا، وبشكل منفصل: إيقاف Worker v1، وإعادة Facebook، وقرارات العجلة.
+
+## 7. الاستكمال في جلسة أخرى (من دون إعادة العمل)
+
+1. `cd C:\Users\GA\Downloads\anta-store-fixed-step1-patched\dev-review`، ثم `git log --oneline -1` و`git status` (يجب أن يكون نظيفًا).
+2. اقرأ هذا الملف، ثم `docs/LOAD-AND-LIMITS.md`.
+3. ما بقي بالترتيب:
+   - (أ) النسخ الاحتياطي على جهازك (البند 1.6).
+   - (ب) فحص الخطط والإعدادات (البندان 1.7 و1.8).
+   - (ج) تحويل CliQ التجريبي.
+   - (د) الموافقة على المرحلة B، ثم C، ثم D (البند 3).
+4. **لا تُعَد الاختبارات** إلا إذا تغيّر الكود. آخر Commit يغيّر الكود هو `86cd595`، وكل ما بعده توثيق وأدوات خارج البناء. إن تغيّر الكود، شغّل الأوامر في `docs/DEV-PROGRESS.md`.
+5. ملف إعداد الـ Worker للإنتاج جاهز ومحمي: `workers/order-worker/wrangler.production.local.toml`، خارج git، وفحصه `node production/check-config.mjs` يعطي exit 0.
