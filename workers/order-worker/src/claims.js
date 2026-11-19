@@ -2,8 +2,9 @@
 //
 //   POST /orders/:id/claim   headers: Authorization: Bearer <Firebase ID token>, x-tracking-key: <the order's key>
 //
-// Ownership is proven ONLY by the order's tracking key (its sha256 is in orderLedger, written once at creation by the
-// Worker) + a verified Firebase identity. Name, phone or e-mail are never proof.
+// Ownership is proven by the order's tracking key (its sha256 is in orderLedger, written once at creation by the Worker)
+// AND the last 4 digits of the order's phone (a second factor for SHARED devices, where the key sits in the browser),
+// + a verified Firebase identity. Name, phone or e-mail alone are never proof.
 //   - a guest order is linked once: order.userId = uid, ledger.ownerUid = uid (+ claim time) — both in ONE commit
 //     with updateTime preconditions, so two simultaneous claims cannot both win (the loser re-reads and gets
 //     ALREADY_LINKED, or "already yours").
@@ -28,17 +29,26 @@ function owner(ledgerDoc, orderDoc) {
   return userId && userId !== 'guest' ? userId : null;
 }
 
-export async function claimOrder(fs, { id, key, uid, now = () => Date.now() }) {
+/** last 4 digits of a phone number (digits only), or null */
+export const last4 = (v) => {
+  const d = String(v ?? '').replace(/\D/g, '');
+  return d.length >= 4 ? d.slice(-4) : null;
+};
+
+export async function claimOrder(fs, { id, key, phoneLast4, uid, now = () => Date.now() }) {
   const notFound = { status: 404, body: { ok: false, code: 'NOT_FOUND' } };
   if (!ORDER_ID_RE.test(String(id || '')) || typeof uid !== 'string' || !uid) return notFound;
   const normalized = normalizeTrackingKey(key);
   const keyHash = normalized ? await hashTrackingKey(normalized) : null; // computed even for an unknown order
+  const digits = /^\d{4}$/.test(String(phoneLast4 ?? '')) ? String(phoneLast4) : null;
 
   for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt++) {
     const [orderDoc, ledgerDoc] = await fs.batchGet([`orders/${id}`, `orderLedger/${id}`]);
     if (!orderDoc.exists || !ledgerDoc.exists) return notFound;
     const stored = ledgerDoc.fields?.trackingKeyHash?.stringValue || '';
     if (!(keyHash !== null && TRACKING_KEY_HASH_RE.test(stored) && sameHex(keyHash, stored))) return notFound;
+    // second factor: the order's phone (same 404 as a wrong key — no hint which part was wrong)
+    if (digits === null || last4(orderDoc.fields?.address?.mapValue?.fields?.phone?.stringValue) !== digits) return notFound;
 
     const current = owner(ledgerDoc, orderDoc);
     if (current === uid) return { status: 200, body: { ok: true, linked: false, alreadyYours: true } };

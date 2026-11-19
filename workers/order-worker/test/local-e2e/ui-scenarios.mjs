@@ -1083,6 +1083,63 @@ export function buildUiScenarios(ctx) {
           await tab.send('Storage.clearDataForOrigin', { origin: ctx.base, storageTypes: 'indexeddb' });
         }
       }],
+      ['U36', 'GUEST «طلباتي»: device orders checked with the Worker (no personal data), offline shown as unknown, link to an account with key + phone digits, a second account on the same device sees nothing, another device by number + code (no code in the URL)', async (tab) => {
+        await setUiMode('pass');
+        await ctx.resetAuth();
+        await tab.send('Storage.clearDataForOrigin', { origin: ctx.base, storageTypes: 'indexeddb' }); // signed out
+        await openCheckout(tab, ctx.base);
+        await fillToPayment(tab, '0791000036');
+        await confirm(tab);
+        assert.equal(await waitOutcome(tab), 'success');
+        const orderId = await tab.evaluate(`location.hash.split('/').pop()`);
+        const ROW = `document.querySelector('[data-testid=device-order][data-order-id="${orderId}"]')`;
+        // 1) guest «طلباتي»: the order with its status FROM THE WORKER, without name / phone / address
+        await tab.navigate(`${ctx.base}/?r=${Date.now()}#/my-orders`);
+        await tab.waitFor(`${ROW}?.dataset.state === 'ok'`, 30_000, 'guest device order checked with the Worker');
+        const pageText = await tab.evaluate(`document.body.innerText`);
+        assert.ok(!pageText.includes('زبون اختبار محلي') && !pageText.includes('0791000036') && !pageText.includes('شارع الاختبار'), 'no personal data on «طلباتي»');
+        assert.ok(!(await tab.evaluate(`location.href`)).match(/[0-9A-Z]{24}/), 'no tracking key in the URL');
+        // 2) Worker unreachable: no status from the browser's own data
+        await setUiMode('drop');
+        await tab.evaluate(`[...document.querySelectorAll('[data-testid=device-orders] button')].find((b) => /تحديث/.test(b.textContent)).click(); true`);
+        await tab.waitFor(`${ROW}?.dataset.state === 'unavailable'`, 40_000, 'offline: shown as not checked');
+        assert.equal(await tab.evaluate(`!!${ROW}.querySelector('[data-testid=device-order-status]')`), false, 'no unconfirmed status shown');
+        await setUiMode('pass');
+        // 3) sign in (optional) -> link it: wrong phone digits refused, right ones link it ONCE
+        const pw = 'Test-pass-12345';
+        const uidA = await ctx.createCustomer({ email: 'u36.a@example.invalid', password: pw, name: 'زبون أ' });
+        await signIn(tab, ctx.base, 'u36.a@example.invalid', pw);
+        await tab.navigate(`${ctx.base}/?r=${Date.now()}#/my-orders`);
+        const LINK_ROW = `document.querySelector('[data-testid=link-orders] [data-order-id="${orderId}"]')`;
+        await tab.waitFor(`${LINK_ROW}?.dataset.state === 'ok'`, 30_000, 'guest order offered for linking');
+        const typeDigits = (d) => tab.evaluate(`(() => { ${SET_VAL} setVal(${LINK_ROW}.querySelector('[data-testid=claim-last4]'), '${d}'); return true; })()`);
+        await typeDigits('0000');
+        await tab.evaluate(`${LINK_ROW}.querySelector('[data-testid=claim-button]').click(); true`);
+        await tab.waitFor(`${LINK_ROW}?.querySelector('[data-testid=claim-result]')?.dataset.kind === 'not_matching'`, 20_000, 'wrong digits refused');
+        assert.equal((await get(`orders/${orderId}`)).userId, 'guest');
+        await typeDigits('0036');
+        await tab.evaluate(`${LINK_ROW}.querySelector('[data-testid=claim-button]').click(); true`);
+        await until(async () => (await get(`orders/${orderId}`))?.userId === uidA, 20_000, 'linked to account A');
+        assert.equal((await ctx.ledger(orderId)).ownerUid, uidA);
+        await tab.waitFor(`document.body.innerText.includes(${JSON.stringify('#' + orderId)}) && !document.querySelector('[data-testid=link-orders] [data-order-id="${orderId}"] [data-testid=claim-button]')`, 30_000, 'now in the account list');
+        // 4) another account on the SAME device: does not see / cannot link it
+        await tab.send('Storage.clearDataForOrigin', { origin: ctx.base, storageTypes: 'indexeddb' }); // sign out A
+        await ctx.createCustomer({ email: 'u36.b@example.invalid', password: pw, name: 'زبون ب' });
+        await signIn(tab, ctx.base, 'u36.b@example.invalid', pw);
+        await tab.navigate(`${ctx.base}/?r=${Date.now()}#/my-orders`);
+        await sleep(4_000);
+        assert.ok(!(await tab.evaluate(`document.body.innerText`)).includes(orderId), 'account B sees nothing of A\'s order');
+        // 5) "another device": no saved orders -> clear guidance; number + code -> details, code never in the URL
+        const code = await tab.evaluate(`(JSON.parse(localStorage.getItem('anta_tracking_keys') || '[]').find((x) => x.o === ${JSON.stringify(orderId)}) || {}).k || ''`);
+        assert.match(code, /^[0-9A-Z]{24}$/);
+        await tab.send('Storage.clearDataForOrigin', { origin: ctx.base, storageTypes: 'indexeddb,local_storage' });
+        await tab.navigate(`${ctx.base}/?r=${Date.now()}#/my-orders`);
+        await tab.waitFor(`!!document.querySelector('[data-testid=device-orders-empty]')`, 20_000, 'empty device: guidance shown');
+        await tab.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('[data-testid=lookup-id]'), ${JSON.stringify(orderId)}); setVal(document.querySelector('[data-testid=lookup-code]'), ${JSON.stringify(code)}); return true; })()`);
+        await tab.evaluate(`document.querySelector('[data-testid=lookup-form]').requestSubmit(); true`);
+        await tab.waitFor(`location.hash.startsWith('#/tracking') && document.body.innerText.includes('دفتر')`, 30_000, 'details by number + code');
+        assert.ok(!(await tab.evaluate(`location.href`)).includes(code), 'the code is not in the URL');
+      }],
     ],
   };
 }

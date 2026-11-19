@@ -177,7 +177,10 @@ async function handle(request, env, ctx, cfg) {
     }
     const who = await signedInUid(request, cfg);
     if (!who.ok) return reply({ ok: false, code: who.code }, 401);
-    const r = await claimOrder(fs, { id, key: request.headers.get('x-tracking-key'), uid: who.uid });
+    const { body, error } = await readJsonBody(request, 1024);
+    if (error === 413) return reply({ ok: false, code: 'PAYLOAD_TOO_LARGE' }, 413);
+    const phoneLast4 = !error && body && typeof body === 'object' ? body.phoneLast4 : null;
+    const r = await claimOrder(fs, { id, key: request.headers.get('x-tracking-key'), phoneLast4, uid: who.uid });
     return reply(r.body, r.status);
   }
 

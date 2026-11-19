@@ -206,7 +206,13 @@ const OrderTracking: React.FC = () => {
   useEffect(() => {
     if (!queryOrderId) return;
     setOrderId(queryOrderId);
-    trackById(queryOrderId);
+    // a code typed on «طلباتي» arrives in navigation STATE (memory), never in the URL; it is used once, then dropped
+    const stateCode = typeof location.state?.trackingCode === 'string' ? location.state.trackingCode : '';
+    if (stateCode) {
+      try { window.history.replaceState({ ...(window.history.state || {}), usr: null }, ''); } catch {}
+    }
+    trackById(queryOrderId, stateCode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryOrderId, trackById]);
 
   const handleTrack = async (e: React.FormEvent) => {

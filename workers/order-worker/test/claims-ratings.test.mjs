@@ -50,9 +50,11 @@ async function guestOrder({ uidToken } = {}) {
   assert.equal(r.status, 200, r.text);
   return { id: order.id, key };
 }
-const claim = (id, { key, tok } = {}) => callWorker(env(), {
+// the fixture order's phone is +962791234567 -> last 4 digits "4567"
+const claim = (id, { key, tok, phoneLast4 = '4567' } = {}) => callWorker(env(), {
   method: 'POST', path: `/orders/${encodeURIComponent(id)}/claim`,
   headers: { origin: 'https://dairsharaf.com', ...(key !== undefined ? { 'x-tracking-key': key } : {}), ...(tok ? { authorization: `Bearer ${tok}` } : {}) },
+  ...(phoneLast4 === undefined ? {} : { body: { phoneLast4 } }),
 });
 const summary = (id, { key, tok } = {}) => callWorker(env(), {
   path: `/orders/${encodeURIComponent(id)}/summary`,
@@ -111,6 +113,18 @@ test('C04 wrong / missing / malformed key and unknown order: the same 404 (no hi
   ];
   for (const a of answers) assert.deepEqual([a.status, a.body], [404, { ok: false, code: 'NOT_FOUND' }]);
   assert.equal((await getDecoded(`orders/${id}`)).userId, 'guest', 'still a guest order');
+});
+
+test('C04b the right key with the wrong / missing phone digits (shared device): the same 404, nothing linked', async () => {
+  const { id, key } = await guestOrder();
+  const tok = await token(ALICE);
+  for (const phoneLast4 of ['0000', '456', 'abcd', null]) {
+    const r = await claim(id, { key, tok, phoneLast4 });
+    assert.deepEqual([r.status, r.body], [404, { ok: false, code: 'NOT_FOUND' }], String(phoneLast4));
+  }
+  const noBody = await callWorker(env(), { method: 'POST', path: `/orders/${id}/claim`, headers: { 'x-tracking-key': key, authorization: `Bearer ${tok}` } });
+  assert.equal(noBody.status, 404);
+  assert.equal((await getDecoded(`orders/${id}`)).userId, 'guest');
 });
 
 test('C05 identity is verified: no token, a forged token, GET -> refused, nothing written', async () => {

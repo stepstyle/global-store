@@ -235,7 +235,14 @@ export function pendingPayloadStore(storage: SessionKv | null | undefined = (glo
 type LocalKv = { getItem(k: string): string | null; setItem(k: string, v: string): void };
 export const TRACKING_KEYS_STORAGE = 'anta_tracking_keys';
 /** `who` = the identity using this device now ('guest' or the Firebase uid): a key is returned only to the identity it was stored for. */
-export type TrackingKeyStore = { get(orderId: string, who?: string): string | null; add(orderId: string, key: string, who?: string): void };
+export type TrackingKeyStore = {
+  get(orderId: string, who?: string): string | null;
+  add(orderId: string, key: string, who?: string): void;
+  /** order numbers (newest first) stored for THIS identity only; the keys never leave this module except to the Worker */
+  list?(who?: string): { orderId: string; key: string }[];
+  /** after a Worker-confirmed link: the entry now belongs to the signed-in account on this device */
+  reassign?(orderId: string, from: string, to: string): void;
+};
 
 /**
  * Tracking keys of orders confirmed on THIS device (order number -> key), newest first, max 30. Kept in localStorage
@@ -256,6 +263,15 @@ export function trackingKeys(storage: LocalKv | null | undefined = (globalThis a
     get: (orderId, who = 'guest') => {
       const e = read().find((x) => x.o === orderId);
       return e && (e.w ?? 'guest') === who ? e.k : null;
+    },
+    list: (who = 'guest') => read().filter((x) => (x.w ?? 'guest') === who).map((x) => ({ orderId: x.o, key: x.k })),
+    reassign: (orderId, from, to) => {
+      const all = read();
+      const e = all.find((x) => x.o === orderId && (x.w ?? 'guest') === from);
+      if (!e) return;
+      try {
+        storage?.setItem(TRACKING_KEYS_STORAGE, JSON.stringify(all.map((x) => (x === e ? { ...x, w: to } : x))));
+      } catch {}
     },
     add: (orderId, key, who = 'guest') => {
       const k = normalizeTrackingKey(key);

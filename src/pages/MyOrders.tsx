@@ -8,6 +8,7 @@ import SEO from '../components/SEO';
 import * as ReactRouterDOM from 'react-router-dom';
 import LazyImage from '../components/LazyImage';
 import { OrderSkeleton } from '../components/Skeleton';
+import DeviceOrders from '../components/DeviceOrders';
 
 const { Link } = ReactRouterDOM as any;
 
@@ -40,6 +41,7 @@ const MyOrders: React.FC = () => {
 
   // Toggle note "show more" per order id
   const [expandedNotes, setExpandedNotes] = useState<Record<string, boolean>>({});
+  const [reloadTick, setReloadTick] = useState(0);
 
   const isAR = language === 'ar';
   const tr = useCallback((ar: string, en: string) => (isAR ? ar : en), [isAR]);
@@ -135,7 +137,7 @@ const MyOrders: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [user, tt]);
+  }, [user, tt, reloadTick]);
 
   const toggleNote = (orderId: string) => {
     setExpandedNotes((prev) => ({ ...prev, [orderId]: !prev[orderId] }));
@@ -144,25 +146,21 @@ const MyOrders: React.FC = () => {
   // ==========================================
   // 🔒 حالة عدم تسجيل الدخول (Unauthenticated)
   // ==========================================
+  // guest: the orders of THIS device (checked with the order Worker) + lookup by number and code; signing in is optional
   if (!user) {
     return (
-      <div className="min-h-[80vh] flex flex-col items-center justify-center p-4 bg-slate-50 py-12">
+      <div className="min-h-[80vh] bg-paper py-10 lg:py-14" data-testid="my-orders-guest">
         <SEO title={tt('myOrders', 'سجل الطلبات', 'Order History')} noIndex={true} />
-        <div className="w-full max-w-md bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 p-8 sm:p-10 text-center animate-in fade-in zoom-in-95 duration-500">
-          <div className="mx-auto w-20 h-20 rounded-full bg-sky-50 flex items-center justify-center text-sky-500 mb-6 shadow-inner">
-            <Package size={40} strokeWidth={1.5} />
+        <div className="container mx-auto px-4 lg:px-8 max-w-3xl space-y-6">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-heading font-black text-ink-900 tracking-tight">{tt('myOrders', 'سجل الطلبات', 'Order History')}</h1>
+            <p className="text-ink-500 mt-2 text-sm font-medium">{isAR ? 'تشتري بدون حساب؟ طلباتك من هذا الجهاز تظهر هنا.' : 'Shopping without an account? Your orders from this device appear here.'}</p>
           </div>
-          <h2 className="text-2xl font-heading font-black mb-3 text-slate-900 tracking-tight">
-            {tt('loginRequired', 'يتطلب تسجيل الدخول', 'Sign In Required')}
-          </h2>
-          <p className="text-slate-500 mb-8 text-sm font-medium leading-relaxed">
-            {tt('loginToSeeOrders', 'يرجى تسجيل الدخول للوصول إلى سجل طلباتك وتتبع شحناتك بأمان.', 'Please sign in to access your order history and track your shipments securely.')}
-          </p>
-          <Link to="/login" className="block w-full">
-            <button className="w-full py-4 rounded-2xl bg-sky-400 hover:bg-sky-500 text-white font-extrabold shadow-lg shadow-sky-400/30 transition-all duration-300">
-              {tt('login', 'تسجيل الدخول', 'Sign In')}
-            </button>
-          </Link>
+          <DeviceOrders mode="guest" isAR={isAR} />
+          <div className="rounded-3xl bg-white ring-1 ring-ink-900/[0.06] p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <p className="text-[13.5px] text-ink-600 leading-6">{isAR ? 'سجّل الدخول (اختياري) لتحفظ طلباتك في حسابك وتراها من أي جهاز.' : 'Sign in (optional) to keep your orders in your account on any device.'}</p>
+            <Link to="/login" className="shrink-0 rounded-xl bg-ink-900 px-5 py-2.5 text-[13.5px] font-bold text-white">{tt('login', 'تسجيل الدخول', 'Sign In')}</Link>
+          </div>
         </div>
       </div>
     );
@@ -191,6 +189,9 @@ const MyOrders: React.FC = () => {
             <ChevronRight size={16} className="rtl:rotate-180 ltr:rotate-0 mt-0.5 group-hover:translate-x-1 rtl:group-hover:-translate-x-1 transition-transform" />
           </Link>
         </div>
+
+        {/* guest orders of THIS device that the signed-in customer can link to the account (tracking key + phone digits) */}
+        <div className="mb-8"><DeviceOrders mode="link" uid={user.id} isAR={isAR} onLinked={() => setReloadTick((n) => n + 1)} /></div>
 
         {/* الحالات (Loading / Error / Empty / Data) */}
         {isLoading ? (
