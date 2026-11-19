@@ -148,3 +148,11 @@ test('production refuses the transitional modes: PRICE_CHECK_MODE and TURNSTILE_
   withTarget('staging');
   assert.equal(loadConfig({ ...STAGING, PRICE_CHECK_MODE: 'log' }).ok, true);
 });
+
+test('production refuses the prize wheel (WHEEL_MODE must stay off until the campaign is approved)', () => {
+  withTarget('production');
+  const on = loadConfig({ ...PRODUCTION, WHEEL_MODE: 'test', WHEEL_CAMPAIGN: 'test-1' });
+  assert.equal(on.ok, false);
+  assert.ok(on.errors.some((e) => /WHEEL_MODE=off/.test(e)));
+  assert.equal(loadConfig({ ...PRODUCTION, WHEEL_MODE: 'off' }).ok, true);
+});

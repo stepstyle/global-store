@@ -11,15 +11,20 @@ import { computeServerPricing, comparePricing, enforcePriceProblems } from './pr
 import { initialNotifications, processNotifications } from './notify.js';
 import { WORKER_VERSION } from './config.js';
 import { log } from './http.js';
+import { loadGiftForOrder, openCampaign, phoneKey } from './wheel.js';
 import { TRACKING_KEY_HASH_RE, normalizeTrackingKey, hashTrackingKey, sameHex, projectSummary } from './tracking.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const STATUS_ALLOWLIST = new Set(['new', 'processing', 'shipped', 'delivered', 'cancelled']);
 
-async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields, userIdWarning, verifiedUid = null, trackingKeyHash = null }) {
+async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields, userIdWarning, verifiedUid = null, trackingKeyHash = null, wheel = null }) {
   const v = input;
   const lines = v.items.map((it, index) => ({ index, productId: it.productId, variantId: it.variantId, quantity: it.quantity }));
-  const productIds = [...new Set(lines.map((l) => l.productId))];
+  // WHEEL_MODE=test: a prize won on the wheel travels as ONE extra line (index 1000, price 0) — reserved with the
+  // order, deducted on delivery, released on cancellation, exactly like a paid line. It is never priced.
+  const gift = wheel?.gift || null;
+  const giftLine = gift ? { index: GIFT_LINE_INDEX, productId: gift.productId, variantId: gift.variantId || null, quantity: 1 } : null;
+  const productIds = [...new Set([...lines, ...(giftLine ? [giftLine] : [])].map((l) => l.productId))];
   const productDocs = await fs.batchGet(productIds.map((id) => `products/${id}`));
   const products = new Map(productIds.map((id, i) => [id, productDocs[i]]));
 
@@ -63,16 +68,45 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
   // on_delivery: reserve against stock - (already reserved). Refused BEFORE any write when a line needs more than is
   // available — two orders racing for the last piece: the reservation documents carry their read version as a
   // precondition, so only one commit succeeds; the other re-reads (createOrder retry) and is refused here.
+  // WHEEL: the minimum is measured on what the customer PAYS for the products (subtotal - discount; never shipping,
+  // never the gift). An order below it may not carry a prize, and does not earn a new chance.
+  const paidSubtotal = Math.round((Number(pricing.subtotal) - Number(pricing.discount || 0)) * 1000) / 1000;
+  const campaign = wheel?.campaign || null;
+  if (gift && !(campaign && paidSubtotal >= campaign.minOrderJod)) {
+    log('order.wheel_refused', { orderId: v.id, code: 'WHEEL_MIN_ORDER' });
+    return { ok: false, conflict: false, wheelRefused: { code: 'WHEEL_MIN_ORDER', minOrderJod: campaign?.minOrderJod ?? null } };
+  }
+  if (gift && !onDelivery) return { ok: false, conflict: false, wheelRefused: { code: 'WHEEL_OFF' } };
   let reservation = null;
   let reservationDocs = null;
   if (onDelivery) {
     const resDocs = await fs.batchGet(productIds.map((pid) => `stockReservations/${pid}`));
     reservationDocs = new Map(productIds.map((pid, i) => [pid, resDocs[i]]));
-    reservation = planReservation(lines, products, reservationDocs);
+    reservation = planReservation(giftLine ? [...lines, giftLine] : lines, products, reservationDocs);
+    if (giftLine && (reservation.warnings.some((w) => w.line === GIFT_LINE_INDEX) || reservation.shortfalls.some((x) => x.index === GIFT_LINE_INDEX))) {
+      // the prize itself cannot be supplied (product gone / no stock number / sold out): nothing is written, the
+      // prize stays 'issued' for a later order
+      log('order.wheel_refused', { orderId: v.id, code: 'WHEEL_PRIZE_UNAVAILABLE' });
+      return { ok: false, conflict: false, wheelRefused: { code: 'WHEEL_PRIZE_UNAVAILABLE' } };
+    }
     if (reservation.shortfalls.length) {
       log('order.out_of_stock', { orderId: v.id, mode, lines: reservation.shortfalls.length });
       return { ok: false, conflict: false, outOfStock: reservation.shortfalls };
     }
+  }
+  // WHEEL anti-abuse (a limit, not an identity check): at most campaign.openGiftsPerPhone gifts open at the same time
+  // for one delivery number (many accounts, one address). The number is keyed with a server-only HMAC secret.
+  let phoneGift = null;
+  if (gift) {
+    const key = await phoneKey(cfg.wheelPhoneSecret, wheel.campaignId, v.address?.phone);
+    if (!key) return { ok: false, conflict: false, wheelRefused: { code: 'WHEEL_PHONE_REQUIRED' } };
+    const doc = await fs.get(`wheelPhoneGifts/${key}`);
+    const open = doc.exists ? Math.max(0, Number(decodeFields(doc.fields).open) || 0) : 0;
+    if (open >= campaign.openGiftsPerPhone) {
+      log('order.wheel_refused', { orderId: v.id, code: 'WHEEL_PHONE_LIMIT' });
+      return { ok: false, conflict: false, wheelRefused: { code: 'WHEEL_PHONE_LIMIT' } };
+    }
+    phoneGift = { key, doc, open };
   }
   const workerCheck = { version: WORKER_VERSION, mode, serverPricing, priceMismatch, warnings };
 
@@ -113,7 +147,7 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
           orderLines: inv.lineInfo.map((l) => ({
             index: l.index, productId: l.productId, variantId: l.variantId ?? null, quantity: l.quantity,
             unitPrice: l.serverUnitPrice, productName: l.productName, variantLabel: l.variantLabel,
-          })),
+          })).concat(giftLine ? [{ ...giftLine, unitPrice: 0, productName: gift.label, variantLabel: null, gift: true }] : []),
           reservations: reservation.reservations,
           reservationWarnings: reservation.warnings,
           inventory: reservation.reservations.length ? 'reserved' : 'none',
@@ -128,6 +162,10 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
             unitPrice: l.serverUnitPrice, productName: l.productName, variantLabel: l.variantLabel,
           })),
         }
+      : {}),
+    // WHEEL (test): which prize this order carries and whether its delivery earns a new chance (src/wheel.js)
+    ...(campaign && verifiedUid
+      ? { wheel: { campaignId: wheel.campaignId, uid: verifiedUid, spinId: gift?.spinId ?? null, prizeId: gift?.prizeId ?? null, paidSubtotal, chanceEligible: paidSubtotal >= campaign.minOrderJod, giftOnCancel: campaign.giftOnCancel, freeFirstChance: campaign.freeFirstChance, phoneKey: phoneGift?.key ?? null } }
       : {}),
     notifications: initialNotifications(cfg),
     notifyPending: true,
@@ -161,7 +199,8 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
         quantity: it.quantity,
         image: it.image,
         selectedVariant: it.selectedVariant,
-      })),
+      })).concat(gift ? [{ productId: gift.productId, name: `🎁 هدية العجلة: ${gift.label}`, price: 0, quantity: 1, gift: true, ...(gift.variantId ? { selectedVariant: { id: gift.variantId } } : {}) }] : []),
+      ...(gift ? { wheelGift: { label: gift.label, productId: gift.productId, variantId: gift.variantId || null } } : {}),
       subtotal: v.clientPricing.subtotal ?? 0,
       discountAmount: v.clientPricing.discountAmount ?? 0,
       shippingCost: v.clientPricing.shippingCost ?? 0,
@@ -212,6 +251,20 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     });
   }
   if (onDelivery) writes.push(...reservationWrites(fs, reservation.reservations, reservationDocs, +1).writes);
+  if (gift) {
+    // the prize is used by THIS order only: 'issued' -> 'reserved' in the same commit (a second order with the same
+    // prize, or an order racing with it, fails the precondition, re-reads and finds it no longer 'issued')
+    writes.push({
+      update: { name: fs.name(`wheelSpins/${gift.spinId}`), fields: encodeFields({ status: 'reserved', orderId: id, reservedAt: new Date(), issuedExpiry: null }) },
+      updateMask: { fieldPaths: ['status', 'orderId', 'reservedAt', 'issuedExpiry'] },
+      currentDocument: { updateTime: gift.spinDoc.updateTime },
+    });
+    // the number's open-gift counter, conditional on the version read (two accounts racing with one number: one wins)
+    writes.push({
+      update: { name: fs.name(`wheelPhoneGifts/${phoneGift.key}`), fields: encodeFields({ campaignId: wheel.campaignId, open: phoneGift.open + 1 }) },
+      currentDocument: phoneGift.doc.exists ? { updateTime: phoneGift.doc.updateTime } : { exists: false },
+    });
+  }
 
   const r = await fs.commit(writes);
   if (r.ok) {
@@ -246,7 +299,12 @@ export const CREATE_ATTEMPTS = 6;
 /**
  * Handles POST /create-order. Returns { status, body }.
  */
+export const GIFT_LINE_INDEX = 1000;
+
 export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {}) {
+  const wheelSpinId = extra?.wheelSpinId ?? null;
+  // a prize is only ever requested by a wheel-aware site; with the wheel off it is refused (never silently dropped)
+  if (wheelSpinId !== null && cfg.wheelMode === 'off') return { status: 422, body: { ok: false, code: 'WHEEL_OFF' } };
   const trackingKeyHash = TRACKING_KEY_HASH_RE.test(String(extra?.trackingKeyHash || '')) ? extra.trackingKeyHash : null;
   // auth = { uid } from a VERIFIED Firebase ID token (index.js), or null. The body's userId is never proof.
   const verifiedUid = auth && typeof auth.uid === 'string' && auth.uid ? auth.uid : null;
@@ -316,8 +374,22 @@ export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {
       }
     }
 
+    // WHEEL (test only): the prize is re-read on every attempt (its version is the commit's precondition)
+    let wheel = null;
+    if (cfg.wheelMode !== 'off') {
+      if (wheelSpinId !== null) {
+        if (mode !== 'created') return { status: 409, body: { ok: false, code: 'WHEEL_PRIZE_INVALID' } };
+        const g = await loadGiftForOrder(fs, cfg, { spinId: wheelSpinId, uid: verifiedUid });
+        if (!g.ok) return { status: g.code === 'WHEEL_SIGN_IN_REQUIRED' ? 401 : 422, body: { ok: false, code: g.code } };
+        wheel = { campaignId: cfg.wheelCampaignId, gift: g.gift, campaign: g.campaign };
+      } else if (verifiedUid && mode === 'created') {
+        const c = await openCampaign(fs, cfg);
+        if (c) wheel = { campaignId: cfg.wheelCampaignId, gift: null, campaign: c };
+      }
+    }
+
     // Owner is decided ONCE, here, at creation. A replay (ledger exists, above) or an adoption never changes it.
-    const r = await buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields: parsed.strippedFields, userIdWarning, verifiedUid: mode === 'created' ? verifiedUid : null, trackingKeyHash });
+    const r = await buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields: parsed.strippedFields, userIdWarning, verifiedUid: mode === 'created' ? verifiedUid : null, trackingKeyHash, wheel });
     if (r.ok) {
       const p = processNotifications(fs, cfg, id).catch((e) => log('notify.error', { orderId: id, message: String(e?.message || e) }));
       if (ctx?.waitUntil) ctx.waitUntil(p);
@@ -335,6 +407,7 @@ export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {
     // on_delivery: not enough stock left after the other open orders' reservations. Nothing was written (422, like
     // PRICE_CHANGED: the storefront shows "out of stock" and keeps the cart). Only line indexes and the quantity still
     // available are returned.
+    if (r.wheelRefused) return { status: 422, body: { ok: false, ...r.wheelRefused } };
     if (r.outOfStock) {
       return { status: 422, body: { ok: false, code: 'OUT_OF_STOCK', lines: r.outOfStock.map((s) => ({ index: s.index, available: s.available })) } };
     }

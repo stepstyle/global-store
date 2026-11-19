@@ -166,6 +166,8 @@ export function loadConfig(env = {}) {
     // (unset, typo, old on_creation) refuses to run instead of silently deducting stock at creation. Telegram only
     // notifies: the approval-button flow is not allowed in production.
     if (str(env.STOCK_POLICY) !== 'on_delivery') errors.push('production requires STOCK_POLICY=on_delivery');
+    // the prize wheel is NOT approved (legal + financial terms of the campaign): production refuses to start with it on
+    if (!['', 'off'].includes(str(env.WHEEL_MODE))) errors.push('production requires WHEEL_MODE=off (the wheel campaign is not approved)');
     if (!['', 'off'].includes(str(env.APPROVAL_MODE))) errors.push('production requires APPROVAL_MODE=off (Telegram notifies only)');
     // the staging access gate (src/http.js) has no meaning in production: a production Worker that carries the
     // variable is refused outright instead of silently ignoring it
@@ -202,6 +204,17 @@ export function loadConfig(env = {}) {
   // on_creation (default, unchanged): deducted when the order is created (STOCK_MODE), or on Telegram acceptance.
   // on_delivery: reserved at creation (stockReservations, src/reservations.js; an order that needs more than
   //              stock - reserved is refused), deducted ONCE when the admin marks it delivered (src/fulfilment.js).
+  // prize wheel (src/wheel.js): 'off' (default) | 'test' (local / staging only — production refuses it above)
+  const wheelMode = oneOf(env.WHEEL_MODE, ['off', 'test'], 'off');
+  if (!wheelMode) errors.push('WHEEL_MODE must be off|test');
+  const wheelCampaignId = str(env.WHEEL_CAMPAIGN);
+  if (wheelMode === 'test' && !/^[a-z0-9-]{3,40}$/.test(wheelCampaignId)) errors.push('WHEEL_MODE=test requires WHEEL_CAMPAIGN (a campaign id: a-z 0-9 -)');
+  // server-only HMAC key for delivery numbers (src/wheel.js phoneKey); never in a browser bundle, never logged
+  const wheelPhoneSecret = str(env.WHEEL_PHONE_SECRET);
+  // a RANDOM value (e.g. `openssl rand -base64 48`) set with `wrangler secret put` — never in wrangler.toml or the repo.
+  // Length + variety check refuses placeholders like 'xxxx…' or '1234…' (the value itself is never logged).
+  if (wheelMode === 'test' && (wheelPhoneSecret.length < 32 || new Set(wheelPhoneSecret).size < 12)) errors.push('WHEEL_MODE=test requires a random WHEEL_PHONE_SECRET (at least 32 characters, not a placeholder)');
+  if (wheelMode === 'test' && str(env.STOCK_POLICY) !== 'on_delivery') errors.push('WHEEL_MODE=test requires STOCK_POLICY=on_delivery (prizes go through the reservation)');
   const stockPolicy = oneOf(env.STOCK_POLICY, ['on_creation', 'on_delivery'], 'on_creation');
   if (!stockPolicy) errors.push('STOCK_POLICY must be on_creation|on_delivery');
   if (stockPolicy === 'on_delivery') {
@@ -252,6 +265,9 @@ export function loadConfig(env = {}) {
     telegram: { token: str(env.TELEGRAM_BOT_TOKEN), chatId: str(env.TELEGRAM_CHAT_ID), webhookSecret, adminUserIds: new Set(adminUserIds) },
     approvalMode,
     stockPolicy,
+    wheelMode,
+    wheelCampaignId,
+    wheelPhoneSecret,
     currency,
     email: {
       apiKey: str(env.SENDGRID_API_KEY),

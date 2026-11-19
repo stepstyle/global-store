@@ -26,6 +26,7 @@
 import { decodeFields, encodeFields, isConflict } from './firestore.js';
 import { planInventory, planRestock } from './inventory.js';
 import { reservationWrites } from './reservations.js';
+import { wheelStatusWrites } from './wheel.js';
 import { log } from './http.js';
 
 export const ORDER_STATUSES = Object.freeze(['new', 'processing', 'shipped', 'delivered', 'cancelled']);
@@ -168,10 +169,13 @@ export async function changeOrderStatus(fs, cfg, { orderId, status, confirmRetur
     const eff = await planStockEffect(fs, L, from, status, { confirmReturn, at, by, orderId });
     if (eff.refusal) return eff.refusal;
     const history = [...(Array.isArray(L.statusHistory) ? L.statusHistory : []), { from, to: status, at, by }].slice(-HISTORY_MAX);
+    // prize wheel (only orders whose ledger carries `wheel`): prize consumed / given back, chance granted / revoked
+    const wheelW = await wheelStatusWrites(fs, L, orderId, from, status, at);
     const writes = [
       ledgerUpdate(fs, orderId, ledgerDoc, { ...eff.ledgerFields, inventory: eff.nextInv, statusHistory: history }),
       orderUpdate(fs, orderId, orderDoc, { status, seenByAdmin: true, inventory: { policy: 'on_delivery', state: eff.nextInv } }),
       ...eff.writes,
+      ...wheelW,
     ];
     const r = await fs.commit(writes);
     if (r.ok) {
@@ -248,10 +252,12 @@ export async function syncDirectStatusChanges(fs, cfg) {
       log('sync.refused', { orderId, code });
       continue;
     }
+    const wheelW = await wheelStatusWrites(fs, L, orderId, 'shipped', to, at);
     const writes = [
       ledgerUpdate(fs, orderId, ledgerDoc, { ...eff.ledgerFields, inventory: eff.nextInv, syncedAt: at, syncedStatus: orderDoc.exists ? to : 'deleted', syncProblem: null }),
       ...(orderDoc.exists ? [orderUpdate(fs, orderId, orderDoc, { inventory: { policy: 'on_delivery', state: eff.nextInv } })] : []),
       ...eff.writes,
+      ...wheelW,
     ];
     const r = await fs.commit(writes);
     if (r.ok) {

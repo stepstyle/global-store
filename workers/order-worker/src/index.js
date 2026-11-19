@@ -5,6 +5,8 @@
 //   GET  /orders/:id/status     { exists, status } only — no personal data
 //   POST /admin/orders/:id/status  dashboard status change; stock deducted on delivery (Firebase ID token of an admin)
 //   POST /orders/:id/claim       link a guest order to the signed-in account (ID token + the order's tracking key)
+//   GET  /wheel/state            prize wheel (WHEEL_MODE=test only; 404 when off): chances + stored results (ID token)
+//   POST /wheel/spin             one server-side draw per chance, stored; a repeat returns the stored result (ID token)
 //   POST /products/:id/ratings   recompute a product's rating figures from its published reviews (ID token)
 //   GET  /test                  Telegram test message      (x-worker-auth required)
 //   POST /notify-order          resend notifications        (x-worker-auth required)
@@ -24,6 +26,7 @@ import { requireAdmin } from './admin.js';
 import { changeOrderStatus, syncDirectStatusChanges } from './fulfilment.js';
 import { claimOrder } from './claims.js';
 import { recomputeProductRating } from './ratings.js';
+import { wheelState, spinWheel, expireUnclaimedPrizes } from './wheel.js';
 
 const STATUS_PATH = /^\/orders\/([^/]+)\/status$/;
 const ADMIN_STATUS_PATH = /^\/admin\/orders\/([^/]+)\/status$/;
@@ -51,7 +54,8 @@ async function signedInUid(request, cfg) {
   try {
     const token = bearerToken(request.headers.get('authorization'));
     if (token === undefined) return { ok: false, code: 'AUTH_REQUIRED' };
-    return { ok: true, uid: (await verifyFirebaseIdToken(token, { projectId: cfg.projectId, jwksUrl: cfg.authJwksUrl })).uid };
+    const v = await verifyFirebaseIdToken(token, { projectId: cfg.projectId, jwksUrl: cfg.authJwksUrl });
+    return { ok: true, uid: v.uid, emailVerified: v.emailVerified === true };
   } catch (e) {
     if (e instanceof AuthError) return { ok: false, code: 'AUTH_INVALID' };
     throw e;
@@ -122,7 +126,8 @@ async function handle(request, env, ctx, cfg) {
 
     const rawOrder = body && typeof body === 'object' ? body.order ?? body : null;
     // tracking-key HASH chosen by the customer's browser (outside the order: not part of the payload hash)
-    const r = await createOrder(fs, cfg, rawOrder, ctx, auth, { trackingKeyHash: body?.trackingKeyHash });
+    // wheelSpinId: a prize won on the wheel (WHEEL_MODE=test); re-checked server-side against the verified account
+    const r = await createOrder(fs, cfg, rawOrder, ctx, auth, { trackingKeyHash: body?.trackingKeyHash, wheelSpinId: body?.wheelSpinId ?? null });
     return reply(r.body, r.status);
   }
 
@@ -201,6 +206,29 @@ async function handle(request, env, ctx, cfg) {
     return reply(r.body, r.status);
   }
 
+  // ---------------- prize wheel (TEST ONLY; WHEEL_MODE=off -> 404 before anything is read) ----------------
+  if (url.pathname === '/wheel/state' || url.pathname === '/wheel/spin') {
+    if (cfg.wheelMode === 'off') return reply({ ok: false, code: 'NOT_FOUND' }, 404);
+    const isSpin = url.pathname === '/wheel/spin';
+    if (request.method !== (isSpin ? 'POST' : 'GET')) return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    if (!(await allowRequest(env, cfg, isSpin ? 'create' : 'status', ip))) return reply({ ok: false, code: 'RATE_LIMITED' }, 429);
+    const who = await signedInUid(request, cfg);
+    if (!who.ok) return reply({ ok: false, code: who.code }, 401);
+    if (!isSpin) {
+      const r = await wheelState(fs, cfg, who.uid);
+      return reply(r.body, r.status);
+    }
+    if (cfg.turnstileMode !== 'off') {
+      const { body } = await readJsonBody(request, 4 * 1024);
+      const passed = await verifyTurnstile(cfg, body?.turnstileToken || request.headers.get('cf-turnstile-response'), ip);
+      if (!passed && cfg.turnstileMode === 'enforce') return reply({ ok: false, code: 'TURNSTILE_FAILED' }, 403);
+    }
+    // one obstacle to throw-away accounts (NOT proof of a unique person: one person can own several verified e-mails)
+    if (!who.emailVerified) return reply({ ok: false, code: 'WHEEL_ACCOUNT_NOT_VERIFIED' }, 403);
+    const r = await spinWheel(fs, cfg, who.uid);
+    return reply(r.body, r.status);
+  }
+
   // ---------------- admin: order status (STOCK_POLICY=on_delivery orders) ----------------
   const am = url.pathname.match(ADMIN_STATUS_PATH);
   if (am) {
@@ -276,8 +304,10 @@ export default {
       const rec = await reconcileOrphans(fs, cfg);
       // rollback safety net, off by default (SYNC_DIRECT_STATUS); a failure never blocks the notifications above
       const sync = await syncDirectStatusChanges(fs, cfg).catch((e) => ({ enabled: true, error: String(e?.message || e).slice(0, 120) }));
-      log('cron.done', { retried, reconcile: rec.enabled, processed: rec.processed, skipped: rec.skipped.length, sync });
-      return { retried, reconcile: rec, sync };
+      // prize wheel (test only): unclaimed prizes past their validity go back to the pool (never a reserved one)
+      const wheel = await expireUnclaimedPrizes(fs, cfg).catch((e) => ({ enabled: true, error: String(e?.message || e).slice(0, 120) }));
+      log('cron.done', { retried, reconcile: rec.enabled, processed: rec.processed, skipped: rec.skipped.length, sync, wheel });
+      return { retried, reconcile: rec, sync, wheel };
     })();
     if (ctx?.waitUntil) ctx.waitUntil(job);
     return job;
