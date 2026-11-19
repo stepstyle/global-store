@@ -38,6 +38,14 @@ export default function Wheel() {
 
   useEffect(() => { void load(); }, [load, user?.id]);
 
+  // a win: bring its row (with the "add to my order" button) to the middle of the screen, clear of the cookie bar
+  // and of the phone's bottom edge (instant with reduced motion)
+  useEffect(() => {
+    if (!result || result.prizeId === 'none') return;
+    const row = document.querySelector(`[data-spin-id="${result.spinId}"]`);
+    row?.scrollIntoView({ block: 'center', behavior: reduced.current ? 'auto' : 'smooth' });
+  }, [result, state]);
+
   const onSpin = async () => {
     if (spinning) return;
     setSpinning(true);
@@ -122,7 +130,7 @@ export default function Wheel() {
             <h2 className="mb-2 font-black text-slate-800">{L('نتائجك', 'Your results')}</h2>
             <ul className="space-y-2">
               {state.spins.map((s) => (
-                <li key={s.spinId} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-2 text-sm" data-testid="wheel-spin-row" data-status={s.status}>
+                <li key={s.spinId} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-2 text-sm" data-testid="wheel-spin-row" data-status={s.status} data-spin-id={s.spinId}>
                   <span>{s.prizeId === 'none' ? L('بدون جائزة', 'No prize') : s.label}</span>
                   {won(s) ? (
                     chosen?.spinId === s.spinId

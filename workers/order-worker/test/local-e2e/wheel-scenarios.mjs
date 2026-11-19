@@ -123,6 +123,14 @@ export function buildWheelScenarios(ctx) {
     const ok = await t.evaluate(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === ${JSON.stringify(text)} && !x.disabled); if (!b) return false; b.click(); return true; })()`);
     assert.ok(ok, `button "${text}" present and enabled`);
   };
+  /** scrolled to the end of the page, the prize button is really reachable: both ends of the prize row are the topmost elements (never the cookie bar) */
+  const takeNotCovered = async (t) => {
+    // NO scrolling by the test: what the customer sees right after the result (the page brings the row into view)
+    const probe = "(() => { const row = document.querySelector('[data-testid=wheel-take]').closest('[data-testid=wheel-spin-row]'); const r = row.getBoundingClientRect(); const y = r.top + r.height / 2; const hit = (x) => { const e = document.elementFromPoint(x, y); return !!e && row.contains(e); }; const who = (x) => { const e = document.elementFromPoint(x, y); return e ? (e.closest('[data-testid]')?.dataset.testid || e.tagName) + '.' + String(e.className || '').slice(0, 60) : 'none'; }; return { cookieBar: document.documentElement.hasAttribute('data-cookie-bar'), clear: hit(r.left + 10) && hit(r.right - 10), who: who(r.left + 10) + ' | ' + who(r.right - 10), rowTop: Math.round(r.top), vh: innerHeight }; })()";
+    let last;
+    for (let i = 0; i < 20; i++) { last = await t.evaluate(probe); if (last.clear) return last; await sleep(250); } // smooth scroll settles
+    return last;
+  };
   const statusIs = (id, s) => until(async () => (await get(`orders/${id}`))?.status === s, 20_000, `order ${id} -> ${s}`);
 
   return [
@@ -140,6 +148,7 @@ export function buildWheelScenarios(ctx) {
       assert.equal(await t.evaluate(`document.activeElement?.dataset?.testid === 'wheel-spin' || true`), true);
       assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-result]').getAttribute('aria-live')`), 'polite');
       await t.waitFor(`!!document.querySelector('[data-testid=wheel-take]')`, 20_000, 'take button');
+      { const c = await takeNotCovered(t); assert.ok(c.cookieBar && c.clear, `cookie bar shown AND the prize row not covered (desktop): ${JSON.stringify(c)}`); }
       await shot(t, 'wheel-desktop-won');
       const sp = await spinDoc(uid, 1);
       assert.equal(sp.status, 'issued');
@@ -246,6 +255,7 @@ export function buildWheelScenarios(ctx) {
       assert.equal(await t.evaluate(`document.documentElement.scrollWidth <= innerWidth + 1`), true, 'no horizontal scroll on /wheel');
       const btn = await t.evaluate(`(() => { const r = document.querySelector('[data-testid=wheel-spin]').getBoundingClientRect(); return { h: Math.round(r.height), w: Math.round(r.width) }; })()`);
       assert.ok(btn.h >= 44, `spin button tall enough to tap (${btn.h}px)`);
+      { const c = await takeNotCovered(t); assert.ok(c.cookieBar && c.clear, `cookie bar shown AND the prize row not covered (phone): ${JSON.stringify(c)}`); }
       await shot(t, 'wheel-phone-won');
       await t.evaluate(`document.querySelector('[data-testid=wheel-take]').click(); true`);
       await t.waitFor(`location.hash === '#/cart'`, 10_000, 'cart');
