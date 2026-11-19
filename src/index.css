@@ -11,7 +11,13 @@
 /* ============================================================
    Dair Sharaf — "Scholar" identity (ink navy · gold · paper)
    ============================================================ */
+/* permanent light look on every device: never auto-darkened, form controls / scrollbars stay light too
+   (the same declaration is in index.html as <meta name="color-scheme" content="only light">) */
+:root {
+  color-scheme: only light;
+}
 html {
+  background-color: #faf7f1;
   overflow-y: scroll;
   scroll-behavior: smooth;
   text-rendering: optimizeLegibility;
@@ -38,7 +44,9 @@ h1, h2, h3, h4, .font-heading {
 /* calmer, consistent form fields everywhere (checkout, login, dashboard) */
 input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), select, textarea {
   border-color: #e4dccb;
+  color: #1f2d3d; /* explicit (never the browser's dark-mode text colour); utility classes still win */
 }
+select option { background-color: #ffffff; color: #1f2d3d; }
 input:focus, select:focus, textarea:focus {
   border-color: #c08a2b !important;
   box-shadow: 0 0 0 4px rgba(192, 138, 43, 0.15) !important;
