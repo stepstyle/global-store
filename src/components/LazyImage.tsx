@@ -62,10 +62,10 @@ const cloudinaryTransform = (url: string, w?: number, h?: number, mode?: 'limit'
     /**
      * ✅ iOS-safe:
      * - نتجنب f_auto لأنه قد يرجع AVIF ويخرب على أجهزة/إعدادات معينة
-     * - نستخدم f_jpg كخيار متوافق جداً
+     * - WebP للمتصفحات التي تدعمه (فحص مخزّن)، وJPG لغيرها — صور المتجر أصلًا WebP: تحويلها إلى JPG كان يكبّر حجمها
      * - q_auto:good + dpr_auto لذكاء الجودة
      */
-    const t: string[] = ['f_jpg', 'q_auto:good', 'dpr_auto'];
+    const t: string[] = [detectWebPSupport() ? 'f_webp' : 'f_jpg', 'q_auto:good', 'dpr_auto'];
 
     if (typeof w === 'number' && w > 0) t.push(`w_${Math.round(w)}`);
     if (typeof h === 'number' && h > 0) t.push(`h_${Math.round(h)}`);

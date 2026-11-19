@@ -15,6 +15,7 @@ import { Product, ReviewDoc, AppUser, ProductVariant } from '../types';
 import SEO from '../components/SEO';
 import { ProductDetailSkeleton } from '../components/Skeleton';
 import { reviewsApi } from '../services/reviews';
+import { saleInfo } from '../services/priceDisplay';
 
 const safeStr = (v: any) => String(v ?? '').trim();
 
@@ -315,12 +316,11 @@ const ProductDetails: React.FC = () => {
   const variantOrig = Number(selectedVariant?.originalPrice);
   const productOrig = Number(product?.originalPrice);
   
-  let displayOriginalPrice: number | undefined = undefined;
-  if (!isNaN(variantOrig) && variantOrig > displayPrice) {
-    displayOriginalPrice = variantOrig;
-  } else if (!isNaN(productOrig) && productOrig > displayPrice) {
-    displayOriginalPrice = productOrig;
-  }
+  // a strike-through price only from REAL data for THIS price: the variant's own original price, or the product's
+  // original price when the shown price IS the product price (never another price's original: no invented discount)
+  const origForThisPrice = !isNaN(variantOrig) && variantOrig > 0 ? variantOrig : Number(displayPrice) === Number(product?.price) ? productOrig : NaN;
+  const pdSale = saleInfo(displayPrice, origForThisPrice);
+  const displayOriginalPrice: number | undefined = pdSale.onSale ? pdSale.original : undefined;
 
   // 🚀 السحر يبدأ هنا: تغيير الصورة بذكاء حسب الخيار!
   const allImages = useMemo(() => normalizeImages(product), [product]);

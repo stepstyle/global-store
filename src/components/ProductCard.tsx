@@ -5,6 +5,7 @@ import { Star, ShoppingCart, Heart, Eye, Minus, Plus, PlaySquare, Palette } from
 import { Product } from '../types';
 import { useCart } from '../App';
 import LazyImage from './LazyImage';
+import { availableStock, displayPrice, saleInfo, hasPriceRange, formatJod } from '../services/priceDisplay';
 
 const { Link, useNavigate } = ReactRouterDOM as any;
 
@@ -96,14 +97,19 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const { primary: image1, secondary: image2 } = useMemo(() => resolveImages(product), [product]);
   const productTitle = useMemo(() => getProductTitle(product), [getProductTitle, product]);
   const productLink = useMemo(() => `/product/${product.id}`, [product.id]);
-  const stock = useMemo(() => Math.max(0, Number(product.stock ?? 0)), [product.stock]);
+  // what can really be bought: the variants' stock for a variant product (the product-level number can be stale)
+  const stock = useMemo(() => availableStock(product as any), [product]);
+  // the price shown = the cheapest in-stock variant (or the product price); a sale only with a REAL higher original price
+  const shown = useMemo(() => displayPrice(product as any), [product]);
+  const sale = useMemo(() => saleInfo(shown.price, shown.originalPrice), [shown]);
+  const fromPrice = useMemo(() => hasPriceRange(product as any), [product]);
   const isInStock = stock > 0;
 
   const badge = useMemo(() => {
-    if ((product as any).originalPrice) return t('sale');
+    if (sale.onSale) return t('sale');
     if ((product as any).isNew) return t('new');
     return '';
-  }, [product, t]);
+  }, [product, t, sale]);
 
   const categoryLabel = useMemo(() => String(product.category ?? '').trim(), [product.category]);
   const [hovered, setHovered] = useState(false);
@@ -194,9 +200,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
   const CATEGORY_AR: Record<string, string> = { Games: 'ألعاب', Stationery: 'قرطاسية', BabyGear: 'مستلزمات وركوب', Gifts: 'هدايا', Offers: 'عروض' };
   const categoryText = language === 'ar' ? CATEGORY_AR[categoryLabel] || categoryLabel : categoryLabel;
-  const discountPct = (product as any).originalPrice && Number((product as any).originalPrice) > Number(product.price)
-    ? Math.round((1 - Number(product.price) / Number((product as any).originalPrice)) * 100)
-    : 0;
+  const discountPct = sale.onSale ? sale.percent : 0;
 
   return (
     <div
@@ -304,11 +308,12 @@ const ProductCard: React.FC<ProductCardProps> = ({
         <div className="mt-auto">
           <div className="flex items-end justify-between gap-2">
             <div className="flex flex-col leading-none">
-              {(product as any).originalPrice && (
-                <span className="text-[12px] text-ink-300 font-semibold line-through tabular-nums mb-1">{Number((product as any).originalPrice)} {L('د.أ', 'JOD')}</span>
+              {sale.onSale && (
+                <span className="text-[12px] text-ink-300 font-semibold line-through tabular-nums mb-1" data-testid="card-original-price">{formatJod(sale.original)} {L('د.أ', 'JOD')}</span>
               )}
-              <span className="font-heading font-bold text-ink-900 text-[18px] sm:text-[20px] tabular-nums">
-                {Number(product.price ?? 0)}
+              <span className="font-heading font-bold text-ink-900 text-[18px] sm:text-[20px] tabular-nums" data-testid="card-price">
+                {fromPrice && <span className="text-[11px] font-semibold text-ink-400 me-1">{L('من', 'from')}</span>}
+                {formatJod(shown.price ?? product.price)}
                 <span className="text-[11px] font-semibold text-gold-600 ms-1">{L('د.أ', 'JOD')}</span>
               </span>
             </div>

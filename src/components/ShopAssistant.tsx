@@ -52,6 +52,13 @@ const ShopAssistant: React.FC = () => {
   const list = useMemo(() => (Array.isArray(products) ? products : []), [products]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [turns, busy, open]);
+  // Escape closes the panel (keyboard / accessibility)
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
 
   const ask = useCallback(async (text: string) => {
     const q = text.trim();
@@ -78,11 +85,12 @@ const ShopAssistant: React.FC = () => {
           type="button"
           data-testid="assistant-open"
           onClick={() => setOpen(true)}
-          className="fixed z-[90] bottom-5 end-4 sm:end-6 inline-flex items-center gap-2 rounded-full bg-ink-900 text-white ps-3.5 pe-4 py-3 shadow-lift ring-1 ring-gold-300/40 hover:bg-ink-800 transition"
+          // phones: a compact round button (it used to cover the price / add button of the product cards while scrolling)
+          className="fixed z-[90] bottom-5 end-4 sm:end-6 inline-flex items-center gap-2 rounded-full bg-ink-900 text-white p-2.5 sm:ps-3.5 sm:pe-4 sm:py-3 shadow-lift ring-1 ring-gold-300/40 hover:bg-ink-800 transition"
           aria-label={isAr ? 'مساعد التسوق' : 'Shopping assistant'}
         >
           <span className="w-7 h-7 rounded-full bg-gold-400 text-ink-900 flex items-center justify-center"><Sparkles size={15} /></span>
-          <span className="text-[13.5px] font-bold">{isAr ? 'مساعد التسوق' : 'Assistant'}</span>
+          <span className="hidden sm:inline text-[13.5px] font-bold">{isAr ? 'مساعد التسوق' : 'Assistant'}</span>
         </button>
       )}
 

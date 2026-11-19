@@ -198,16 +198,21 @@ const Home: React.FC = () => {
         <SectionHead eyebrow={L('الأقسام', 'Departments')} title={L('تسوّق حسب القسم', 'Shop by department')} to="/shop" cta={L('كل المنتجات', 'All products')} isRtl={isRtl} />
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
           {DEPARTMENTS.map((d) => (
-            <Link key={d.category} to={shopTo(d.category)} className={`group relative overflow-hidden rounded-3xl bg-gradient-to-b ${d.tone} ring-1 ring-ink-900/[0.06] p-4 sm:p-6 min-h-[190px] sm:min-h-[260px] flex flex-col transition-all duration-500 hover:shadow-lift hover:-translate-y-1`}>
-              <div className="flex items-center justify-between">
-                <span className="w-10 h-10 rounded-2xl bg-white/80 text-ink-900 flex items-center justify-center"><d.Icon size={19} /></span>
-                {counts[d.category] ? <span className="text-[11.5px] font-bold text-ink-500 bg-white/70 rounded-full px-2.5 py-1">{counts[d.category]} {L('منتج', 'items')}</span> : null}
+            // text on top, image in its own area below it: the title never sits on the picture (it did on phone,
+            // tablet and desktop), and the cards are shorter on phones
+            <Link key={d.category} to={shopTo(d.category)} data-testid="department-card" className={`group relative overflow-hidden rounded-3xl bg-gradient-to-b ${d.tone} ring-1 ring-ink-900/[0.06] p-4 sm:p-5 min-h-[168px] sm:min-h-[216px] flex flex-col transition-all duration-500 hover:shadow-lift hover:-translate-y-1`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-white/80 text-ink-900 flex items-center justify-center shrink-0"><d.Icon size={18} /></span>
+                {counts[d.category] ? <span className="text-[11px] sm:text-[11.5px] font-bold text-ink-500 bg-white/70 rounded-full px-2.5 py-1 whitespace-nowrap">{counts[d.category]} {L('منتج', 'items')}</span> : null}
               </div>
-              <img src={d.image} alt="" className="absolute -bottom-3 -end-3 w-[58%] sm:w-[55%] object-contain drop-shadow-xl transition-transform duration-500 group-hover:scale-105 group-hover:-rotate-3" loading="lazy" />
-              <div className="mt-auto relative max-w-[62%]">
-                <h3 className="font-heading font-bold text-ink-900 text-[17px] sm:text-[22px]">{L(d.ar, d.en)}</h3>
-                <p className="hidden sm:block text-[12.5px] leading-6 text-ink-500 mt-1">{L(d.subAr, d.subEn)}</p>
-                <span className="mt-2 inline-flex items-center gap-1 text-[12.5px] font-bold text-gold-600">{L('تصفّح', 'Browse')} {isRtl ? <ArrowLeft size={14} /> : <ArrowRight size={14} />}</span>
+              <div className="relative z-10 mt-3">
+                <h3 className="font-heading font-bold text-ink-900 text-[16px] sm:text-[20px] leading-snug">{L(d.ar, d.en)}</h3>
+                <p className="hidden sm:block text-[12.5px] leading-6 text-ink-500 mt-1 line-clamp-2">{L(d.subAr, d.subEn)}</p>
+              </div>
+              <div className="mt-auto flex items-end justify-between gap-2 pt-2">
+                <span className="inline-flex items-center gap-1 text-[12.5px] font-bold text-gold-600 shrink-0">{L('تصفّح', 'Browse')} {isRtl ? <ArrowLeft size={14} /> : <ArrowRight size={14} />}</span>
+                {/* one fixed image area for every card (even heights); white photo backgrounds blend into the card tint */}
+                <img src={d.image} alt="" className="h-16 sm:h-20 lg:h-[88px] w-[48%] object-contain object-bottom mix-blend-multiply transition-transform duration-500 group-hover:scale-105" loading="lazy" />
               </div>
             </Link>
           ))}

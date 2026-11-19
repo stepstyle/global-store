@@ -4,6 +4,7 @@ import { Product } from '../types';
 import * as ReactRouterDOM from 'react-router-dom';
 import { useCart } from '../App';
 import LazyImage from './LazyImage';
+import { displayPrice, saleInfo, formatJod } from '../services/priceDisplay';
 
 const { Link } = ReactRouterDOM as any;
 
@@ -53,6 +54,9 @@ const QuickViewModal: React.FC<QuickViewModalProps> = ({ product, isOpen, onClos
   };
 
   if (!isOpen || !product) return null;
+  // price shown + a sale only with a REAL higher original price (same rules as the product card)
+  const qvShown = displayPrice(product as any);
+  const qvSale = saleInfo(qvShown.price, qvShown.originalPrice);
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 sm:p-6">
@@ -117,11 +121,11 @@ const QuickViewModal: React.FC<QuickViewModalProps> = ({ product, isOpen, onClos
 
           <div className="flex items-end gap-3 mb-6 pb-6 border-b border-slate-100">
             <span className="text-3xl font-black text-sky-500 drop-shadow-sm" dir="ltr">
-              {product.price} <span className="text-lg font-bold text-sky-600/60">JOD</span>
+              {formatJod(qvShown.price ?? product.price)} <span className="text-lg font-bold text-sky-600/60">JOD</span>
             </span>
-            {product.originalPrice && (
+            {qvSale.onSale && (
               <span className="text-lg text-slate-400 font-bold line-through decoration-slate-300 decoration-2 mb-1" dir="ltr">
-                {product.originalPrice}
+                {formatJod(qvSale.original)}
               </span>
             )}
           </div>
