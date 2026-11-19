@@ -11,6 +11,7 @@ import {
   prepareAttempt, submitPrepared, checkOrderStatus, trackingKeyHash, normalizeTrackingKey, resolvePendingAttempts, recordFor, openAttempts, attemptKey, dropOpenUnsent, identityOf, ownerNoticesFor,
   type AttemptStore, type OrderPayload, type SubmitDeps, type SubmitOptions, type SubmitOutcome, type PendingRecovery,
 } from './orderSubmit.ts';
+import { ORDERS_WHATSAPP_INTL } from '../config/contact.ts';
 
 // ------------------------------------------------------------------------------------------------ cross-tab lock
 type LockManager = { request: <T>(name: string, cb: () => Promise<T>) => Promise<T> };
@@ -554,8 +555,8 @@ export function messageFor(r: CheckoutResult): UiMessage | null {
 }
 
 // ------------------------------------------------------------------------------------------------ WhatsApp
-/** The shop's WhatsApp number (same value as in Checkout.tsx). */
-export const STORE_WHATSAPP = '962796969081';
+/** The shop's WhatsApp number for order matters — from the central contact settings (src/config/contact.ts). */
+export const STORE_WHATSAPP = ORDERS_WHATSAPP_INTL;
 
 /** Message to the shop with the order number only (+ CliQ reference when relevant). Opened by a user click. */
 export function whatsappUrl(storePhone: string, orderId: string, opts: { kind: 'cliq_receipt' | 'unconfirmed' | 'conflict'; cliqReference?: string; customerName?: string }): string {

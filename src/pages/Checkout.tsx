@@ -25,9 +25,10 @@ import { Order, Product } from '../types';
 import { localAttemptStore, openAttempts, type OrderPayload, type SubmitDeps, type SubmitOptions, type PendingRecovery } from '../services/orderSubmit';
 import {
   createSubmitLock, placeOrder, retrySameOrder, shouldClearCart, messageFor, whatsappUrl, whatsappNewOrderUrl, confirmedOrders,
-  recoverPendingAttempts, restorablePayload, takeOwnerNotices,
+  recoverPendingAttempts, restorablePayload, takeOwnerNotices, STORE_WHATSAPP,
   type CheckoutResult,
 } from '../services/checkoutFlow';
+import { CLIQ } from '../config/contact';
 import { previewServerPricing } from '../services/pricePreview';
 import { getFirebaseAuth, currentIdentity } from '../services/firebase';
 import { siteKeyFrom } from '../services/turnstile';
@@ -55,8 +56,23 @@ const clampQty = (n: any) => {
   return Math.max(1, Math.min(99, x));
 };
 
-// 🚨 رقم واتساب المتجر
-const STORE_WHATSAPP = '962796969081';
+/**
+ * Copies text; true only when the copy really happened (Clipboard API, then the textarea fallback for older iOS /
+ * non-secure contexts). The page shows "copied" only on true.
+ */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* fall back */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch { return false; }
+}
 
 const JO_COUNTRY = { code: 'JO', nameAr: 'الأردن', nameEn: 'Jordan' };
 
@@ -1100,35 +1116,38 @@ const Checkout: React.FC = () => {
                 {paymentMethod === 'cliq' && (
                   <div className="space-y-6 animate-in fade-in duration-300">
                     <div className="bg-gradient-to-br from-indigo-50 to-white border border-indigo-100 rounded-3xl p-6 text-center shadow-inner">
-                      <p className="text-sm text-indigo-800 mb-4 font-bold uppercase tracking-widest">
-                        معلومات حساب CliQ الخاص بالمتجر:
+                      <p className="text-sm text-indigo-800 mb-4 font-bold">
+                        حوّل المبلغ عبر CliQ إلى:
                       </p>
-                      
-                      <div className="flex flex-col gap-3 max-w-sm mx-auto mb-6">
-                        <div className="bg-white px-5 py-4 rounded-xl shadow-sm border border-indigo-50 flex justify-between items-center">
-                          <span className="text-slate-400 text-sm font-bold">الاسم (Name):</span>
-                          <span className="font-black text-indigo-900 text-[13px] text-left uppercase leading-tight max-w-[180px]">
-                            Moien AbedAlAzizi Mahmoud Antari
+
+                      <div className="flex flex-col gap-3 max-w-sm mx-auto mb-6" data-testid="cliq-details">
+                        <div className="bg-white px-5 py-4 rounded-xl shadow-sm border border-indigo-50 flex justify-between items-center gap-3">
+                          <span className="text-slate-400 text-sm font-bold shrink-0">اسم المستفيد:</span>
+                          <span dir="ltr" className="font-black text-indigo-900 text-[14px] leading-tight text-end" data-testid="cliq-beneficiary">
+                            {CLIQ.beneficiary}
                           </span>
                         </div>
-                        
-                        <div 
-                          onClick={() => {
-                            navigator.clipboard.writeText('0796969081');
-                            showToast('تم نسخ الرقم بنجاح', 'success');
+
+                        <button
+                          type="button"
+                          data-testid="cliq-copy"
+                          onClick={async () => {
+                            const ok = await copyText(CLIQ.alias);
+                            showToast(ok ? 'تم نسخ رقم CliQ' : `تعذّر النسخ — انسخ الرقم يدويًا: ${CLIQ.alias}`, ok ? 'success' : 'error');
                           }}
-                          className="bg-white px-5 py-4 rounded-xl shadow-sm border border-indigo-200 flex justify-between items-center cursor-pointer hover:bg-indigo-50/80 transition-all group"
+                          className="w-full bg-white px-5 py-4 rounded-xl shadow-sm border border-indigo-200 flex justify-between items-center cursor-pointer hover:bg-indigo-50/80 transition-all group"
+                          aria-label={`نسخ رقم CliQ ${CLIQ.alias}`}
                         >
                           <span className="text-slate-400 text-sm font-bold flex items-center gap-2">
                             <Copy size={14} className="group-hover:text-indigo-500 transition-colors" />
-                            الرقم / Alias:
+                            رقم CliQ (Alias):
                           </span>
-                          <span className="font-black text-xl text-indigo-600 tracking-widest">0796969081</span>
-                        </div>
+                          <span dir="ltr" className="font-black text-xl text-indigo-600 tracking-widest tabular-nums" data-testid="cliq-alias">{CLIQ.alias}</span>
+                        </button>
 
                         <div className="bg-white px-5 py-4 rounded-xl shadow-sm border border-indigo-50 flex justify-between items-center">
-                          <span className="text-slate-400 text-sm font-bold">البنك (Bank):</span>
-                          <span className="font-black text-indigo-900 text-sm">بنك الأردن (Bank of Jordan)</span>
+                          <span className="text-slate-400 text-sm font-bold">المحفظة:</span>
+                          <span className="font-black text-indigo-900 text-sm" data-testid="cliq-wallet">{CLIQ.walletAr} ({CLIQ.walletEn})</span>
                         </div>
                       </div>
 
@@ -1155,8 +1174,9 @@ const Checkout: React.FC = () => {
                         <div className="w-12 h-12 shrink-0 bg-[#25D366]/20 text-[#25D366] rounded-full flex items-center justify-center">
                            <MessageCircle size={24} strokeWidth={2.5} />
                         </div>
-                        <p className="text-sm font-bold text-slate-700 leading-relaxed">
+                        <p className="text-sm font-bold text-slate-700 leading-relaxed" data-testid="cliq-instructions">
                           بعد <span className="text-[#25D366] font-black">تأكيد الطلب</span> سيظهر لك زر لإرسال صورة الإيصال عبر الواتساب مع رقم الطلب.
+                          <span className="block mt-1.5 text-slate-500 font-semibold">يبقى الطلب «بانتظار تأكيد الدفع» حتى نتحقق من وصول المبلغ إلى المحفظة؛ رقم المرجع وصورة الإيصال لا يكفيان وحدهما.</span>
                         </p>
                       </div>
                     </div>

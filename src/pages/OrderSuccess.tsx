@@ -84,7 +84,7 @@ const OrderSuccess: React.FC = () => {
       if (!value) return '—';
 
       if (value === 'cod') return tt('cod', 'الدفع عند الاستلام', 'Cash on delivery');
-      if (value === 'cliq') return tt('cliq', 'حوالة بنكية (CliQ)', 'CliQ Transfer');
+      if (value === 'cliq') return tr('تحويل CliQ', 'CliQ transfer');
       if (value === 'card') return tt('creditCard', 'بطاقة ائتمانية', 'Credit Card');
       if (value === 'paypal') return 'PayPal';
 
@@ -431,9 +431,9 @@ const OrderSuccess: React.FC = () => {
                <div className="mb-6 bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex items-start gap-3 text-indigo-800 text-start animate-in slide-in-from-bottom-2">
                  <Clock className="shrink-0 mt-0.5 text-indigo-500" size={20} />
                  <div>
-                   <p className="font-bold text-sm mb-1">{tt('cliqPending', 'بانتظار تأكيد الحوالة', 'Awaiting Transfer Confirmation')}</p>
+                   <p className="font-bold text-sm mb-1" data-testid="cliq-pending">{tr('بانتظار تأكيد الدفع', 'Awaiting payment confirmation')}</p>
                    <p className="text-xs font-medium text-indigo-700/80">
-                     {tt('cliqReview', 'سيقوم فريقنا بمراجعة الحوالة وتأكيد الطلب خلال وقت قصير. شكراً لتفهمك.', 'Our team will review your transfer and confirm the order shortly. Thank you.')}
+                     {tr('أرسل صورة الإيصال عبر واتساب. يُعتبر الطلب مدفوعًا فقط بعد أن نتحقق من وصول المبلغ إلى محفظة المتجر، وسنؤكد لك ذلك.', 'Send the receipt on WhatsApp. The order counts as paid only after we verify the money reached the store wallet; we will confirm it to you.')}
                    </p>
                  </div>
                </div>

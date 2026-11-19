@@ -482,7 +482,7 @@ export function buildUiScenarios(ctx) {
         assert.match(text, /متصفحك لا يدعم حماية الطلب من التكرار/);
         assert.match(text, /لم نُرسل الطلب/);
         const wa = await tab.evaluate(`document.querySelector('[data-testid=order-whatsapp]')?.href || ''`);
-        assert.match(wa, /^https:\/\/wa\.me\/962796969081\?text=/, 'WhatsApp ordering option shown');
+        assert.match(wa, /^https:\/\/wa\.me\/962796047637\?text=/, 'WhatsApp ordering option shown (official number)');
         const waText = decodeURIComponent(wa.split('?text=')[1]);
         for (const pii of ['زبون اختبار محلي', '791000027', 'شارع الاختبار', 'buyer@example.com']) assert.equal(waText.includes(pii), false, `WhatsApp text holds ${pii}`);
         assert.equal(await tab.evaluate(`JSON.parse(sessionStorage.getItem('__e2e_creates') || '[]').length`), 0, 'no create request left the browser');
