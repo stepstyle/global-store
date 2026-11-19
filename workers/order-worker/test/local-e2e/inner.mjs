@@ -302,9 +302,10 @@ const fs = new Firestore({ projectId: PROJECT_ID, firestoreAuth: 'emulator', url
 
 // which local rules file the emulator enforces for the browser: compat (default) | transition | final (all test-only)
 // delivery suite: always the rules planned for that rollout (firebase/firestore.rules.on-delivery)
-const RULES_NAME = SUITE === 'delivery' ? 'on-delivery' : ['transition', 'final'].includes(process.env.E2E_RULES) ? process.env.E2E_RULES : 'compat';
+// E2E_RULES=on-delivery-final (any suite): the proposed final rules for the live site
+const RULES_NAME = process.env.E2E_RULES === 'on-delivery-final' ? 'on-delivery-final' : SUITE === 'delivery' ? 'on-delivery' : ['transition', 'final'].includes(process.env.E2E_RULES) ? process.env.E2E_RULES : 'compat';
 async function loadCompatRules() {
-  const content = readFileSync(RULES_NAME === 'on-delivery' ? FILES.onDeliveryRules : RULES_NAME === 'final' ? FILES.finalRules : RULES_NAME === 'transition' ? FILES.transitionRules : FILES.compatRules, 'utf8');
+  const content = readFileSync(RULES_NAME === 'on-delivery-final' ? FILES.onDeliveryFinalRules : RULES_NAME === 'on-delivery' ? FILES.onDeliveryRules : RULES_NAME === 'final' ? FILES.finalRules : RULES_NAME === 'transition' ? FILES.transitionRules : FILES.compatRules, 'utf8');
   console.log(`[inner] emulator rules: firestore.rules.${RULES_NAME} (local test file)`);
   const r = await fetch(`http://127.0.0.1:${PORTS.emulator}/emulator/v1/projects/${PROJECT_ID}:securityRules`, {
     method: 'PUT',

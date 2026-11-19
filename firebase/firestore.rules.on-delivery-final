@@ -1,0 +1,120 @@
+rules_version = '2';
+// FINAL rules for STOCK_POLICY=on_delivery = firestore.rules.on-delivery (live since 2026-11-19) with the orders
+// collection closed to direct browser writes and reads:
+//   - create: NEVER from a browser (admin included). Orders are written only by the order Worker v2 (and, while it is
+//     still running, Worker v1) with their service accounts, which are not subject to these rules. This closes fake
+//     orders that skip the Worker's Turnstile, price check, stock reservation and Telegram notice.
+//   - get / list: the admins, or the signed-in customer the order belongs to (userId == uid). A guest reads their order
+//     only through the Worker (order number + tracking key, a summary without personal data). Before: anyone holding
+//     an order number could read the name, phone and address.
+//   - update / delete: unchanged (Worker-managed orders: status and stock only through the Worker).
+// Old site tabs (main 505e7b1) also wrote the order from the browser; that write is ignored by their code and the order
+// is saved by Worker v1 — so these rules do not lose their orders. Their old success page loses the details read.
+// Everything else is byte-for-byte firestore.rules.on-delivery.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function rolesDoc() {
+      return /databases/$(database)/documents/config/roles;
+    }
+
+    function ownerUid() {
+      return exists(rolesDoc()) ? get(rolesDoc()).data.ownerUid : null;
+    }
+
+    function isOwner() {
+      return signedIn() && ownerUid() != null && request.auth.uid == ownerUid();
+    }
+
+    function isAdmin() {
+      return signedIn() && (
+        (ownerUid() != null && request.auth.uid == ownerUid()) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isSelf(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    // ✅ المالك فقط يتحكم بالأدمنز
+    match /admins/{uid} {
+      allow read: if isOwner();
+      allow create, update, delete: if isOwner();
+    }
+
+    // ✅ المنتجات: قراءة للجميع
+    match /products/{id} {
+      allow read: if true;
+      allow create, delete: if isAdmin();
+      // 🚨 تعديل احترافي: السماح للعميل بتحديث أرقام التقييمات فقط داخل المنتج (بدون المساس بالسعر أو الاسم)
+      allow update: if isAdmin() || (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ratingAvg', 'ratingCount', 'rating', 'reviews', 'updatedAt']));
+    }
+
+    // ✅ الأقسام: قراءة للجميع، تعديل للأدمن/المالك فقط
+    match /categories/{id} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Worker-managed order (STOCK_POLICY=on_delivery): its status / stock effects belong to the Worker only
+    function workerManaged() {
+      return resource.data.get('inventory', {}).get('policy', '') == 'on_delivery';
+    }
+    function stillReserved() {
+      return resource.data.get('inventory', {}).get('state', '') == 'reserved';
+    }
+    function ownsOrder() {
+      return signedIn() && resource.data.get('userId', '') == request.auth.uid;
+    }
+
+   // ✅ الطلبات:
+    match /orders/{id} {
+      // 1. لا إنشاء من المتصفح أبدًا: الطلب يكتبه الـ Worker فقط (حساب خدمة لا تخضع لهذه القواعد)
+      allow create: if false;
+
+      // 2. القراءة: الأدمن، أو الزبون المسجّل صاحب الطلب. الضيف يتتبع طلبه عبر الـ Worker (رقم الطلب + رمز التتبع)
+      allow get: if isAdmin() || ownsOrder();
+      allow list: if isAdmin() || ownsOrder();
+
+      // 3. طلبات الخادم (الخصم عند التسليم): الحالة والمخزون عبر الـ Worker فقط؛ الأدمن يستطيع تعليمها كمقروءة
+      allow update: if isAdmin() && (
+        !workerManaged()
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seenByAdmin', 'updatedAt'])
+      );
+      // 4. حذف طلب خادم محجوز ممنوع (ألغِه أولًا ليُفك الحجز)
+      allow delete: if isOwner() && !(workerManaged() && stillReserved());
+    }
+
+    // ✅ التقييمات:
+    match /reviews/{id} {
+      allow read: if true;
+      allow create: if signedIn();
+      allow delete: if isAdmin();
+      // 🚨 تعديل احترافي: السماح بتعديل التقييم لصاحبه، والسماح للآخرين بعمل "لايك" فقط
+      allow update: if isAdmin() ||
+                    (signedIn() && resource.data.userId == request.auth.uid) ||
+                    (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likesBy', 'likesCount', 'updatedAt']));
+    }
+
+    // ✅ users:
+    match /users/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+      allow create, update: if isSelf(uid) || isAdmin();
+      allow delete: if isOwner();
+    }
+
+    // ✅ config:
+    match /config/{doc} {
+      allow read: if isAdmin();
+      allow write: if isOwner();
+    }
+
+    // stockReservations/{productId} and orderLedger/{orderId}: intentionally NO match — every browser read and
+    // write is denied; only the order Worker (service account) reads and writes them.
+  }
+}

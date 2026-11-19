@@ -45,6 +45,8 @@ export const FILES = {
   finalRules: resolve(WORKER_ROOT, '../../firebase/rules-test/firestore.rules.final'),
   // E2E_SUITE=delivery: the transition rules planned for STOCK_POLICY=on_delivery
   onDeliveryRules: resolve(WORKER_ROOT, '../../firebase/firestore.rules.on-delivery'),
+  // E2E_RULES=on-delivery-final: the proposed final rules (no browser order create, no order read by number)
+  onDeliveryFinalRules: resolve(WORKER_ROOT, '../../firebase/firestore.rules.on-delivery-final'),
 };
 export const PLAN = {
   projectId: PROJECT_ID,
