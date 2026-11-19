@@ -42,8 +42,11 @@ export function approvalText(order, ledger, cfg) {
   const auto = ledger.stockPolicy === 'on_delivery';
   const items = lines.map((l) => {
     const variant = l.variantLabel && l.variantLabel !== '.' ? ` (${l.variantLabel})` : '';
+    // prize-wheel gift: clearly marked, free — never part of the amount to collect
+    if (l.gift === true) return `- 🎁 هدية عجلة الجوائز: ${l.productName || l.productId}${variant}\n  الكمية: ${l.quantity} — مجانية، لا تُحصَّل قيمتها`;
     return `- ${l.productName || l.productId}${variant}\n  الكمية: ${l.quantity} × ${money(l.unitPrice, cur)}`;
   });
+  if (lines.some((l) => l.gift === true)) items.push('🎁 يتضمن الطلب هدية من عجلة الجوائز: غلّفها مع الطلب (غير محسوبة في الإجمالي).');
   const decision = ledger.decision || 'pending';
   const who = ledger.decidedBy?.userId ? ` — بواسطة ${ledger.decidedBy.userId}` : '';
   const text = [

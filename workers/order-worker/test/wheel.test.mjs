@@ -439,3 +439,30 @@ test('W28 open-gift counter: never negative, never stuck — deliver, cancel, re
   assert.equal((await getDecoded(`orderLedger/${c.o.id}`)).wheel.phoneKey, null);
   assert.equal(await counter(b.o.id), 0);
 });
+
+test('W29 notifications: ONE Telegram message + ONE e-mail per gift order, gift clearly marked FREE; totals unchanged; variant label kept', async () => {
+  await putDoc(`wheelCampaigns/${CID}`, { ...CAMPAIGN, prizes: [{ id: 'test-a', label: 'جائزة تجريبية', productId: 'p-variants', variantId: 'var_blue', weight: 1, quantity: 3, unitCostJod: 1 }] });
+  const s = await spin(ALICE);
+  const { o, r } = await order(ALICE, { spinId: s.body.result.spinId });
+  assert.equal(r.status, 200, r.text);
+  await runCron(env()); // a retry run must not send again
+  const tg = mock.state.calls.filter((c) => c.channel === 'telegram' && c.orderId === o.id);
+  const mail = mock.state.calls.filter((c) => c.channel === 'email' && c.orderId === o.id);
+  assert.equal(tg.length, 1, 'exactly one Telegram message');
+  assert.equal(mail.length, 1, 'exactly one e-mail');
+  const text = tg[0].body.text;
+  assert.match(text, /- 🎁 هدية عجلة الجوائز: جائزة تجريبية \(أزرق\)\n  الكمية: 1 — مجانية، لا تُحصَّل قيمتها/);
+  assert.match(text, /يتضمن الطلب هدية من عجلة الجوائز/);
+  assert.match(text, /💰 إجمالي الطلب: 8\.20/, 'the amount to collect is the paid order only');
+  assert.ok(!/جائزة تجريبية[^\n]*\n  الكمية: 1 × /.test(text), 'the gift has no price line');
+  const O = await getDecoded(`orders/${o.id}`);
+  const g = O.items.find((i) => i.gift);
+  assert.equal(g.selectedVariant.id, 'var_blue');
+  assert.equal(g.selectedVariant.label, 'أزرق');
+  assert.equal(g.selectedVariant.price, undefined, 'no price copied into the gift');
+  assert.equal(O.total, 8.2);
+  assert.equal(await variantStock('p-variants', 'var_blue'), 1, 'nothing deducted before delivery');
+  assert.equal((await setStatus(o.id, 'delivered')).status, 200);
+  assert.equal(await variantStock('p-variants', 'var_blue'), 0, 'gift deducted once on delivery');
+  assert.equal(await variantStock('p-variants', 'var_red'), 4, 'paid line deducted once');
+});

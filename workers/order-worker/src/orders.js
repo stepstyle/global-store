@@ -147,7 +147,7 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
           orderLines: inv.lineInfo.map((l) => ({
             index: l.index, productId: l.productId, variantId: l.variantId ?? null, quantity: l.quantity,
             unitPrice: l.serverUnitPrice, productName: l.productName, variantLabel: l.variantLabel,
-          })).concat(giftLine ? [{ ...giftLine, unitPrice: 0, productName: gift.label, variantLabel: null, gift: true }] : []),
+          })).concat(giftLine ? [{ ...giftLine, unitPrice: 0, productName: gift.label, variantLabel: gift.variantId ? giftVariant(products.get(gift.productId), gift.variantId).label || null : null, gift: true }] : []),
           reservations: reservation.reservations,
           reservationWarnings: reservation.warnings,
           inventory: reservation.reservations.length ? 'reserved' : 'none',
@@ -199,7 +199,7 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
         quantity: it.quantity,
         image: it.image,
         selectedVariant: it.selectedVariant,
-      })).concat(gift ? [{ productId: gift.productId, name: `🎁 هدية العجلة: ${gift.label}`, price: 0, quantity: 1, gift: true, ...(gift.variantId ? { selectedVariant: { id: gift.variantId } } : {}) }] : []),
+      })).concat(gift ? [{ productId: gift.productId, name: `🎁 هدية العجلة: ${gift.label}`, price: 0, quantity: 1, gift: true, ...(gift.variantId ? { selectedVariant: giftVariant(products.get(gift.productId), gift.variantId) } : {}) }] : []),
       ...(gift ? { wheelGift: { label: gift.label, productId: gift.productId, variantId: gift.variantId || null } } : {}),
       subtotal: v.clientPricing.subtotal ?? 0,
       discountAmount: v.clientPricing.discountAmount ?? 0,
@@ -300,6 +300,13 @@ export const CREATE_ATTEMPTS = 6;
  * Handles POST /create-order. Returns { status, body }.
  */
 export const GIFT_LINE_INDEX = 1000;
+
+/** the gift's variant as the dashboard shows it (id + label/type/colors from the product document; never a price) */
+function giftVariant(productDoc, variantId) {
+  const list = productDoc?.exists ? decodeFields(productDoc.fields).variants : null;
+  const v = Array.isArray(list) ? list.find((x) => x && x.id === variantId) : null;
+  return v ? { id: v.id, label: v.label ?? '', type: v.type ?? '', ...(v.colorCode ? { colorCode: v.colorCode } : {}), ...(v.colorCode2 ? { colorCode2: v.colorCode2 } : {}) } : { id: variantId, label: '' };
+}
 
 export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {}) {
   const wheelSpinId = extra?.wheelSpinId ?? null;

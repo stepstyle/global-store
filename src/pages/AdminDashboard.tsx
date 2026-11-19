@@ -1198,7 +1198,12 @@ const AdminDashboard: React.FC = () => {
                       <tr key={order.id} className={`transition-colors align-top ${isProcessingThis ? 'bg-slate-50 opacity-50 pointer-events-none' : 'hover:bg-slate-50'}`}>
                         <td className="px-4 py-3">
                           <div className="flex items-start gap-2">
-                            <div className="font-medium text-secondary-dark break-all">{order.id}</div>
+                            <div className="font-medium text-secondary-dark break-all">
+                              {order.id}
+                              {Array.isArray((order as any).items) && (order as any).items.some((it: any) => it?.gift === true) && (
+                                <span className="ms-1 inline-block rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-900" data-testid="admin-gift-badge" title="يتضمن هدية عجلة الجوائز">🎁 هدية</span>
+                              )}
+                            </div>
                             <button
                               type="button"
                               className="p-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50"
@@ -1432,7 +1437,7 @@ const AdminDashboard: React.FC = () => {
                     <h4 className="font-bold text-slate-900 mb-4">المنتجات المطلوبة</h4>
                     <div className="space-y-3">
                       {(selectedOrder?.items || []).map((item: any, idx: number) => (
-                        <div key={`${item?.productId || item?.id || idx}`} className="flex gap-3 p-3 rounded-2xl border border-slate-100 bg-slate-50 shadow-sm">
+                        <div key={`${item?.productId || item?.id || idx}${item?.gift ? '-gift' : ''}`} data-testid={item?.gift ? 'admin-gift-item' : undefined} className={`flex gap-3 p-3 rounded-2xl border shadow-sm ${item?.gift ? 'border-amber-300 bg-amber-50' : 'border-slate-100 bg-slate-50'}`}>
                           <LazyImage
                             src={safeText(item?.selectedVariant?.image || item?.image)}
                             alt={safeText(item?.name) || `item-${idx + 1}`}
@@ -1441,6 +1446,9 @@ const AdminDashboard: React.FC = () => {
                           />
 
                           <div className="flex-1 min-w-0">
+                            {item?.gift && (
+                              <span className="inline-block mb-1 rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-black text-amber-900">🎁 هدية عجلة الجوائز — مجانية، لا تُحصَّل قيمتها، تُغلَّف مع الطلب</span>
+                            )}
                             <p className="font-bold text-slate-900 break-words leading-snug">{safeText(item?.name) || '—'}</p>
                             <p className="text-[10px] text-slate-400 mt-1">Product ID: {safeText(item?.productId) || '—'}</p>
 

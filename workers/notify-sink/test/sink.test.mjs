@@ -87,7 +87,8 @@ test('records only a summary: no personal data, no tokens, no headers, no recipi
   const { calls } = await r.json();
   assert.equal(calls.length, 2);
   for (const c of calls) {
-    const base = ['at', 'channel', 'customerTotal', 'length', 'ok', 'orderId', 'priceMismatch', 'serverTotal', 'sha256', 'warningCodes'];
+    // giftMarked: boolean only (the order carries a prize-wheel gift line) — no personal data
+    const base = ['at', 'channel', 'customerTotal', 'giftMarked', 'length', 'ok', 'orderId', 'priceMismatch', 'serverTotal', 'sha256', 'warningCodes'];
     // Telegram also records the approval fields: method, message id, button callback data, decision line (no PII)
     assert.deepEqual(Object.keys(c).sort(), (c.channel === 'telegram' ? [...base, 'buttons', 'decision', 'messageId', 'method'] : base).sort());
     assert.equal(c.orderId, 'ORD-ABCD1234-MZ0Q1X2Y');
@@ -193,4 +194,10 @@ test('approval: wrong token on edit / answer -> 401; unknown Telegram method -> 
   assert.equal((await call(env, `/telegram/bot${TG}/editMessageText`, { method: 'POST', body: { message_id: 1, text: APPROVAL_TEXT } })).status, 200);
   // sendMessage is not affected by tgui
   assert.equal((await call(env, `/telegram/bot${TG}/sendMessage`, { method: 'POST', body: { text: APPROVAL_TEXT, reply_markup: KB } })).status, 200);
+});
+
+test('giftMarked: true only for a message with the Worker gift line (Arabic or English text)', async () => {
+  assert.equal((await summarize('telegram', 'رقم الطلب: ORD-ABCD1234-MZ0Q1X2Y\n- 🎁 هدية عجلة الجوائز: جائزة\n  الكمية: 1 — مجانية')).giftMarked, true);
+  assert.equal((await summarize('email', 'Order ID: ORD-ABCD1234-MZ0Q1X2Y\n3) 🎁 GIFT (wheel) — FREE, do not charge: x x1')).giftMarked, true);
+  assert.equal((await summarize('telegram', 'رقم الطلب: ORD-ABCD1234-MZ0Q1X2Y\n- دفتر هدية')).giftMarked, false);
 });

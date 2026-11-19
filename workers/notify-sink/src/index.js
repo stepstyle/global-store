@@ -83,6 +83,8 @@ export async function summarize(channel, text) {
     warningCodes: [...new Set((warnLine.match(/[A-Z][A-Z_]{2,}/g) || []))],
     customerTotal: money(t, 'Total \\(customer saw\\)'),
     serverTotal: money(t, 'Total \\(server check\\)'),
+    // prize wheel (test): the order carries a gift line, clearly marked (fixed Worker text, no personal data)
+    giftMarked: /🎁 (هدية عجلة الجوائز|GIFT \(wheel\))/.test(t),
   };
 }
 

@@ -62,7 +62,11 @@ export function buildMessage(order, ledger, cfg) {
     `Shipping: ${order.shippingMethod || order.shippingMethodId || '—'}`,
     '',
     'Items:',
-    ...items.map((it, i) => `${i + 1}) ${it.name || it.productId} x${it.quantity} - ${fmt(it.price)}`),
+    ...items.map((it, i) => (it.gift === true
+      // a prize-wheel gift: clearly marked, free, never part of the amount to collect
+      ? `${i + 1}) 🎁 GIFT (wheel) — FREE, do not charge: ${it.name || it.productId} x${it.quantity}`
+      : `${i + 1}) ${it.name || it.productId} x${it.quantity} - ${fmt(it.price)}`)),
+    ...(items.some((it) => it.gift === true) ? ['🎁 This order includes a wheel gift: pack it with the order (not included in the total).'] : []),
     '',
     `Total (customer saw): ${fmt(order.total)}`,
     `Total (server check): ${fmt(sp.total)}`,
