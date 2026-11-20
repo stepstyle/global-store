@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getFirebaseAuth } from '../../services/firebase';
 import type { SubmitDeps } from '../../services/orderSubmit';
 import { BACKEND_ENABLED } from '../../config/deployEnv';
-import { getWheelAdmin, getWheelSpins, newSlotId, saveWheelCampaign, slotShares, type AdminCampaign, type AdminFailure, type AdminSlot, type AdminSpinRow, type AdminWheel } from '../../services/wheelAdmin';
+import { getWheelAdmin, getWheelSpins, newSlotId, saveWheelCampaign, slotShares, suggestedWeights, tierW, TIERS, TIER_AR, TIER_SHORT_AR, type AdminCampaign, type AdminFailure, type AdminSlot, type AdminSpinRow, type AdminWheel, type Tier } from '../../services/wheelAdmin';
 import { checkCampaign } from '../../../workers/order-worker/src/wheel.js';
 
 const TYPE_AR: Record<AdminSlot['type'], string> = { gift: 'هدية', discount: 'خصم نقدي', free_delivery: 'توصيل مجاني', none: 'حظ أوفر' };
@@ -77,7 +77,20 @@ export default function WheelAdmin() {
   useEffect(() => { void load(); void loadSpins(''); }, [load]);
 
   const check = useMemo(() => (draft ? checkCampaign(draft) : null), [draft]);
-  const shares = useMemo(() => (draft ? slotShares(draft) : {}), [draft]);
+  // the ACTUAL share of every slot for each loyalty tier (what the Worker would draw with these weights)
+  const sharesBy = useMemo(() => (draft ? (Object.fromEntries(TIERS.map((t) => [t, slotShares(draft, t)])) as Record<Tier, Record<string, number>>) : null), [draft]);
+  /** one tier's weight of a slot; 'weight' (the legacy single weight) follows the NEW-customer weight */
+  // computed from the CURRENT slot (functional update): several weights edited in a row never undo each other
+  const setTierWeight = (i: number, _p: AdminSlot, t: Tier, v: number) => setDraft((d) => (d ? {
+    ...d,
+    prizes: d.prizes.map((q, k) => {
+      if (k !== i) return q;
+      const weights = { new: tierW(q, 'new'), returning: tierW(q, 'returning'), loyal: tierW(q, 'loyal'), [t]: v };
+      return { ...q, weights, weight: weights.new };
+    }),
+  } : d));
+  /** fills the SUGGESTED weights into the draft (not saved; the owner reviews costs and budget first) */
+  const suggest = () => setDraft((d) => (d ? { ...d, prizes: d.prizes.map((p) => { const w = suggestedWeights(p); return { ...p, weights: w, weight: w.new }; }) } : d));
 
   const setC = (patch: Partial<AdminCampaign>) => setDraft((d) => (d ? { ...d, ...patch } : d));
   const setSlot = (i: number, patch: Partial<AdminSlot>) => setDraft((d) => (d ? { ...d, prizes: d.prizes.map((p, k) => (k === i ? { ...p, ...patch } : p)) } : d));
@@ -183,14 +196,16 @@ export default function WheelAdmin() {
                       {(['gift', 'discount', 'free_delivery', 'none'] as const).map((t) => <option key={t} value={t}>{TYPE_AR[t]}</option>)}
                     </select>
                     <label className="flex items-center gap-1 text-xs font-bold"><input type="checkbox" checked={p.active !== false} onChange={(e) => setSlot(i, { active: e.target.checked })} /> مفعّلة</label>
-                    <span className="ms-auto text-xs font-black text-ink-700" data-testid="wheel-admin-share">{Math.round((shares[p.id] || 0) * 1000) / 10}%</span>
+                    <span className="ms-auto flex flex-wrap gap-1 text-[11px] font-black text-ink-700" data-testid="wheel-admin-share">{TIERS.map((t) => <span key={t} className="rounded-md bg-slate-100 px-1.5 py-0.5" data-testid={`wheel-admin-share-${t}`}>{TIER_SHORT_AR[t]} {Math.round(((sharesBy?.[t][p.id]) || 0) * 1000) / 10}%</span>)}</span>
                     <button type="button" onClick={() => move(i, -1)} className="rounded-lg border px-2 text-sm" aria-label="أعلى">↑</button>
                     <button type="button" onClick={() => move(i, 1)} className="rounded-lg border px-2 text-sm" aria-label="أسفل">↓</button>
                     <button type="button" onClick={() => remove(i)} className="rounded-lg border border-red-200 px-2 text-sm text-red-700" aria-label="حذف">✕</button>
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-6">
                     <div><label className={lbl}>المعرّف</label><input className={field} value={p.id} onChange={(e) => setSlot(i, { id: e.target.value.toLowerCase() })} dir="ltr" /></div>
-                    <div><label className={lbl}>الوزن الاحتمالي</label><input type="number" min="0" step="1" className={field} value={p.weight} onChange={(e) => setSlot(i, { weight: Math.max(0, Math.floor(numIn(e.target.value))) })} data-testid="wheel-admin-weight" /></div>
+                    {TIERS.map((t) => (
+                      <div key={t}><label className={lbl}>{`الوزن — ${TIER_SHORT_AR[t]}`}</label><input type="number" min="0" step="1" className={field} value={tierW(p, t)} onChange={(e) => setTierWeight(i, p, t, Math.max(0, Math.floor(numIn(e.target.value))))} data-testid={`wheel-admin-weight-${t}`} /></div>
+                    ))}
                     {p.type !== 'none' && (
                       <>
                         <div><label className={lbl}>{p.type === 'free_delivery' ? 'سقف التوصيل (د.أ)' : p.type === 'discount' ? 'قيمة الخصم (د.أ)' : 'قيمة الهدية (د.أ)'}</label><input type="number" min="0" step="0.5" className={field} value={p.valueJod ?? 0} onChange={(e) => setSlot(i, { valueJod: numIn(e.target.value) })} data-testid="wheel-admin-value" /></div>
@@ -228,6 +243,14 @@ export default function WheelAdmin() {
                   <ul className="mt-1 list-disc ps-5">{check.errors.map((e: string, k: number) => <li key={k}>{e}</li>)}</ul>
                 </div>
               )}
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm font-bold text-sky-900" data-testid="wheel-admin-tiers">
+                <p className="font-black">الاحتمالات حسب ولاء الزبون</p>
+                <p className="mt-1 text-xs leading-relaxed">تُحسب الفئة على الخادم من الطلبات <b>المُسلَّمة</b> منذ أول طلب (الملغاة والمرتجعة لا تُحسب): {TIERS.map((t) => TIER_AR[t]).join('، ')}. اللفة بدون تسجيل دخول تستخدم أوزان «جديد» دائمًا، ونتيجتها لا تتغير بعد تسجيل الدخول.</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={suggest} className="rounded-xl border border-sky-300 bg-white px-3 py-1.5 text-xs font-black text-sky-900" data-testid="wheel-admin-suggest">تعبئة أوزان مقترحة للمراجعة</button>
+                  <span className="text-[11px] font-bold">اقتراح غير نهائي ولا يُحفظ تلقائيًا: الكميات والميزانية ما زالت 0، وتُعتمد النسب بعد مراجعة التكاليف.</span>
+                </div>
+              </div>
               {check.warnings.length > 0 && (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-900" data-testid="wheel-admin-warnings">
                   <p className="font-black">تنبيهات مالية / شروط (لا تمنع الحفظ):</p>
@@ -263,13 +286,14 @@ export default function WheelAdmin() {
         </div>
         <div className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[640px] text-right text-xs" data-testid="wheel-admin-spins">
-            <thead><tr className="text-slate-500"><th className="p-2">التاريخ</th><th className="p-2">الحساب</th><th className="p-2">النتيجة</th><th className="p-2">الحالة</th><th className="p-2">رقم الطلب</th><th className="p-2">الصلاحية</th></tr></thead>
+            <thead><tr className="text-slate-500"><th className="p-2">التاريخ</th><th className="p-2">الحساب</th><th className="p-2">النتيجة</th><th className="p-2">الفئة</th><th className="p-2">الحالة</th><th className="p-2">رقم الطلب</th><th className="p-2">الصلاحية</th></tr></thead>
             <tbody>
               {spins.map((s) => (
                 <tr key={s.spinId} className="border-t border-slate-100" data-testid="wheel-admin-spin-row" data-status={s.status}>
                   <td className="p-2 whitespace-nowrap">{s.createdAt ? new Date(s.createdAt).toLocaleString('ar-JO') : ''}</td>
                   <td className="p-2"><span className="font-bold">{s.email || '—'}</span><br /><span className="text-[10px] text-slate-400" dir="ltr">{s.uid}</span></td>
                   <td className="p-2 font-bold">{s.label}</td>
+                  <td className="p-2 whitespace-nowrap" data-testid="wheel-admin-spin-tier">{s.tier ? TIER_SHORT_AR[s.tier as Tier] ?? s.tier : '—'}{typeof s.deliveredCount === 'number' ? ` (${s.deliveredCount >= 3 ? '3+' : s.deliveredCount})` : ''}</td>
                   <td className="p-2">{STATUS_AR[s.status] || s.status}</td>
                   <td className="p-2 font-mono" dir="ltr">{s.orderId || '—'}</td>
                   <td className="p-2 whitespace-nowrap">{s.expiresAt ? new Date(s.expiresAt).toLocaleDateString('ar-JO') : '—'}</td>

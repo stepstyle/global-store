@@ -83,7 +83,9 @@ export async function guestSpin(fs, cfg, ticket, ip, { now = () => Date.now(), r
     if (used >= cfg.wheelGuestPerIpDay) return { status: 429, body: { ok: false, code: 'WHEEL_GUEST_LIMIT' } };
 
     const remaining = new Map(pooled.map((p, i) => [p.id, poolDocs[i].exists ? Number(decodeFields(poolDocs[i].fields).remaining) || 0 : 0]));
-    const drawnId = drawPrize(campaign, remaining, rand, at);
+    // no account = no trusted order history: ALWAYS the chances of a NEW customer (owner's rule). The result is fixed
+    // here; signing in later links it as it is — never re-drawn with the account's tier.
+    const drawnId = drawPrize(campaign, remaining, rand, at, 'new');
     const slot = campaign.prizes.find((p) => p.id === drawnId) || null;
     const prize = slot && slot.type !== 'none' ? slot : null;
     // second-order prize (owner's exception): no 60-minute use window — its 5 days start at the account's first
@@ -95,7 +97,7 @@ export async function guestSpin(fs, cfg, ticket, ip, { now = () => Date.now(), r
       campaignId: cid, prizeId: slot ? slot.id : NO_PRIZE, label: slot ? slot.label : 'حظ أوفر',
       productId: prize?.productId ?? null, variantId: prize?.variantId ?? null,
       // the prize terms, FIXED now: the claim copies them as they are (an admin edit never changes a won prize)
-      prizeType: prize ? prize.type : 'none',
+      prizeType: prize ? prize.type : 'none', tier: 'new',
       ...(prize ? { valueJod: prize.valueJod, minOrderJod: prize.minOrderJod, appliesTo: prize.appliesTo, description: prize.description } : {}),
       status: prize ? 'held' : NO_PRIZE,
       // holdExpiry exists ONLY while a won unit is held for an unclaimed ticket (the cron query reads exactly those)
@@ -230,6 +232,8 @@ export async function claimGuest(fs, cfg, uid, ticket, { now = () => Date.now(),
       // validity counts from the SPIN (shown to the customer then), not from the claim — except the second-order prize
       ...(second ? (({ status: _s, ...rest }) => rest)(secondOrderFields(second))
         : issued && g.expiresAt instanceof Date ? { expiresAt: g.expiresAt, issuedExpiry: g.expiresAt } : {}),
+      // drawn with the NEW-customer chances before signing in — kept as it is (never re-drawn after the tier is known)
+      tier: g.tier || 'new',
       fromGuest: true, createdAt: g.createdAt instanceof Date ? g.createdAt : new Date(at), claimedAt: new Date(at),
     };
     const writes = [

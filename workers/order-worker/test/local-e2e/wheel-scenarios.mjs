@@ -454,7 +454,8 @@ export function buildWheelScenarios(ctx) {
       await t.waitFor(`!!document.querySelector('[data-testid=admin-tab-wheel]')`, 30_000, 'wheel tab');
       await t.evaluate(`document.querySelector('[data-testid=admin-tab-wheel]').click(); true`);
       await t.waitFor(`document.querySelectorAll('[data-testid=wheel-admin-slot]').length === 4`, 20_000, 'slots listed');
-      assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="disc-1"] [data-testid=wheel-admin-share]').innerText`), '25%');
+      // the actual share PER LOYALTY TIER (same weights everywhere here: 25% each)
+      for (const tier of ['new', 'returning', 'loyal']) assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="disc-1"] [data-testid=wheel-admin-share-${tier}]').innerText`), /25%/, tier);
       // add a 5-JOD gift at a 5-JOD minimum -> loss warning (never blocks)
       await t.evaluate(`document.querySelector('[data-testid=wheel-admin-add-gift]').click(); true`);
       await t.evaluate(`(() => { ${SET_VAL}
@@ -462,10 +463,12 @@ export function buildWheelScenarios(ctx) {
         setVal(row.querySelector('[data-testid=wheel-admin-label]'), 'هدية 5 د.أ');
         setVal(row.querySelector('[data-testid=wheel-admin-value]'), '5');
         setVal(row.querySelector('[data-testid=wheel-admin-qty]'), '2');
-        setVal(row.querySelector('[data-testid=wheel-admin-weight]'), '1');
+        setVal(row.querySelector('[data-testid=wheel-admin-weight-new]'), '1');
         row.querySelector('input[type=checkbox]').click();
         const d = document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="disc-1"]');
-        setVal(d.querySelector('[data-testid=wheel-admin-weight]'), '3');
+        // weights edited PER TIER, independently (new 3, loyal 5; returning unchanged)
+        setVal(d.querySelector('[data-testid=wheel-admin-weight-new]'), '3');
+        setVal(d.querySelector('[data-testid=wheel-admin-weight-loyal]'), '5');
         setVal(d.querySelector('[data-testid=wheel-admin-min]'), '6');
         return true; })()`);
       await t.waitFor(`/هدية 5 د.أ.*15/.test(document.querySelector('[data-testid=wheel-admin-warnings]')?.innerText.replace(/\\n/g, ' ') || '')`, 10_000, 'loss warning shown');
@@ -476,6 +479,7 @@ export function buildWheelScenarios(ctx) {
       const c = await get(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`);
       const d = c.prizes.find((p) => p.id === 'disc-1');
       assert.equal(d.weight, 3);
+      assert.deepEqual(d.weights, { new: 3, returning: 1, loyal: 5 }, 'each tier saved independently');
       assert.equal(d.minOrderJod, 6);
       assert.equal(c.prizes.length, 5);
       assert.equal((await get(`wheelPool/${WHEEL_CAMPAIGN_ID}_gift-1`))?.remaining, 2);
@@ -484,6 +488,13 @@ export function buildWheelScenarios(ctx) {
       await t.evaluate(`document.querySelector('[data-testid=wheel-admin-save]').click(); true`);
       await until(async () => (await get(`wheelPool/${WHEEL_CAMPAIGN_ID}_disc-1`))?.remaining === 0, 20_000, 'saved again: pool emptied');
       assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-admin-save-result]')?.dataset.tone`), 'ok');
+      // suggested weights: filled into the draft for review, NOT saved
+      const before = (await get(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`)).prizes.find((p) => p.id === 'none-1').weights;
+      await t.evaluate(`document.querySelector('[data-testid=wheel-admin-suggest]').click(); true`);
+      await t.waitFor(`document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="none-1"] [data-testid=wheel-admin-weight-new]')?.value === '120'`, 10_000, 'suggestion filled in the draft');
+      assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="none-1"] [data-testid=wheel-admin-weight-loyal]').value`), '110');
+      await shot(t, 'wu06-admin-tiers');
+      assert.deepEqual((await get(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`)).prizes.find((p) => p.id === 'none-1').weights, before, 'not saved by itself');
       await fresh(t);
       await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
       await t.waitFor(`!!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-segment]')`, 25_000, 'visitor popup');

@@ -34,7 +34,7 @@ function storable(c, actorUid) {
     freeFirstChance: c.freeFirstChance, openGiftsPerPhone: c.openGiftsPerPhone, prizeValidDays: c.prizeValidDays, terms: c.terms,
     prizes: c.prizes.map((p) => ({
       id: p.id, type: p.type, label: p.label, description: p.description, icon: p.icon, color: p.color, imageUrl: p.imageUrl,
-      weight: p.weight, active: p.active, startsAt: p.startsAt === null ? null : new Date(p.startsAt), endsAt: p.endsAt === null ? null : new Date(p.endsAt),
+      weight: p.weight, weights: p.weights, active: p.active, startsAt: p.startsAt === null ? null : new Date(p.startsAt), endsAt: p.endsAt === null ? null : new Date(p.endsAt),
       ...(p.type === 'none' ? {} : {
         quantity: p.quantity, unitCostJod: p.unitCostJod, valueJod: p.valueJod, minOrderJod: p.minOrderJod, appliesTo: p.appliesTo,
         productId: p.productId, variantId: p.variantId, validDays: p.validDays,
@@ -111,7 +111,7 @@ export async function adminWheelSpins(fs, cfg, { limit = 100, status = '' } = {}
   const rows = docs.map((d) => decodeFields(d.fields))
     .filter((s) => s.campaignId === cfg.wheelCampaignId && (!SPIN_STATUSES.has(status) || s.status === status))
     .map((s) => ({
-      spinId: `${s.campaignId}_${s.uid}_${s.n}`, uid: s.uid, email: s.email || '', n: s.n, prizeId: s.prizeId, label: s.label,
+      spinId: `${s.campaignId}_${s.uid}_${s.n}`, uid: s.uid, email: s.email || '', n: s.n, prizeId: s.prizeId, label: s.label, tier: s.tier || null, deliveredCount: Number.isInteger(s.deliveredCount) ? s.deliveredCount : null,
       type: s.prizeType || (s.status === 'none' ? 'none' : 'gift'), valueJod: s.valueJod ?? null, minOrderJod: s.minOrderJod ?? null,
       appliesTo: s.appliesTo || 'this_order', status: s.status, orderId: s.orderId || null,
       createdAt: iso(s.createdAt), expiresAt: iso(s.expiresAt), reservedAt: iso(s.reservedAt), consumedAt: iso(s.consumedAt), releasedAt: iso(s.releasedAt), expiredAt: iso(s.expiredAt),

@@ -153,6 +153,31 @@ export const campaignFor = (campaign, sst, cfg, now) => (!campaign || !campaign.
 export const prizeHoldMs = (cfg) => (Number.isFinite(cfg?.wheelPrizeHoldMinutes) && cfg.wheelPrizeHoldMinutes > 0 ? cfg.wheelPrizeHoldMinutes : 60) * 60_000;
 const ID_RE = /^[a-z0-9-]{1,40}$/;
 export const PRIZE_TYPES = Object.freeze(['gift', 'discount', 'free_delivery', 'none']);
+/**
+ * LOYALTY TIERS (owner's decision): the chances depend on how many of the account's orders were really DELIVERED,
+ * since its first order, with no time limit — counted by the Worker from Firestore (status 'delivered'; a cancelled or
+ * returned order — delivered -> cancelled — is 'cancelled' and does not count). Never a number sent by the browser.
+ *   new 0-1 delivered · returning 2 · loyal 3+
+ * Each slot may carry weights per tier ({ new, returning, loyal }); a missing one falls back to the slot's 'weight'.
+ * A spin WITHOUT an account (no trusted history) always uses 'new'; its result is fixed and never re-drawn.
+ */
+export const TIERS = Object.freeze(['new', 'returning', 'loyal']);
+export const tierOfCount = (n) => (n >= 3 ? 'loyal' : n === 2 ? 'returning' : 'new');
+/** the weight of a slot for a tier */
+export const tierWeight = (p, tier = 'new') => (p.weights && Number.isInteger(p.weights[tier]) ? p.weights[tier] : p.weight);
+/** the account's tier, from its DELIVERED orders (3 are enough to know: 'loyal') */
+export async function accountTier(fs, uid) {
+  if (!uid) return { tier: 'new', delivered: 0 };
+  const docs = await fs.runQuery({
+    from: [{ collectionId: 'orders' }],
+    where: { compositeFilter: { op: 'AND', filters: [
+      { fieldFilter: { field: { fieldPath: 'userId' }, op: 'EQUAL', value: { stringValue: uid } } },
+      { fieldFilter: { field: { fieldPath: 'status' }, op: 'EQUAL', value: { stringValue: 'delivered' } } },
+    ] } },
+    limit: 3,
+  });
+  return { tier: tierOfCount(docs.length), delivered: docs.length };
+}
 export const MAX_SLOTS = 24;
 /** a gift without a catalogue product (the store picks it at packing): its order line carries this product id */
 export const GENERIC_GIFT_PRODUCT = 'wheel-gift';
@@ -215,6 +240,19 @@ export function checkCampaign(raw) {
     if (!label || label.length > 40) { fail(`${at}: الاسم مطلوب (40 حرفًا كحد أقصى)`); continue; }
     const weight = int(p.weight);
     if (weight === null || weight > 1_000_000) { fail(`${at}: الوزن الاحتمالي يجب أن يكون عددًا صحيحًا ≥ 0`); continue; }
+    // per-tier weights (optional; each missing tier uses 'weight')
+    let weights = null;
+    if (p.weights !== undefined && p.weights !== null) {
+      if (typeof p.weights !== 'object') { fail(`${at}: أوزان الفئات غير صالحة`); continue; }
+      weights = {};
+      let bad = false;
+      for (const t of TIERS) {
+        const w = p.weights[t] === undefined || p.weights[t] === null ? weight : int(p.weights[t]);
+        if (w === null || w > 1_000_000) bad = true;
+        weights[t] = w;
+      }
+      if (bad) { fail(`${at}: وزن الفئة يجب أن يكون عددًا صحيحًا ≥ 0`); continue; }
+    }
     const color = p.color === undefined || p.color === null || p.color === '' ? null : String(p.color);
     if (color !== null && !HEX_COLOR.test(color)) { fail(`${at}: اللون يجب أن يكون بصيغة #RRGGBB`); continue; }
     const icon = typeof p.icon === 'string' ? p.icon.trim().slice(0, 8) : '';
@@ -224,7 +262,7 @@ export function checkCampaign(raw) {
     const pStarts = optMs(p.startsAt);
     const pEnds = optMs(p.endsAt);
     if ((pStarts !== null && !Number.isFinite(pStarts)) || (pEnds !== null && !Number.isFinite(pEnds)) || (pStarts !== null && pEnds !== null && pEnds <= pStarts)) { fail(`${at}: تاريخ الخانة غير صالح`); continue; }
-    const display = { id: p.id, type, label, description, icon, color, imageUrl, weight, active, startsAt: pStarts, endsAt: pEnds };
+    const display = { id: p.id, type, label, description, icon, color, imageUrl, weight, weights: weights ?? { new: weight, returning: weight, loyal: weight }, active, startsAt: pStarts, endsAt: pEnds };
     if (type === 'none') { prizes.push({ ...display, quantity: null, unitCostJod: 0, valueJod: 0, minOrderJod: 0, appliesTo: 'this_order', productId: null, variantId: null, validDays: null }); continue; }
     const quantity = int(p.quantity);
     if (quantity === null) { fail(`${at}: الكمية المتاحة يجب أن تكون عددًا صحيحًا ≥ 0`); continue; }
@@ -252,7 +290,7 @@ export function checkCampaign(raw) {
     if (value >= 4 && pMin < BIG_PRIZE_SUGGESTED_MIN_JOD) warnings.push(`${at} «${label}»: قيمتها ${value} د.أ وحدّها الأدنى ${pMin} د.أ فقط — قد تسبب خسارة؛ يُقترح ${BIG_PRIZE_SUGGESTED_MIN_JOD} د.أ`);
     if (type === 'free_delivery' && valueJod > 3) warnings.push(`${at} «${label}»: سقف التوصيل المجاني ${valueJod} د.أ أعلى من أغلى توصيل حالي (3 د.أ)`);
     if (pMin > 0 && value / pMin > 0.4) warnings.push(`${at} «${label}»: قيمة الجائزة ${Math.round((value / pMin) * 100)}% من الحد الأدنى للطلب`);
-    if (quantity === 0 && active && weight > 0) warnings.push(`${at} «${label}»: الكمية 0 — لن تظهر على الدولاب`);
+    if (quantity === 0 && active && TIERS.some((t) => display.weights[t] > 0)) warnings.push(`${at} «${label}»: الكمية 0 — لن تظهر على الدولاب`);
     if (pEnds !== null && Number.isFinite(endsAt) && pEnds > endsAt) warnings.push(`${at} «${label}»: تاريخ انتهائها بعد نهاية الحملة`);
     // owner's rule: the second-order discount only on products of 15 JOD or more
     if (appliesTo === 'next_order' && pMin < BIG_PRIZE_SUGGESTED_MIN_JOD) fail(`${at} «${label}»: خصم الطلب الثاني يتطلب حدًا أدنى ${BIG_PRIZE_SUGGESTED_MIN_JOD} د.أ على الأقل`);
@@ -262,16 +300,19 @@ export function checkCampaign(raw) {
   if (budgetJod !== null && worstCaseCost > budgetJod + 1e-9) fail(`مجموع تكلفة كل الجوائز (${round3(worstCaseCost)} د.أ) يتجاوز الميزانية (${budgetJod} د.أ)`);
   const noneSlots = prizes.filter((p) => p.type === 'none');
   if (raw.active === true && noneSlots.length < 3 && prizes.length) warnings.push(`عدد خانات «حظ أوفر» ${noneSlots.length} (المتفق عليه 3)`);
-  const totalWeight = prizes.reduce((s, p) => s + (p.active ? p.weight : 0), 0) + (noPrizeWeight || 0);
-  if (raw.active === true && totalWeight <= 0) fail('لا توجد أي خانة بوزن احتمالي أكبر من صفر');
-  if (totalWeight > 0) {
-    const costPerSpin = prizes.reduce((s, p) => s + (p.active && p.type !== 'none' ? p.weight * p.unitCostJod : 0), 0) / totalWeight;
-    warnings.push(`متوسط التكلفة المتوقعة لكل لفة ≈ ${round3(costPerSpin)} د.أ (قبل نفاد الكميات)`);
+  const TIER_AR = { new: 'جديد', returning: 'راجع', loyal: 'دائم' };
+  const costs = [];
+  for (const t of TIERS) {
+    const totalWeight = prizes.reduce((s, p) => s + (p.active ? p.weights[t] : 0), 0) + (noPrizeWeight || 0);
+    if (raw.active === true && totalWeight <= 0) fail(`لا توجد أي خانة بوزن احتمالي أكبر من صفر للزبون «${TIER_AR[t]}»`);
+    if (totalWeight <= 0) continue;
+    costs.push(`${TIER_AR[t]} ≈ ${round3(prizes.reduce((s, p) => s + (p.active && p.type !== 'none' ? p.weights[t] * p.unitCostJod : 0), 0) / totalWeight)} د.أ`);
     for (const p of prizes) {
-      const share = p.active ? p.weight / totalWeight : 0;
-      if (p.type !== 'none' && p.unitCostJod >= 4 && share > 0.05) warnings.push(`«${p.label}»: احتمالها ${Math.round(share * 1000) / 10}% مرتفع لجائزة تكلفتها ${p.unitCostJod} د.أ`);
+      const share = p.active ? p.weights[t] / totalWeight : 0;
+      if (p.type !== 'none' && p.unitCostJod >= 4 && share > 0.05) warnings.push(`«${p.label}» للزبون «${TIER_AR[t]}»: احتمالها ${Math.round(share * 1000) / 10}% مرتفع لجائزة تكلفتها ${p.unitCostJod} د.أ`);
     }
   }
+  if (costs.length) warnings.push(`متوسط التكلفة المتوقعة لكل لفة (قبل نفاد الكميات): ${costs.join('، ')}`);
   if (errors.length) return { campaign: null, errors, warnings };
   return {
     campaign: { freeFirstChance: raw.freeFirstChance !== false, openGiftsPerPhone, prizeValidDays, active: raw.active === true, minOrderJod, budgetJod, noPrizeWeight, startsAt, endsAt, giftOnCancel: raw.giftOnCancel, prizes, terms: typeof raw.terms === 'string' ? raw.terms.slice(0, 2000) : '' },
@@ -293,9 +334,9 @@ export function campaignOpen(c, now) {
   return { ok: true };
 }
 
-/** a slot can be drawn now: active, inside its own dates, weight > 0 and (prizes) still in the pool */
-export function slotDrawable(p, remainingById, now) {
-  if (!p.active || p.weight <= 0) return false;
+/** a slot can be drawn now (for a tier): active, inside its own dates, weight > 0 and (prizes) still in the pool */
+export function slotDrawable(p, remainingById, now, tier = 'new') {
+  if (!p.active || tierWeight(p, tier) <= 0) return false;
   if (p.startsAt !== null && now < p.startsAt) return false;
   if (p.endsAt !== null && now >= p.endsAt) return false;
   return p.type === 'none' || (remainingById.get(p.id) ?? 0) > 0;
@@ -306,8 +347,8 @@ export function slotDrawable(p, remainingById, now) {
  * Returns the slot id ("none" slots return THEIR id, so the wheel stops on the segment actually drawn), or NO_PRIZE.
  * `rand(n)` -> integer in [0, n).
  */
-export function drawPrize(campaign, remainingById, rand, now = Date.now()) {
-  const options = campaign.prizes.filter((p) => slotDrawable(p, remainingById, now)).map((p) => ({ id: p.id, w: p.weight }));
+export function drawPrize(campaign, remainingById, rand, now = Date.now(), tier = 'new') {
+  const options = campaign.prizes.filter((p) => slotDrawable(p, remainingById, now, tier)).map((p) => ({ id: p.id, w: tierWeight(p, tier) }));
   if (campaign.noPrizeWeight > 0) options.push({ id: NO_PRIZE, w: campaign.noPrizeWeight });
   const total = options.reduce((s, o) => s + o.w, 0);
   if (total <= 0) return NO_PRIZE;
@@ -316,10 +357,16 @@ export function drawPrize(campaign, remainingById, rand, now = Date.now()) {
   return NO_PRIZE;
 }
 
-/** what a visitor sees on the wheel: ONLY segments that can be drawn now (never a prize that cannot be won) */
-export function displaySlots(campaign, remainingById, now = Date.now()) {
+/**
+ * What a visitor sees on the wheel: ONLY prizes that can be drawn now FOR THEIR TIER (never a prize that cannot be won),
+ * and every active "حظ أوفر" segment (the owner's three visible segments), whatever its weight.
+ */
+export function displaySlots(campaign, remainingById, now = Date.now(), tier = 'new') {
   if (!campaign) return [];
-  return campaign.prizes.filter((p) => slotDrawable(p, remainingById, now)).map((p) => ({
+  const shown = (p) => (p.type === 'none'
+    ? p.active && (p.startsAt === null || now >= p.startsAt) && (p.endsAt === null || now < p.endsAt)
+    : slotDrawable(p, remainingById, now, tier));
+  return campaign.prizes.filter(shown).map((p) => ({
     id: p.id, type: p.type, label: p.label, description: p.description, icon: p.icon, color: p.color, imageUrl: p.imageUrl,
     valueJod: p.valueJod, minOrderJod: p.minOrderJod, appliesTo: p.appliesTo,
   }));
@@ -352,6 +399,7 @@ const publicSpin = (s) => (s ? {
   ...(s.status === 'waiting' && s.firstOrderId ? { firstOrderId: s.firstOrderId } : {}),
   ...(s.status === 'waiting' && s.deliveryBy instanceof Date ? { deliveryBy: s.deliveryBy.toISOString() } : {}),
   ...(s.status === 'expired' && typeof s.expiredReason === 'string' ? { expiredReason: s.expiredReason } : {}),
+  ...(typeof s.tier === 'string' ? { tier: s.tier } : {}),
 } : null);
 
 /** A missing document = the welcome chance (`base` 1), or none when the campaign has freeFirstChance=false. */
@@ -420,11 +468,13 @@ export async function wheelState(fs, cfg, uid, { now = Date.now() } = {}) {
   if (sst?.state === 'pending' && Number.isFinite(sst.createdAtMs)) {
     for (const sp of spins) if (sp.status === 'waiting' && !sp.deliveryBy && (!sp.firstOrderBy || sst.createdAtMs <= Date.parse(sp.firstOrderBy))) { sp.deliveryBy = new Date(sst.createdAtMs + firstDeliveryMs(cfg)).toISOString(); sp.firstOrderId = sst.orderId; }
   }
-  const slots = open.ok ? displaySlots(mine, await poolRemaining(fs, cfg.wheelCampaignId, mine), now) : [];
+  // the wheel this account sees: the segments of ITS tier (server-side count of delivered orders)
+  const { tier, delivered } = await accountTier(fs, uid);
+  const slots = open.ok ? displaySlots(mine, await poolRemaining(fs, cfg.wheelCampaignId, mine), now, tier) : [];
   return {
     status: 200,
     body: {
-      ok: true, mode: cfg.wheelMode, campaign: open.ok ? 'open' : open.code,
+      ok: true, mode: cfg.wheelMode, campaign: open.ok ? 'open' : open.code, tier, deliveredOrders: delivered,
       minOrderJod: campaign?.minOrderJod ?? null, terms: campaign?.terms ?? '', prizeHoldMinutes: prizeHoldMs(cfg) / 60_000,
       chancesLeft: open.ok ? Math.max(0, e.granted - e.used) : 0, spins, slots,
       // for the "second order" discount: true = the NEXT order is the account's actual second (one order, delivered)
@@ -439,12 +489,16 @@ export async function wheelState(fs, cfg, uid, { now = Date.now() } = {}) {
 export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = secureRand, email = '' } = {}) {
   if (cfg.wheelMode === 'off') return { status: 404, body: { ok: false, code: 'WHEEL_OFF' } };
   const cid = cfg.wheelCampaignId;
-  let sst; // the account's order state, read once (second-order prizes only)
   for (let attempt = 0; attempt < SPIN_ATTEMPTS; attempt++) {
     const { doc: campaignDoc, campaign } = await readCampaign(fs, cfg);
     const open = campaignOpen(campaign, now());
     if (!open.ok) return { status: 409, body: { ok: false, code: open.code } };
-    if (sst === undefined) sst = campaign.prizes.some(isSecondOrderPrize) ? await secondOrderState(fs, uid) : null;
+    // the account's order sequence FIRST, then what it says about the account (tier, second-order state): a delivery /
+    // cancellation / return committed in between moves the sequence and this spin re-reads (verify below) — the
+    // chances used are never those of a stale order count
+    const seqDoc = await fs.get(accountSeqPath(uid));
+    const { tier, delivered } = await accountTier(fs, uid);
+    const sst = campaign.prizes.some(isSecondOrderPrize) ? await secondOrderState(fs, uid) : null;
     const entPath = `wheelEntitlements/${cid}_${uid}`;
     const pooled = campaign.prizes.filter((p) => p.type !== 'none');
     const poolPaths = pooled.map((p) => `wheelPool/${cid}_${p.id}`);
@@ -458,7 +512,8 @@ export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = s
     const remaining = new Map(pooled.map((p, i) => [p.id, poolDocs[i].exists ? Number(decodeFields(poolDocs[i].fields).remaining) || 0 : 0]));
     const at = now();
     // a second-order prize this account can never use is not drawn (the wheel it is shown hides it too)
-    const drawnId = drawPrize(campaignFor(campaign, sst, cfg, at), remaining, rand, at);
+    // ...drawn with the weights of the account's tier (server-side count of delivered orders)
+    const drawnId = drawPrize(campaignFor(campaign, sst, cfg, at), remaining, rand, at, tier);
     const slot = campaign.prizes.find((p) => p.id === drawnId) || null;
     // a "none" slot ("حظ أوفر") is a real segment of the wheel but wins nothing
     const prize = slot && slot.type !== 'none' ? slot : null;
@@ -482,6 +537,8 @@ export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = s
       // issuedExpiry exists ONLY while the prize is unclaimed ('issued' / 'waiting'): the cron's query
       // (expireUnclaimedPrizes) reads exactly the expired unclaimed prizes, oldest first, and nothing else
       ...window,
+      // the chances this result was drawn with (audit; never changed afterwards)
+      tier, deliveredCount: delivered,
       createdAt: new Date(at),
     };
     const writes = [
@@ -491,6 +548,8 @@ export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = s
       { update: { name: fs.name(spinPath(cid, uid, n)), fields: encodeFields(spin) }, currentDocument: { exists: false } },
       // the campaign must not change between the read and the commit (closed / edited meanwhile -> re-read)
       { verify: fs.name(`wheelCampaigns/${cid}`), currentDocument: { updateTime: campaignDoc.updateTime } },
+      // ...nor the account's orders (its tier): same sequence version as read before counting them
+      { verify: fs.name(accountSeqPath(uid)), currentDocument: seqDoc.exists ? { updateTime: seqDoc.updateTime } : { exists: false } },
     ];
     if (prize) {
       const i = pooled.findIndex((p) => p.id === prize.id);
