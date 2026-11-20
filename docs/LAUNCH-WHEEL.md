@@ -20,7 +20,7 @@
 2. **Vercel** ← المشروع `global-store-oz2a` ← Deployments: انسخ رقم النشر الحالي على dairsharaf.com (المتوقع `dpl_DNAuUwBjjLg3N968pHAvKq5pJqrk`).
 3. **Firebase** ← Firestore ← Rules: القواعد الحالية (المتوقع ruleset `760798d0`).
 
-> **نقطة الرجوع المسجّلة (2026-11-21):** النشر النشط `2ea16078-9330-4d4d-a447-3981d79b1d23` (100%). النسخة `f70f504b` (إضافة الأسرار) مرفوعة **غير منشورة**؛ الأسرار تنتقل تلقائيًا إلى نسخة `wrangler deploy` الجديدة.
+> **نقطة الرجوع المسجّلة (2026-11-21، بعد تدوير الأسرار):** النشر النشط `ebe8fa61-87ab-4c8d-b388-d4a93f0e5726` (100%، نفس كود `2ea16078` — v2.1.0-on-delivery — مع سر Telegram المدوَّر). آخر نسخة `01c89a0b-395b-47d8-b77b-5e74442df210` (نفس الكود + سر الدولاب المدوَّر) **غير منشورة**. أول خطوة يوم الإطلاق: Cloudflare ← Deployments ← نشر `01c89a0b` (يحمل السرّين المدوَّرين معًا)، ثم `wrangler deploy`. للتراجع استخدم `01c89a0b` أو `ebe8fa61` — لا `2ea16078` (يحمل الأسرار القديمة) ولا `274978a8`.
 
 ## الخطوة 1 — توليد سرّين (على جهازك)
 
@@ -124,7 +124,7 @@ git checkout main && git merge --ff-only dev/review-2026-11 && git push origin m
 |---|---|
 | الحملة فقط | لوحة الإدارة ← إيقاف الحملة ← حفظ (فوري) |
 | واجهة الموقع | Vercel ← Instant Rollback إلى `dpl_DNAuUwBjjLg3N968pHAvKq5pJqrk` |
-| الـ Worker | أعد في الملف `STOCK_POLICY="on_delivery"`، `APPROVAL_MODE="off"`، `WHEEL_MODE="off"`، احذف `ORDER_SIGN_IN`، ثم `wrangler deploy` — أو Cloudflare ← Deployments ← Rollback إلى `2ea16078…` (**ليس** `274978a8`) |
+| الـ Worker | أعد في الملف `STOCK_POLICY="on_delivery"`، `APPROVAL_MODE="off"`، `WHEEL_MODE="off"`، احذف `ORDER_SIGN_IN`، ثم `wrangler deploy` — أو Cloudflare ← Deployments ← Rollback إلى `01c89a0b` (أو `ebe8fa61`؛ **ليس** `2ea16078` ولا `274978a8`) |
 | أزرار Telegram | `deleteWebhook` (أو أعد الـ url المسجّل) |
 | القواعد | تبقى كما هي (تقبل السياستين)؛ عند الحاجة: Firebase ← Rules ← ruleset `760798d0` |
 
