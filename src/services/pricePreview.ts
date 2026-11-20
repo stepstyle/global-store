@@ -36,7 +36,8 @@ function productDoc(p: PreviewProduct | undefined) {
   return { exists: true, fields, updateTime: null };
 }
 
-export function previewServerPricing(order: Record<string, unknown>, products: PreviewProduct[]): PricePreview {
+/** `wheel`: the prize sent with this order (same adjustment the Worker applies: src/wheel.js prizeAdjustment) */
+export function previewServerPricing(order: Record<string, unknown>, products: PreviewProduct[], wheel: { discountJod?: number; shippingCapJod?: number } | null = null): PricePreview {
   const parsed = validateOrderInput({ ...order, id: 'ORD-PREVIEW0-PREVIEW0' }); // the number is irrelevant to pricing
   if ('field' in parsed) return { ok: false, field: parsed.field };
   const v = parsed.value;
@@ -44,7 +45,7 @@ export function previewServerPricing(order: Record<string, unknown>, products: P
   const byId = new Map(products.map((p) => [p.id, p]));
   const docs = new Map(lines.map((l: { productId: string }) => [l.productId, productDoc(byId.get(l.productId))]));
   const inv = planInventory(lines, docs, 'off');
-  const s = computeServerPricing(inv.lineInfo, v.addressMeta, v.shippingMethodId);
+  const s = computeServerPricing(inv.lineInfo, v.addressMeta, v.shippingMethodId, wheel);
   return {
     ok: true,
     server: { subtotal: s.subtotal, discount: s.discount, shipping: s.shipping, total: s.total, complete: s.complete },

@@ -208,6 +208,9 @@ if (!CHROME || !existsSync(CHROME)) {
     };
     await send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] });
     await send('Page.enable'); await send('Runtime.enable'); await send('DOM.enable');
+    // headless Chrome (newer versions) does not give the page focus: element.focus() then fires no focus event and the
+    // checkout's area dropdown never opens. Focus emulation restores what a real (focused) tab does. Test harness only.
+    await send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
     const ev = async (expr) => { const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }); if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text); return r.result?.value; };
     const waitFor = async (expr, ms = 15000) => { const end = Date.now() + ms; while (Date.now() < end) { try { const v = await ev(expr); if (v) return v; } catch {} await sleep(250); } return null; };
     const go = async (route) => { await send('Page.navigate', { url: `${ORIGIN}/#${route}` }); await waitFor('document.readyState === "complete"', 20000); await sleep(900); };
@@ -400,7 +403,9 @@ if (!CHROME || !existsSync(CHROME)) {
       assert.ok(nodeIds.length > 0, 'no image file input on the admin dashboard');
       for (const nodeId of nodeIds) await send('DOM.setFileInputFiles', { nodeId, files: [png] });
       await sleep(1500);
-      const cloud = net.filter((r) => /cloudinary/.test(r.host));
+      // an UPLOAD attempt (anything but a product image being displayed: those GETs are blocked by the sandbox anyway and
+      // appear since the catalogue's images are hosted on Cloudinary)
+      const cloud = net.filter((r) => /cloudinary/.test(r.host) && !(r.method === 'GET' && r.type === 'Image'));
       assert.deepEqual(cloud, []); assert.deepEqual(writes(), []);
       const shown = await ev(`document.body.innerText.includes('cloudinary-upload') || document.body.innerText.includes('معطّلة ولا تصل')`);
       assert.ok(shown, 'no sandbox refusal shown to the admin');

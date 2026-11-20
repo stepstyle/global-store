@@ -1,8 +1,9 @@
 // Prize wheel — TEST ONLY. Visible only in a build with VITE_WHEEL_MODE=test (never set for production: the
 // production Worker also refuses WHEEL_MODE != off). The draw happens on the Worker; the browser only asks and shows.
 //
-// The chosen prize (a spin id) is kept for this browser tab only (sessionStorage) and sent next to a SIGNED-IN order;
-// the Worker re-checks it against the verified account, its status and the campaign.
+// Nothing here is a protection: the Worker decides the result, stores it with the verified account, re-checks the
+// prize (owner, status, expiry, minimum, previous delivered order, prices) on every order. The browser only keeps a
+// preference (which prize to use) and the "popup already shown" flag — both harmless if edited or cleared.
 import { normalizeWorkerUrl, type SubmitDeps } from './orderSubmit.ts';
 
 declare const __DEPLOY_ENV__: string | undefined;
@@ -11,19 +12,32 @@ const PRODUCTION_BUILD = typeof __DEPLOY_ENV__ !== 'undefined' && __DEPLOY_ENV__
 export const WHEEL_ENABLED = !PRODUCTION_BUILD && (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WHEEL_MODE === 'test';
 export const WHEEL_SPIN_ID_RE = /^[a-z0-9-]{1,40}_[A-Za-z0-9_-]{1,128}_\d{1,4}$/;
 const PRIZE_KEY = 'anta_wheel_prize_v1';
+const POPUP_KEY = 'anta_wheel_popup_seen_v1';
 
-export type WheelSpin = { spinId: string; n: number; prizeId: string; label: string; status: string; orderId: string | null };
-export type WheelState = { campaign: string; minOrderJod: number | null; terms: string; chancesLeft: number; spins: WheelSpin[] };
+export type PrizeType = 'gift' | 'discount' | 'free_delivery' | 'none';
+export type WheelSlot = { id: string; type: PrizeType; label: string; description: string; icon: string; color: string | null; imageUrl: string; valueJod: number; minOrderJod: number; appliesTo: 'this_order' | 'next_order' };
+export type WheelSpin = {
+  spinId: string; n: number; prizeId: string; label: string; status: string; orderId: string | null;
+  type: PrizeType; valueJod: number; minOrderJod: number | null; appliesTo: 'this_order' | 'next_order'; description: string; expiresAt: string | null;
+};
+export type WheelPublic = { campaign: string; slots: WheelSlot[]; minOrderJod: number | null; prizeValidDays: number | null; terms: string };
+export type WheelState = { campaign: string; minOrderJod: number | null; terms: string; chancesLeft: number; spins: WheelSpin[]; slots: WheelSlot[]; previousDelivered: boolean | null };
 export type WheelResult<T> = { kind: 'ok'; value: T } | { kind: 'sign_in_required' } | { kind: 'not_verified' } | { kind: 'closed'; code: string } | { kind: 'unavailable' };
 
-async function call<T>(path: string, method: 'GET' | 'POST', idToken: string | null, workerUrl: string, deps: SubmitDeps, pick: (b: any) => T | null): Promise<WheelResult<T>> {
+const TYPES: PrizeType[] = ['gift', 'discount', 'free_delivery', 'none'];
+const n0 = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
+const nOrNull = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+const typeOf = (v: unknown): PrizeType => (TYPES.includes(v as PrizeType) ? (v as PrizeType) : 'gift');
+const appliesOf = (v: unknown) => (v === 'next_order' ? 'next_order' as const : 'this_order' as const);
+
+async function call<T>(path: string, method: 'GET' | 'POST', idToken: string | null, workerUrl: string, deps: SubmitDeps, pick: (b: any) => T | null, { anonymous = false } = {}): Promise<WheelResult<T>> {
   const base = normalizeWorkerUrl(workerUrl);
   if (!WHEEL_ENABLED || !base) return { kind: 'unavailable' };
-  if (!idToken) return { kind: 'sign_in_required' };
+  if (!idToken && !anonymous) return { kind: 'sign_in_required' };
   try {
     const r = await deps.fetch(`${base}${path}`, {
       method,
-      headers: { authorization: `Bearer ${idToken}`, ...(method === 'POST' ? { 'content-type': 'application/json' } : {}) },
+      headers: { ...(idToken ? { authorization: `Bearer ${idToken}` } : {}), ...(method === 'POST' ? { 'content-type': 'application/json' } : {}) },
       ...(method === 'POST' ? { body: '{}' } : {}),
     });
     let body: any = null;
@@ -38,16 +52,38 @@ async function call<T>(path: string, method: 'GET' | 'POST', idToken: string | n
   }
 }
 
-const spinOf = (s: any): WheelSpin | null =>
-  s && typeof s.spinId === 'string' && WHEEL_SPIN_ID_RE.test(s.spinId) && typeof s.label === 'string'
-    ? { spinId: s.spinId, n: Number(s.n) || 0, prizeId: String(s.prizeId || ''), label: s.label, status: String(s.status || ''), orderId: s.orderId ?? null }
+export const slotOf = (s: any): WheelSlot | null =>
+  s && typeof s.id === 'string' && /^[a-z0-9-]{1,40}$/.test(s.id) && typeof s.label === 'string'
+    ? {
+        id: s.id, type: typeOf(s.type), label: s.label.slice(0, 40), description: typeof s.description === 'string' ? s.description.slice(0, 200) : '',
+        icon: typeof s.icon === 'string' ? s.icon.slice(0, 8) : '', color: typeof s.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(s.color) ? s.color : null,
+        imageUrl: typeof s.imageUrl === 'string' && /^https:\/\//.test(s.imageUrl) ? s.imageUrl : '',
+        valueJod: n0(s.valueJod), minOrderJod: n0(s.minOrderJod), appliesTo: appliesOf(s.appliesTo),
+      }
     : null;
+
+export const spinOf = (s: any): WheelSpin | null =>
+  s && typeof s.spinId === 'string' && WHEEL_SPIN_ID_RE.test(s.spinId) && typeof s.label === 'string'
+    ? {
+        spinId: s.spinId, n: Number(s.n) || 0, prizeId: String(s.prizeId || ''), label: s.label, status: String(s.status || ''), orderId: s.orderId ?? null,
+        type: s.status === 'none' ? 'none' : typeOf(s.type), valueJod: n0(s.valueJod), minOrderJod: nOrNull(s.minOrderJod), appliesTo: appliesOf(s.appliesTo),
+        description: typeof s.description === 'string' ? s.description : '', expiresAt: typeof s.expiresAt === 'string' ? s.expiresAt : null,
+      }
+    : null;
+
+const slotsOf = (v: unknown) => (Array.isArray(v) ? v.map(slotOf).filter(Boolean) as WheelSlot[] : []);
+
+export const fetchWheelPublic = (workerUrl: string, deps: SubmitDeps) =>
+  call<WheelPublic>('/wheel/public', 'GET', null, workerUrl, deps, (b) => ({
+    campaign: String(b.campaign || ''), slots: slotsOf(b.slots), minOrderJod: nOrNull(b.minOrderJod), prizeValidDays: nOrNull(b.prizeValidDays), terms: typeof b.terms === 'string' ? b.terms : '',
+  }), { anonymous: true });
 
 export const fetchWheelState = (idToken: string | null, workerUrl: string, deps: SubmitDeps) =>
   call<WheelState>('/wheel/state', 'GET', idToken, workerUrl, deps, (b) => ({
     campaign: String(b.campaign || ''), minOrderJod: typeof b.minOrderJod === 'number' ? b.minOrderJod : null,
     terms: typeof b.terms === 'string' ? b.terms : '', chancesLeft: Math.max(0, Number(b.chancesLeft) || 0),
     spins: (Array.isArray(b.spins) ? b.spins : []).map(spinOf).filter(Boolean) as WheelSpin[],
+    slots: slotsOf(b.slots), previousDelivered: typeof b.previousDelivered === 'boolean' ? b.previousDelivered : null,
   }));
 
 export const spinWheel = (idToken: string | null, workerUrl: string, deps: SubmitDeps) =>
@@ -56,7 +92,47 @@ export const spinWheel = (idToken: string | null, workerUrl: string, deps: Submi
     return result ? { result, repeated: b.repeated === true, chancesLeft: Math.max(0, Number(b.chancesLeft) || 0) } : null;
   });
 
-/** The prize the customer chose to receive with the next order (this tab only). */
+/** a won prize the customer can still use (issued, not expired at `now`) */
+export const usablePrize = (s: WheelSpin, now = Date.now()) =>
+  s.status === 'issued' && s.type !== 'none' && !(s.expiresAt && Date.parse(s.expiresAt) <= now);
+
+export type PrizeEffect =
+  | { state: 'applies'; discountJod: number; shippingWaivedJod: number }
+  | { state: 'below_min'; minOrderJod: number; missingJod: number }
+  | { state: 'needs_previous_order'; minOrderJod: number }
+  | { state: 'unavailable' };
+
+const r3 = (n: number) => Math.round(n * 1000) / 1000;
+/**
+ * What a prize would do to THIS cart — the same rule as the Worker (src/wheel.js + pricing.js), for display and for
+ * the numbers the browser sends (the Worker recomputes them and refuses any difference).
+ *   minimum: the products' prices before the prize, without delivery
+ *   discount: never more than what the products still cost after the volume discount
+ *   free delivery: the delivery fee, up to the prize's cap
+ */
+export function prizeEffect(p: Pick<WheelSpin, 'type' | 'valueJod' | 'minOrderJod' | 'appliesTo' | 'status' | 'expiresAt'>, cart: { subtotal: number; volumeDiscount: number; shippingCost: number; previousDelivered: boolean | null }, now = Date.now()): PrizeEffect {
+  if (p.type === 'none' || p.status !== 'issued' || (p.expiresAt && Date.parse(p.expiresAt) <= now)) return { state: 'unavailable' };
+  const min = p.minOrderJod ?? 0;
+  if (p.appliesTo === 'next_order' && cart.previousDelivered !== true) return { state: 'needs_previous_order', minOrderJod: min };
+  if (r3(cart.subtotal) < min) return { state: 'below_min', minOrderJod: min, missingJod: r3(min - cart.subtotal) };
+  if (p.type === 'discount') return { state: 'applies', discountJod: Math.min(r3(p.valueJod), Math.max(0, r3(cart.subtotal - cart.volumeDiscount))), shippingWaivedJod: 0 };
+  if (p.type === 'free_delivery') return { state: 'applies', discountJod: 0, shippingWaivedJod: Math.min(r3(p.valueJod), Math.max(0, cart.shippingCost)) };
+  return { state: 'applies', discountJod: 0, shippingWaivedJod: 0 };
+}
+
+/** Arabic / English one-line description of a prize */
+export function prizeText(p: Pick<WheelSpin, 'type' | 'label' | 'valueJod' | 'minOrderJod' | 'appliesTo'>, isAR: boolean): string {
+  const jd = (v: number) => (isAR ? `${v} د.أ` : `${v} JOD`);
+  const min = p.minOrderJod ? (isAR ? ` لطلب منتجاته ${jd(p.minOrderJod)} فأكثر` : ` on products of ${jd(p.minOrderJod)} or more`) : '';
+  if (p.type === 'discount') return p.appliesTo === 'next_order'
+    ? (isAR ? `خصم ${jd(p.valueJod)} على طلبك الثاني${min} (بعد استلام طلب سابق)` : `${jd(p.valueJod)} off your second order${min} (after a delivered order)`)
+    : (isAR ? `خصم ${jd(p.valueJod)} على هذا الطلب${min}` : `${jd(p.valueJod)} off this order${min}`);
+  if (p.type === 'free_delivery') return isAR ? `توصيل مجاني حتى ${jd(p.valueJod)}${min}` : `Free delivery up to ${jd(p.valueJod)}${min}`;
+  if (p.type === 'gift') return isAR ? `هدية مجانية: ${p.label}${min}` : `Free gift: ${p.label}${min}`;
+  return isAR ? 'حظ أوفر' : 'Better luck next time';
+}
+
+/** The prize the customer chose to use with the next order (a preference; the Worker re-checks everything). */
 export function chosenPrize(): { spinId: string; label: string } | null {
   if (!WHEEL_ENABLED) return null;
   try {
@@ -72,4 +148,33 @@ export function choosePrize(p: { spinId: string; label: string } | null): void {
     if (p) sessionStorage.setItem(PRIZE_KEY, JSON.stringify({ spinId: p.spinId, label: p.label }));
     else sessionStorage.removeItem(PRIZE_KEY);
   } catch { /* private mode: the prize simply is not attached */ }
+}
+
+/** "popup already shown" — UX only (never a limit: the number of spins is decided by the Worker) */
+export function popupSeen(): boolean {
+  try { return !!localStorage.getItem(POPUP_KEY); } catch { return true; }
+}
+export function markPopupSeen(): void {
+  try { localStorage.setItem(POPUP_KEY, String(Date.now())); } catch { /* ignore */ }
+}
+
+/**
+ * Rotation (degrees, clockwise) that brings the CENTRE of segment `index` (of `count`, drawn clockwise from the top)
+ * under the pointer at the top, after `turns` full turns from `current`. `jitter` in [-0.35, 0.35] of a segment keeps
+ * it inside the segment (the wheel always stops on the segment the Worker drew).
+ */
+export function targetRotation(current: number, index: number, count: number, turns = 5, jitter = 0): number {
+  const seg = 360 / count;
+  const want = (360 - ((index + 0.5 + Math.max(-0.35, Math.min(0.35, jitter))) * seg)) % 360;
+  const now = ((current % 360) + 360) % 360;
+  let delta = (want - now + 360) % 360;
+  if (delta < 1e-9) delta = 360;
+  return current + turns * 360 + delta;
+}
+
+/** which segment is under the top pointer for a rotation (inverse of targetRotation; used by the tests) */
+export function segmentAt(rotation: number, count: number): number {
+  const seg = 360 / count;
+  const r = ((rotation % 360) + 360) % 360;
+  return Math.floor((((360 - r) % 360) / seg)) % count;
 }

@@ -41,6 +41,8 @@ const MyOrders = React.lazy(() => import('./pages/MyOrders'));
 const AdminAddProduct = React.lazy(() => import('./pages/AdminAddProduct'));
 // prize wheel: TEST builds only (VITE_WHEEL_MODE=test); otherwise the page is not even in the bundle's routes
 const WheelPage = WHEEL_ENABLED ? React.lazy(() => import('./pages/Wheel')) : null;
+// first-visit wheel popup: same condition (never in a production bundle's render tree)
+const WheelPopup = WHEEL_ENABLED ? React.lazy(() => import('./components/wheel/WheelPopup')) : null;
 // DEV ONLY — AI Product Discovery lab. import.meta.env.DEV is the constant `false` in production builds, so Vite drops
 // this import (and the page chunk) from the published site.
 const AiDiscoveryLab = import.meta.env.DEV ? React.lazy(() => import('./pages/dev/AiDiscoveryLab')) : null;
@@ -375,6 +377,7 @@ const App: React.FC = () => {
           <CartDrawer />
           <QuickViewModal product={quickViewProduct} isOpen={!!quickViewProduct} onClose={() => setQuickViewProduct(null)} />
           <CookieBanner />
+          {WheelPopup && <Suspense fallback={null}><WheelPopup /></Suspense>}
           <ShopAssistant />
           {/* Toast System (restored: removed by mistake in 1bf3d27, so every showToast was invisible) */}
           <ToastContainer toasts={toasts} onClose={removeToast} closeLabel={language === 'ar' ? 'إغلاق' : 'Close'} />

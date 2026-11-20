@@ -533,7 +533,20 @@ export function messageFor(r: CheckoutResult): UiMessage | null {
       }
       // prize wheel (test only): the prize could not travel with this order. Nothing was saved; the prize is kept.
       if (r.code === 'WHEEL_MIN_ORDER') {
-        return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'الهدية تحتاج حدًا أدنى للطلب', titleEn: 'The gift needs a minimum order', bodyAr: 'قيمة المنتجات في طلبك أقل من الحد الأدنى لاستلام هدية العجلة (التوصيل لا يُحتسب). أضف منتجات أو أزل الهدية ثم أكّد من جديد. لم يُنشأ أي طلب، وهديتك محفوظة.', bodyEn: 'Your products total is below the minimum for the wheel gift (delivery not counted). Add items or remove the gift, then confirm again. No order was created and your gift is kept.' };
+        return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'الجائزة تحتاج حدًا أدنى للطلب', titleEn: 'The prize needs a minimum order', bodyAr: 'قيمة المنتجات في طلبك أقل من الحد الأدنى لجائزة الدولاب (قبل الخصم ودون التوصيل). أضف منتجات أو أزل الجائزة ثم أكّد من جديد. لم يُنشأ أي طلب، وجائزتك محفوظة.', bodyEn: 'Your products total is below the minimum for the wheel prize (before the prize, delivery not counted). Add items or remove the prize, then confirm again. No order was created and your prize is kept.' };
+      }
+      // ORDER_SIGN_IN=google on the Worker: refused BEFORE anything was read or written
+      if (r.code === 'SIGN_IN_REQUIRED' || r.code === 'GOOGLE_SIGN_IN_REQUIRED') {
+        return { tone: 'warning', showOrderId: false, actions: ['fix_form'], titleAr: 'يلزم تسجيل الدخول بحساب Google', titleEn: 'Google sign-in is required', bodyAr: 'لم يُرسل الطلب ولم يُنشأ أي طلب. سلّتك وبياناتك محفوظة. اضغط «تأكيد الطلب» مرة أخرى واختر حساب Google.', bodyEn: 'The order was not sent and no order was created. Your cart and details are kept. Press "Confirm order" again and choose a Google account.' };
+      }
+      if (r.code === 'WHEEL_NEEDS_PREVIOUS_ORDER') {
+        return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'الخصم مخصص للطلب الثاني', titleEn: 'This discount is for a second order', bodyAr: 'يُستخدم هذا الخصم بعد استلام طلب سابق من حسابك. أزل الجائزة من هذا الطلب ثم أكّد. لم يُنشأ أي طلب، وجائزتك محفوظة.', bodyEn: 'This discount can be used after an earlier order of your account was delivered. Remove the prize from this order and confirm. No order was created and your prize is kept.' };
+      }
+      if (r.code === 'WHEEL_PHONE_LIMIT') {
+        return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'يوجد جائزة مفتوحة لهذا الرقم', titleEn: 'A prize is already open for this number', bodyAr: 'رقم الهاتف هذا عليه طلب آخر بجائزة لم يُسلَّم بعد. أكمل الطلب بدون الجائزة أو انتظر تسليم الطلب السابق. لم يُنشأ أي طلب.', bodyEn: 'This phone number already has another prize order not delivered yet. Order without the prize or wait for the earlier delivery. No order was created.' };
+      }
+      if (r.code === 'WHEEL_PRIZE_EXPIRED') {
+        return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'انتهت صلاحية الجائزة', titleEn: 'The prize has expired', bodyAr: 'انتهت مدة الجائزة فلم تعد قابلة للاستخدام. أزلها ثم أكّد الطلب. لم يُنشأ أي طلب.', bodyEn: 'The prize is no longer valid. Remove it and confirm the order. No order was created.' };
       }
       if (typeof r.code === 'string' && r.code.startsWith('WHEEL_') || typeof r.code === 'string' && r.code.startsWith('CAMPAIGN_')) {
         return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'تعذّر إرفاق الهدية', titleEn: 'The gift could not be attached', bodyAr: 'الهدية غير متاحة لهذا الطلب (استُخدمت أو انتهت الحملة أو نفدت). أزل الهدية ثم أكّد الطلب. لم يُنشأ أي طلب.', bodyEn: 'The gift is not available for this order (used, campaign ended or out of stock). Remove the gift and confirm again. No order was created.' };

@@ -44,7 +44,13 @@ const firebaseUid = (): string | null => getFirebaseAuth()?.currentUser?.uid || 
 import SEO from '../components/SEO';
 import LazyImage from '../components/LazyImage';
 import { BACKEND_ENABLED } from '../config/deployEnv';
-import { WHEEL_ENABLED, chosenPrize, choosePrize } from '../services/wheel';
+import { WHEEL_ENABLED, chosenPrize, choosePrize, fetchWheelState, prizeEffect, prizeText, usablePrize, type WheelState } from '../services/wheel';
+import { googleMessage, saveCheckoutResume, takeCheckoutResume, type GoogleOutcome } from '../services/googleGate';
+import { currentGoogleUid, finishGoogleRedirect, googlePopup, googleRedirect } from '../services/googleAuth';
+
+// Owner's rule: every order is confirmed by a Google account (signed in BEFORE sending; the Worker checks the signed
+// token itself once ORDER_SIGN_IN=google). VITE_ORDER_SIGN_IN=optional keeps the old guest checkout (tests / rollback).
+const ORDER_SIGN_IN_GOOGLE = String(import.meta.env.VITE_ORDER_SIGN_IN || 'google') !== 'optional';
 
 const { useNavigate } = ReactRouterDOM as any;
 
@@ -218,10 +224,21 @@ const Checkout: React.FC = () => {
   const [submitBlocked, setSubmitBlocked] = useState('');
   // Turnstile widget on the payment step; a FRESH single-use token is asked before every send (orderSubmit)
   const turnstile = useTurnstile(TURNSTILE_SITE_KEY, step === 3, isAR ? 'ar' : 'en');
-  // prize wheel (VITE_WHEEL_MODE=test only): the gift chosen on /wheel, sent with a SIGNED-IN order and re-checked by the Worker
-  const [wheelPrize, setWheelPrize] = useState(() => chosenPrize());
-  const wheelPrizeRef = useRef(wheelPrize);
-  wheelPrizeRef.current = wheelPrize;
+  // prize wheel (VITE_WHEEL_MODE=test only): the account's won prizes come from the Worker (never from this browser
+  // alone); the one used is sent with the SIGNED-IN order ONLY when it applies, and the Worker re-checks everything
+  const [wheelState, setWheelState] = useState<WheelState | null>(null);
+  const [wheelPick, setWheelPick] = useState<string | null>(() => chosenPrize()?.spinId ?? null);
+  const [wheelRemoved, setWheelRemoved] = useState(false);
+  const wheelPrize = useMemo(() => {
+    if (!WHEEL_ENABLED || wheelRemoved || !wheelState) return null;
+    const usable = wheelState.spins.filter((s) => usablePrize(s));
+    return usable.find((s) => s.spinId === wheelPick) ?? usable[usable.length - 1] ?? null;
+  }, [wheelState, wheelPick, wheelRemoved]);
+  const wheelAttachRef = useRef<string | null>(null); // the spin id sent with the order (only when the prize applies)
+  // Google sign-in at "confirm order" (owner's rule)
+  const [googleIssue, setGoogleIssue] = useState<GoogleOutcome | null>(null);
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const [resumeNotice, setResumeNotice] = useState('');
   const turnstileTokenRef = useRef(turnstile.getToken);
   turnstileTokenRef.current = turnstile.getToken;
   const workerOpts = useMemo<SubmitOptions>(
@@ -230,7 +247,7 @@ const Checkout: React.FC = () => {
       // Worker URL orderSubmit refuses to send. local-test: the loopback Worker validated by firebase-env-guard.
       workerUrl: BACKEND_ENABLED ? String(import.meta.env.VITE_WORKER_URL || '') : '',
       ...(TURNSTILE_SITE_KEY ? { getTurnstileToken: () => turnstileTokenRef.current() } : {}),
-      ...(WHEEL_ENABLED ? { getWheelSpinId: () => wheelPrizeRef.current?.spinId ?? null } : {}),
+      ...(WHEEL_ENABLED ? { getWheelSpinId: () => wheelAttachRef.current } : {}),
       // Firebase ID token of the signed-in customer (refreshed on request after a 401); null for guests
       getAuthToken: async (forceRefresh: boolean) => {
         const current = getFirebaseAuth()?.currentUser;
@@ -285,6 +302,20 @@ const Checkout: React.FC = () => {
     []
   );
 
+  // prize wheel: the signed-in account's prizes, from the Worker (refreshed when the account changes)
+  useEffect(() => {
+    if (!WHEEL_ENABLED || !BACKEND_ENABLED) return;
+    let stop = false;
+    (async () => {
+      const t = await getFirebaseAuth()?.currentUser?.getIdToken().catch(() => null);
+      if (!t) { if (!stop) setWheelState(null); return; }
+      const r = await fetchWheelState(t, String(import.meta.env.VITE_WORKER_URL || ''), workerDeps);
+      if (!stop) setWheelState(r.kind === 'ok' ? r.value : null);
+    })();
+    return () => { stop = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   const [email, setEmail] = useState<string>(() => safeTrim(user?.email || ''));
   useEffect(() => {
     const uEmail = safeTrim(user?.email || '');
@@ -312,6 +343,27 @@ const Checkout: React.FC = () => {
   const [acceptPolicies, setAcceptPolicies] = useState(true);
   const [acceptDeliveryPolicy, setAcceptDeliveryPolicy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // back from the Google PAGE (fallback when the popup was blocked): the details typed before leaving are restored
+  // once; nothing is sent automatically — the customer reviews and confirms again
+  useEffect(() => {
+    const saved = takeCheckoutResume();
+    if (!saved) return;
+    const f = saved.formData;
+    if (f && typeof f === 'object') setFormData((p) => ({ ...p, ...(f as Record<string, any>) }));
+    if (typeof saved.email === 'string') setEmail(saved.email);
+    if (typeof saved.dialCode === 'string') setDialCode(saved.dialCode);
+    if (saved.shippingMethodId === 'standard' || saved.shippingMethodId === 'fast') setShippingMethodId(saved.shippingMethodId);
+    if (saved.paymentMethod === 'cod' || saved.paymentMethod === 'cliq') setPaymentMethod(saved.paymentMethod as PaymentMethod);
+    if (typeof saved.cliqRef === 'string') setCliqRef(saved.cliqRef);
+    if (typeof saved.acceptDeliveryPolicy === 'boolean') setAcceptDeliveryPolicy(saved.acceptDeliveryPolicy);
+    setStep(3);
+    void finishGoogleRedirect().then((g) => {
+      if (g?.outcome === 'ok') setResumeNotice(tr('تم تسجيل الدخول بحساب Google. راجع طلبك ثم اضغط «تأكيد الطلب».', 'Signed in with Google. Review your order, then press "Confirm order".'));
+      else if (g) { setGoogleIssue(g.outcome); setSubmitBlocked(googleMessage(g.outcome, isAR)); }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const changeStep = (newStep: number) => {
     setStep(newStep);
@@ -427,12 +479,23 @@ const Checkout: React.FC = () => {
     [validatedCart]
   );
 
-  const discountAmount = useMemo(
+  const volumeDiscount = useMemo(
     () => (totalItems > 2 ? subtotal * 0.1 : 0),
     [subtotal, totalItems]
   );
 
-  const shippingCost = selectedShipping ? Number(selectedShipping.price || 0) : 0;
+  const baseShippingFee = selectedShipping ? Number(selectedShipping.price || 0) : 0;
+  // the wheel prize, computed like the Worker (services/wheel.ts prizeEffect): applied only when its conditions hold
+  const prizeFx = useMemo(
+    () => (wheelPrize ? prizeEffect(wheelPrize, { subtotal, volumeDiscount, shippingCost: baseShippingFee, previousDelivered: wheelState?.previousDelivered ?? null }) : null),
+    [wheelPrize, subtotal, volumeDiscount, baseShippingFee, wheelState]
+  );
+  const prizeApplies = !!prizeFx && prizeFx.state === 'applies';
+  const wheelDiscount = prizeApplies && prizeFx.state === 'applies' ? prizeFx.discountJod : 0;
+  const shippingWaived = prizeApplies && prizeFx.state === 'applies' ? prizeFx.shippingWaivedJod : 0;
+  // what the order sends (same fields as before): volume discount + wheel discount, delivery after a waiver
+  const discountAmount = volumeDiscount + wheelDiscount;
+  const shippingCost = baseShippingFee - shippingWaived;
   const total = Math.max(0, subtotal - discountAmount + shippingCost);
 
   const setField = (key: string, value: any) => {
@@ -457,7 +520,8 @@ const Checkout: React.FC = () => {
     const nextErr: Record<string, string> = {};
     const currentEmail = safeTrim(email || user?.email || '');
 
-    if (!isLoggedIn && !currentEmail) {
+    // with the Google rule the e-mail comes from the Google account at "confirm order" (typed one wins if given)
+    if (!isLoggedIn && !currentEmail && !ORDER_SIGN_IN_GOOGLE) {
       nextErr.email = tr('البريد الإلكتروني مطلوب للضيوف', 'Email is required for guests');
     } else if (currentEmail && (!emailRegex.test(currentEmail) || currentEmail.length > ORDER_LIMITS.emailMax || !ORDER_EMAIL_RE.test(currentEmail))) {
       nextErr.email = tr('البريد الإلكتروني غير صحيح', 'Invalid email');
@@ -555,7 +619,7 @@ const Checkout: React.FC = () => {
         shippingMethodId,
         shippingMethod: isAR ? selectedShipping.nameAr : selectedShipping.nameEn,
         paymentMethod,
-        customerEmail: safeTrim(email) || safeTrim(user?.email || ''),
+        customerEmail: safeTrim(email) || safeTrim(user?.email || '') || safeTrim(getFirebaseAuth()?.currentUser?.email || ''),
         consents: {
           acceptedStorePolicies: !!acceptPolicies,
           acceptedDeliveryPolicy: !!acceptDeliveryPolicy,
@@ -579,8 +643,8 @@ const Checkout: React.FC = () => {
         sessionStorage.setItem(`order_success_${r.orderId}`, JSON.stringify(r.payload));
       } catch {}
       confirmedOrders().add(r.orderId);
-      // the gift travelled with this (signed-in) order: it is now reserved for it
-      if (wheelPrizeRef.current && firebaseUid()) choosePrize(null);
+      // the prize travelled with this (signed-in) order: it is now reserved for it
+      if (wheelAttachRef.current) { choosePrize(null); wheelAttachRef.current = null; }
       lastPayloadRef.current = null;
       setSubmitResult(null);
       clearCart();
@@ -675,6 +739,37 @@ const Checkout: React.FC = () => {
       return;
     }
 
+    // Owner's rule: a Google account confirms every order. Not signed in with Google -> the Google window (account
+    // chooser) opens NOW, straight from this click (nothing awaited before it, else the browser blocks it). Closed /
+    // failed -> nothing is sent; cart, form and prize stay as they are. A valid saved Google session -> no new sign-in.
+    // (a sandbox build has no Firebase and no Worker: nothing can be sent there, the usual "not sent" message applies)
+    if (BACKEND_ENABLED && ORDER_SIGN_IN_GOOGLE && !currentGoogleUid()) {
+      setGoogleIssue(null);
+      setGoogleBusy(true);
+      submittingRef.current = true; // a second click while the Google window is open does nothing
+      let g: { outcome: GoogleOutcome; uid?: string };
+      try {
+        g = await googlePopup();
+      } finally {
+        submittingRef.current = false;
+        setGoogleBusy(false);
+      }
+      if (g.outcome !== 'ok' || !g.uid) {
+        setGoogleIssue(g.outcome);
+        setSubmitBlocked(googleMessage(g.outcome === 'ok' ? 'failed' : g.outcome, isAR));
+        return;
+      }
+      // the customer signed in ON PURPOSE for this order: the page now belongs to this account. A payload prepared
+      // for another identity is never resent under it (placeOrder refuses that anyway).
+      if (identityAtOpenRef.current !== g.uid) {
+        identityAtOpenRef.current = g.uid;
+        lastPayloadRef.current = null;
+      }
+    }
+
+    // the prize travels with THIS attempt only when it applies (the Worker re-checks owner, status, minimum, prices)
+    wheelAttachRef.current = prizeApplies && wheelPrize ? wheelPrize.spinId : null;
+
     await runSubmission(() =>
       placeOrder({
         draft: buildDraft(),
@@ -704,13 +799,14 @@ const Checkout: React.FC = () => {
   const pricePreview = useMemo(() => {
     if (step !== 3) return null;
     try {
-      const p = previewServerPricing(buildDraft(), Array.isArray(products) ? products : []);
+      const adj = prizeApplies && wheelPrize ? (wheelPrize.type === 'discount' ? { discountJod: wheelPrize.valueJod } : wheelPrize.type === 'free_delivery' ? { shippingCapJod: wheelPrize.valueJod } : null) : null;
+      const p = previewServerPricing(buildDraft(), Array.isArray(products) ? products : [], adj);
       return p.ok ? p : null;
     } catch {
       return null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, validatedCart, products, formData, shippingMethodId, paymentMethod, cliqRef, email, orderNote, subtotal, discountAmount, shippingCost, total]);
+  }, [step, validatedCart, products, formData, shippingMethodId, paymentMethod, cliqRef, email, orderNote, subtotal, discountAmount, shippingCost, total, prizeApplies, wheelPrize]);
 
   const inputClass = (hasError: boolean) => [
     'w-full p-4 bg-slate-50 border rounded-2xl outline-none transition-all duration-300 font-medium text-slate-800',
@@ -922,6 +1018,8 @@ const Checkout: React.FC = () => {
                       />
                     </div>
                     {errors.phoneLocal && <p className="mt-1.5 ms-1 text-xs font-bold text-red-500">{errors.phoneLocal}</p>}
+                    {/* no SMS verification (zero budget): the number is only checked for format, never called "verified" */}
+                    <p className="mt-1.5 ms-1 text-[11px] font-medium text-slate-400" data-testid="phone-note">{tr('يُستخدم للتواصل والتوصيل فقط. لا نرسل رسائل تحقق.', 'Used for contact and delivery only. We do not send verification texts.')}</p>
                   </div>
 
                   {/* اختيار المحافظة */}
@@ -1264,9 +1362,35 @@ const Checkout: React.FC = () => {
 
                 {/* Refused locally (input limits): nothing was sent, cart and any pending attempt are untouched */}
                 {submitBlocked && (
-                  <div className="mt-8 rounded-3xl border border-red-200 bg-red-50 p-5 text-start text-sm font-bold text-red-700 leading-relaxed" role="alert" data-testid="submit-blocked">
+                  <div className="mt-8 rounded-3xl border border-red-200 bg-red-50 p-5 text-start text-sm font-bold text-red-700 leading-relaxed" role="alert" data-testid="submit-blocked" data-google={googleIssue || ''}>
                     {submitBlocked}
+                    {googleIssue === 'blocked' && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button type="button" onClick={handlePlaceOrder} className="rounded-xl bg-ink-900 px-4 py-2.5 text-sm font-black text-white" data-testid="google-retry">
+                          {tr('تسجيل الدخول بـ Google', 'Sign in with Google')}
+                        </button>
+                        <button
+                          type="button" data-testid="google-redirect"
+                          className="rounded-xl border border-current px-4 py-2.5 text-sm font-black"
+                          onClick={() => {
+                            // the page is left: keep what the customer typed (this tab, 30 min, read once on return)
+                            saveCheckoutResume({ formData, email, dialCode, shippingMethodId, paymentMethod, cliqRef, acceptDeliveryPolicy });
+                            void googleRedirect().then((o) => { if (o !== 'ok') { setGoogleIssue(o); setSubmitBlocked(googleMessage(o, isAR)); } });
+                          }}
+                        >
+                          {tr('المتابعة عبر صفحة Google', 'Continue on the Google page')}
+                        </button>
+                      </div>
+                    )}
                   </div>
+                )}
+                {resumeNotice && !submitBlocked && (
+                  <div className="mt-8 rounded-3xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800" role="status" data-testid="google-resumed">{resumeNotice}</div>
+                )}
+                {BACKEND_ENABLED && ORDER_SIGN_IN_GOOGLE && !currentGoogleUid() && (
+                  <p className="mt-6 text-xs font-bold text-ink-600" data-testid="google-required-hint">
+                    {tr('عند الضغط على «تأكيد الطلب» ستظهر نافذة Google لاختيار حسابك (مرة واحدة)، ثم يُرسل الطلب. هذا تسجيل دخول وليس دفعًا.', 'When you press "Confirm order", a Google window opens to choose your account (once), then the order is sent. This is a sign-in, not a payment.')}
+                  </p>
                 )}
 
                 {/* Submission result (anything but a confirmed order) */}
@@ -1329,10 +1453,10 @@ const Checkout: React.FC = () => {
                   <Button
                     onClick={handlePlaceOrder}
                     className="w-full sm:w-auto px-12 py-5 text-lg shadow-xl shadow-sky-500/20"
-                    isLoading={isProcessing}
-                    disabled={isProcessing}
+                    isLoading={isProcessing || googleBusy}
+                    disabled={isProcessing || googleBusy}
                   >
-                    {isProcessing ? 'جاري تأكيد الطلب...' : tt('placeOrder', 'تأكيد وإتمام الطلب', 'Confirm & Place Order')}
+                    {googleBusy ? tr('بانتظار تسجيل الدخول بـ Google…', 'Waiting for Google sign-in…') : isProcessing ? 'جاري تأكيد الطلب...' : tt('placeOrder', 'تأكيد وإتمام الطلب', 'Confirm & Place Order')}
                   </Button>
                 </div>
               </div>
@@ -1392,19 +1516,33 @@ const Checkout: React.FC = () => {
                 })}
               </div>
 
-              {WHEEL_ENABLED && wheelPrize && (
-                <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm" data-testid="checkout-wheel-gift">
+              {WHEEL_ENABLED && wheelPrize && prizeFx && (
+                <div className={`mb-4 rounded-2xl border p-3 text-sm ${prizeApplies ? 'border-gold-200 bg-gold-50' : 'border-ink-100 bg-paper-100'}`} data-testid="checkout-wheel-gift" data-state={prizeFx.state} data-prize-type={wheelPrize.type}>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-black text-amber-900">🎁 {tr('هدية العجلة', 'Wheel gift')}: {wheelPrize.label}</span>
-                    <button type="button" className="text-xs font-bold text-amber-800 underline" onClick={() => { choosePrize(null); setWheelPrize(null); }}>
-                      {tr('إزالة', 'Remove')}
+                    <span className="font-black text-ink-950">🎡 {tr('جائزة الدولاب', 'Wheel prize')}: {wheelPrize.label}</span>
+                    <button type="button" className="text-xs font-bold text-ink-700 underline" onClick={() => { choosePrize(null); setWheelRemoved(true); }} data-testid="checkout-wheel-remove">
+                      {tr('عدم استخدامها الآن', 'Not now')}
                     </button>
                   </div>
-                  <p className="mt-1 text-xs text-amber-800">
-                    {isLoggedIn
-                      ? tr('مجانًا مع هذا الطلب (0 د.أ). لا تُحتسب في الحد الأدنى.', 'Free with this order (0 JOD). Not counted in the minimum.')
-                      : tr('سجّل الدخول بنفس الحساب الذي ربحت به لتصلك الهدية مع الطلب.', 'Sign in with the account that won it to receive the gift.')}
+                  <p className="mt-1 text-xs font-bold text-ink-700">{prizeText(wheelPrize, isAR)}</p>
+                  <p className="mt-1 text-xs font-bold" data-testid="checkout-wheel-status">
+                    {prizeFx.state === 'applies' && (
+                      <span className="text-emerald-700">{tr('تنطبق على هذا الطلب — بانتظار تأكيد الطلب، وتُثبَّت عند تسليمه.', 'Applies to this order — waiting for the order to be confirmed; final once delivered.')}</span>
+                    )}
+                    {prizeFx.state === 'below_min' && (
+                      <span className="text-amber-800">
+                        {wheelPrize.type === 'gift'
+                          ? tr(`مبروك! ظهرت لك ${wheelPrize.label}، وتحتاج إلى إكمال مشترياتك حتى ${prizeFx.minOrderJod} دينارًا لاستحقاقها عند تأكيد الطلب (ينقصك ${formatMoney(prizeFx.missingJod)}).`, `You won ${wheelPrize.label}; complete your products to ${prizeFx.minOrderJod} JOD to receive it with the order (${formatMoney(prizeFx.missingJod)} to go).`)
+                          : tr(`تحتاج إلى إكمال مشترياتك حتى ${prizeFx.minOrderJod} دينارًا لاستخدامها (ينقصك ${formatMoney(prizeFx.missingJod)}). يمكنك إتمام الطلب بدونها وتبقى الجائزة محفوظة حتى انتهاء صلاحيتها.`, `Complete your products to ${prizeFx.minOrderJod} JOD to use it (${formatMoney(prizeFx.missingJod)} to go). You can order without it; the prize stays until it expires.`)}
+                      </span>
+                    )}
+                    {prizeFx.state === 'needs_previous_order' && (
+                      <span className="text-ink-800">{tr('هذا الخصم للطلب الثاني: يصبح متاحًا بعد استلام طلبك الأول، ولن يُطبَّق على هذا الطلب.', 'This discount is for your second order: available after your first order is delivered; it is not applied to this order.')}</span>
+                    )}
                   </p>
+                  {wheelPrize.expiresAt && (
+                    <p className="mt-1 text-[11px] text-ink-600">{tr('صالحة حتى', 'Valid until')} {new Date(wheelPrize.expiresAt).toLocaleDateString(isAR ? 'ar-JO' : 'en-GB')}</p>
+                  )}
                 </div>
               )}
 
@@ -1414,17 +1552,29 @@ const Checkout: React.FC = () => {
                   <span className="tabular-nums text-slate-700">{formatMoney(subtotal)}</span>
                 </div>
 
-                {discountAmount > 0 && (
+                {volumeDiscount > 0 && (
                   <div className="flex justify-between text-sm font-black text-emerald-600 bg-emerald-50/50 p-2 -mx-2 rounded-xl">
                     <span>{tt('discount', 'الخصم المكتسب', 'Earned Discount')}</span>
-                    <span className="tabular-nums">-{formatMoney(discountAmount)}</span>
+                    <span className="tabular-nums">-{formatMoney(volumeDiscount)}</span>
+                  </div>
+                )}
+                {wheelDiscount > 0 && (
+                  <div className="flex justify-between text-sm font-black text-emerald-700 bg-gold-50 p-2 -mx-2 rounded-xl" data-testid="summary-wheel-discount">
+                    <span>{tr('خصم جائزة الدولاب', 'Wheel prize discount')}</span>
+                    <span className="tabular-nums">-{formatMoney(wheelDiscount)}</span>
                   </div>
                 )}
 
                 <div className="flex justify-between text-sm font-bold text-slate-500">
                   <span>{tt('shipping', 'رسوم التوصيل', 'Shipping Fee')}</span>
-                  <span className="tabular-nums text-slate-700">{formatMoney(shippingCost)}</span>
+                  <span className="tabular-nums text-slate-700" data-testid="summary-shipping">
+                    {shippingWaived > 0 && <s className="me-2 text-slate-400">{formatMoney(baseShippingFee)}</s>}
+                    {formatMoney(shippingCost)}
+                  </span>
                 </div>
+                {shippingWaived > 0 && (
+                  <p className="text-xs font-black text-emerald-700" data-testid="summary-free-delivery">{tr('توصيل مجاني من جائزة الدولاب', 'Free delivery from the wheel prize')}</p>
+                )}
 
                 <div className="border-t border-slate-200/60 pt-4 mt-2 flex justify-between items-end">
                   <span className="text-base font-black text-slate-900 uppercase tracking-widest">{tt('total', 'المجموع النهائي', 'Final Total')}</span>

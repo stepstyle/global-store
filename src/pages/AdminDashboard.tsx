@@ -42,6 +42,10 @@ import { IS_LIVE, BACKEND_ENABLED } from '../config/deployEnv';
 import { isWorkerManaged, inventoryState, INVENTORY_LABEL_AR, canCancel, deleteBlockedReason, changeStatusViaWorker, problemLineAr, type StatusFailure } from '../services/adminOrders';
 import { planCsvImport, csvImportMessageAr, checkCsvRow, type CsvCandidate, type CsvRejection } from '../services/csvImport';
 import { CATEGORIES } from '../constants';
+import { WHEEL_ENABLED } from '../services/wheel';
+
+// prize wheel settings tab: TEST builds only (VITE_WHEEL_MODE=test); not part of a production bundle's render tree
+const WheelAdmin = WHEEL_ENABLED ? React.lazy(() => import('../components/wheel/WheelAdmin')) : null;
 
 const PAGE_SIZE = 100;
 
@@ -202,7 +206,7 @@ const AdminDashboard: React.FC = () => {
     }
   }, [user, navigate, showToast]);
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'orders' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'orders' | 'settings' | 'wheel'>('overview');
   
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -882,7 +886,25 @@ const AdminDashboard: React.FC = () => {
           >
             <Settings size={18} /> {t('settings')}
           </button>
+
+          {WheelAdmin && (
+            <button
+              onClick={() => setActiveTab('wheel')}
+              data-testid="admin-tab-wheel"
+              className={`pb-4 px-2 font-bold transition-colors whitespace-nowrap flex items-center gap-2 ${
+                activeTab === 'wheel' ? 'text-secondary-DEFAULT border-b-2 border-secondary-DEFAULT' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <span aria-hidden="true">🎡</span> دولاب الحظ
+            </button>
+          )}
         </div>
+
+        {WheelAdmin && activeTab === 'wheel' && (
+          <React.Suspense fallback={<p className="p-6 text-slate-500">…</p>}>
+            <WheelAdmin />
+          </React.Suspense>
+        )}
 
         {/* OVERVIEW */}
         {activeTab === 'overview' && (
@@ -1203,6 +1225,11 @@ const AdminDashboard: React.FC = () => {
                               {Array.isArray((order as any).items) && (order as any).items.some((it: any) => it?.gift === true) && (
                                 <span className="ms-1 inline-block rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-900" data-testid="admin-gift-badge" title="يتضمن هدية عجلة الجوائز">🎁 هدية</span>
                               )}
+                              {(order as any).wheelPrize && (order as any).wheelPrize.type !== 'gift' && (
+                                <span className="ms-1 inline-block rounded-full bg-gold-100 px-1.5 py-0.5 text-[10px] font-black text-gold-800" data-testid="admin-prize-badge" title={safeText((order as any).wheelPrize.label)}>
+                                  🎡 {(order as any).wheelPrize.type === 'discount' ? `خصم ${Number((order as any).wheelPrize.discountJod) || 0} د.أ` : 'توصيل مجاني'}
+                                </span>
+                              )}
                             </div>
                             <button
                               type="button"
@@ -1435,6 +1462,14 @@ const AdminDashboard: React.FC = () => {
                 <div className="xl:col-span-2 space-y-5">
                   <div className="bg-white rounded-2xl border border-slate-100 p-4">
                     <h4 className="font-bold text-slate-900 mb-4">المنتجات المطلوبة</h4>
+                    {(selectedOrder as any)?.wheelPrize && (
+                      <div className="mb-3 rounded-2xl border border-gold-200 bg-gold-50 p-3 text-sm font-bold text-ink-900" data-testid="admin-prize-detail">
+                        🎡 جائزة الدولاب: {safeText((selectedOrder as any).wheelPrize.label)}
+                        {(selectedOrder as any).wheelPrize.type === 'discount' && ` — خصم ${Number((selectedOrder as any).wheelPrize.discountJod) || 0} د.أ محسوب في الإجمالي`}
+                        {(selectedOrder as any).wheelPrize.type === 'free_delivery' && ` — أُعفي التوصيل ${Number((selectedOrder as any).wheelPrize.shippingWaivedJod) || 0} د.أ (محسوب في الإجمالي)`}
+                        {(selectedOrder as any).wheelPrize.type === 'gift' && ' — هدية مجانية: غلّفها مع الطلب ولا تُحصّل قيمتها'}
+                      </div>
+                    )}
                     <div className="space-y-3">
                       {(selectedOrder?.items || []).map((item: any, idx: number) => (
                         <div key={`${item?.productId || item?.id || idx}${item?.gift ? '-gift' : ''}`} data-testid={item?.gift ? 'admin-gift-item' : undefined} className={`flex gap-3 p-3 rounded-2xl border shadow-sm ${item?.gift ? 'border-amber-300 bg-amber-50' : 'border-slate-100 bg-slate-50'}`}>
