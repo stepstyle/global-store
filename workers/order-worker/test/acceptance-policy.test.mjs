@@ -106,6 +106,49 @@ test('P03 reject from Telegram: reservation released, NOTHING deducted, cancelle
   assert.equal(await productStock('p-simple'), 10);
 });
 
+test('P13 ONE authorised Telegram account (owner 2026-11-21): any other account, another chat, a text command or a replayed update changes nothing', async () => {
+  const STRANGER = '999999999';
+  const lastAnswer = () => [...mock.state.tgUi].reverse().find((c) => c.method === 'answerCallbackQuery')?.body?.text || '';
+  const pressIn = (orderId, op, chatId) => callWorker(env(), {
+    method: 'POST', path: '/telegram/webhook', headers: { 'x-telegram-bot-api-secret-token': SECRET },
+    body: { update_id: upd++, callback_query: { id: `cq-${upd}`, from: { id: Number(ADMIN) }, message: { message_id: 1, chat: { id: Number(chatId) } }, data: `v1:${op}:${orderId}` } },
+  });
+  // a pending order: accept / reject by a stranger or from another chat -> nothing (still reserved, not deducted)
+  const p = await create(makeOrder([line('p-simple', 2)]));
+  for (const op of ['acc', 'rej']) {
+    await press(env(), p.id, op, STRANGER);
+    assert.match(lastAnswer(), /غير مصرح/, `stranger ${op}`);
+    await pressIn(p.id, op, '-100999');
+  }
+  assert.equal((await ledger(p.id)).decision, 'pending');
+  assert.equal(await productStock('p-simple'), 10);
+  assert.equal(await reserved('p-simple'), 2);
+  // a text command (not a button) is ignored, even from the admin
+  for (const text of ['/accept ' + p.id, '/reject ' + p.id, 'قبول']) {
+    const r = await callWorker(env(), { method: 'POST', path: '/telegram/webhook', headers: { 'x-telegram-bot-api-secret-token': SECRET }, body: { update_id: upd++, message: { message_id: 9, from: { id: Number(ADMIN) }, chat: { id: Number(CHAT) }, text } } });
+    assert.equal(r.status, 200);
+  }
+  assert.equal((await ledger(p.id)).decision, 'pending');
+  // an accepted order: cancel / confirm-cancel by a stranger -> stock stays deducted
+  const a = await create(makeOrder([line('p-simple', 3)]));
+  await press(env(), a.id, 'acc');
+  assert.equal(await productStock('p-simple'), 7);
+  for (const op of ['can', 'cfc']) { await press(env(), a.id, op, STRANGER); await pressIn(a.id, op, '-100999'); }
+  assert.equal(await productStock('p-simple'), 7);
+  assert.equal((await ledger(a.id)).inventory, 'deducted');
+  // the SAME update delivered again (Telegram retries): one effect only
+  const replay = { method: 'POST', path: '/telegram/webhook', headers: { 'x-telegram-bot-api-secret-token': SECRET }, body: { update_id: 424242, callback_query: { id: 'same', from: { id: Number(ADMIN) }, message: { message_id: 1, chat: { id: Number(CHAT) } }, data: `v1:cfc:${a.id}` } } };
+  for (let i = 0; i < 3; i++) await callWorker(env(), replay);
+  assert.equal(await productStock('p-simple'), 10, 'returned once');
+  assert.equal((await ledger(a.id)).inventory, 'restocked');
+  // the pending order is still untouched and can still be decided by the owner
+  await press(env(), p.id, 'acc');
+  assert.equal(await productStock('p-simple'), 8);
+  // configuration: exactly one numeric id is valid; a username or an empty list is refused
+  assert.deepEqual(loadConfig({ ...BASE, ENVIRONMENT: 'local', FIREBASE_PROJECT_ID: 'demo-x' }).errors.filter((e) => /ADMIN/.test(e)), []);
+  for (const bad of ['@owner', '', '123, abc']) assert.ok(loadConfig({ ...BASE, ENVIRONMENT: 'local', FIREBASE_PROJECT_ID: 'demo-x', TELEGRAM_ADMIN_USER_IDS: bad }).errors.some((e) => /TELEGRAM_ADMIN_USER_IDS/.test(e)), `refused: "${bad}"`);
+});
+
 test('P04 cancel AFTER acceptance from Telegram (confirm step): stock back ONCE; a second cancel changes nothing', async () => {
   const o = await create(makeOrder([line('p-simple', 4)]));
   await press(env(), o.id, 'acc');
