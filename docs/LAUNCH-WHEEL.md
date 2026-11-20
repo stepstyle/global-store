@@ -1,81 +1,126 @@
-# إطلاق الدولاب + القبول عبر Telegram — خطة التنفيذ (لا تُنفَّذ قبل موافقتك الصريحة)
+# إطلاق الدولاب + القبول عبر Telegram — خطوات يوم الإطلاق
 
-الفرع `dev/review-2026-11` يحتوي `origin/main` (`1ea8a1c`، الإنتاج الحالي)، فالدمج **fast-forward**.
+لا شيء هنا يُنفَّذ قبل موافقتك النهائية. الفرع `dev/review-2026-11` يحتوي الإنتاج الحالي (`1ea8a1c`)، فالدمج fast-forward.
 
-## ما سيُفعَّل
+## ما سيعمل بعد الإطلاق
 
 | البند | القيمة |
 |---|---|
-| الدولاب | `WHEEL_MODE=live` (Worker) و`VITE_WHEEL_MODE=live` (الموقع)، الحملة `WHEEL_CAMPAIGN=opening-1` |
-| الحملة | زر «تعبئة الحملة الافتتاحية» في اللوحة ← مراجعة ← حفظ. **50 د.أ** متاحة من البداية، سقف صارم، **30 يومًا** من لحظة الحفظ، بلا نمو وبلا تجديد |
-| الجوائز | خصم 1 ×10، توصيل مجاني ×3، هدية 2 ×3، هدية 3 ×1، خصم الطلب الثاني 4 ×1، خصم 4 ×1، هدية 4 ×1، هدية 5 ×1، خصم 5 ×1 = **50 د.أ بالضبط**؛ الساعة واللعبة والنثريات موقوفة (تكلفة غير مؤكدة) وتبقى في اللوحة |
-| فرص الفوز | جديد 19.7%، راجع 24.4%، دائم (3+ مُسلَّمة) 33%؛ تكلفة اللفة المتوقعة 0.39 / 0.52 / 0.76 د.أ |
-| المخزون | `STOCK_POLICY=on_acceptance` + `APPROVAL_MODE=telegram`: حجز عند الطلب، خصم مرة واحدة عند القبول، إرجاع مرة واحدة عند الإلغاء |
-| القبول التلقائي | **OFF** (`AUTO_APPROVAL_MODE` غير معرّف، ومفتاح اللوحة غير موجود = OFF) |
-| تسجيل الدخول | `ORDER_SIGN_IN=google`: اللف بلا حساب، وGoogle عند «تأكيد الطلب» (الجائزة تُربط بطلب مسجّل الدخول) |
+| الدولاب | ظاهر للزوار قبل أي تسجيل؛ Google عند «تأكيد الطلب»، ثم Turnstile |
+| الحملة | 50 د.أ متاحة من البداية، سقف صارم، 30 يومًا من لحظة حفظها، بلا تجديد؛ الكميات = 50 د.أ بالضبط |
+| فرص الفوز | جديد 19.7%، راجع 24.4%، دائم 33%؛ الساعة واللعبة والنثريات موقوفة |
+| المخزون | حجز عند الطلب، خصم مرة واحدة عند ضغطك ✅ في Telegram، إرجاع مرة واحدة عند الإلغاء |
+| المشرف | حسابك فقط (`6585888926`، موجود في `wrangler.production.local.toml`) |
+| القبول التلقائي | OFF |
+| الطلبات القديمة | تكمل بقواعدها: طلبات اليوم (خصم عند التسليم) وطلبات Worker v1 (للتبويبات القديمة) لا تتأثر |
 
-## ما تحتاج إدخاله أنت (لا أطّلع عليه)
+## قبل البدء: سجّل نقاط الرجوع (قراءة فقط، دقيقتان)
 
-- `TELEGRAM_ADMIN_USER_IDS`: رقم حساب Telegram لكل من يحق له القبول (أرقام، ليست أسرارًا).
-- أسرار جديدة عبر `wrangler secret put` (قيم عشوائية بـ `openssl rand -hex 32` — **ليس base64**: سر الـ webhook يقبل A-Z a-z 0-9 _ - فقط، وإلا يرفض الـ Worker التشغيل): `TELEGRAM_WEBHOOK_SECRET`، `WHEEL_PHONE_SECRET`.
-- Vercel: متغير `VITE_WHEEL_MODE=live` لبيئة Production.
+1. **Cloudflare** ← Workers & Pages ← `anta-order-v2` ← Deployments: انسخ رقم النسخة الحالية (المتوقع `2ea16078…`).
+2. **Vercel** ← المشروع `global-store-oz2a` ← Deployments: انسخ رقم النشر الحالي على dairsharaf.com (المتوقع `dpl_DNAuUwBjjLg3N968pHAvKq5pJqrk`).
+3. **Firebase** ← Firestore ← Rules: القواعد الحالية (المتوقع ruleset `760798d0`).
 
-## الخطوات
+## الخطوة 1 — توليد سرّين (على جهازك)
 
-```bash
-# 0) قراءة فقط — نقاط التراجع (سجّلها)
-cd workers/order-worker
-npx wrangler deployments list --name anta-order-v2      # الحالي 2ea16078 (لا ترجع أبدًا إلى 274978a8)
-vercel ls --prod                                         # رقم نشر الموقع الحالي
-# قواعد Firestore الحالية: ruleset 760798d0 (firebase/firestore.rules.on-delivery قبل التعديل)
-# Telegram: getWebhookInfo للبوت — سجّل الـ URL الحالي (إن وُجد)
+افتح PowerShell وشغّل السطر مرتين. احفظ الناتجين في مكان آمن ولا ترسلهما لأحد (ولا لي):
 
-# 1) القواعد أولًا (الفرق الوحيد: workerManaged تشمل on_acceptance)
-firebase deploy --only firestore:rules   # بملف firebase/firestore.rules.on-delivery المحدَّث، المشروع الإنتاجي
-
-# 2) أسرار الـ Worker
-npx wrangler secret put TELEGRAM_WEBHOOK_SECRET --config wrangler.production.local.toml
-npx wrangler secret put WHEEL_PHONE_SECRET     --config wrangler.production.local.toml
-
-# 3) في wrangler.production.local.toml (git-ignored):
-#    STOCK_POLICY = "on_acceptance"
-#    APPROVAL_MODE = "telegram"
-#    TELEGRAM_ADMIN_USER_IDS = "<أرقامك مفصولة بفواصل>"
-#    WHEEL_MODE = "live"
-#    WHEEL_CAMPAIGN = "opening-1"
-#    ORDER_SIGN_IN = "google"
-npx wrangler deploy --config wrangler.production.local.toml   # الـ Worker يرفض التشغيل إن نقص أي إعداد
-curl -s https://<worker-host>/                                # الإصدار الجديد
-
-# 4) Telegram webhook (يستبدل أي webhook حالي للبوت)
-#    setWebhook: url=https://<worker-host>/telegram/webhook, secret_token=<TELEGRAM_WEBHOOK_SECRET>,
-#    allowed_updates=["callback_query"], drop_pending_updates=true — ثم getWebhookInfo: last_error_message فارغ
-
-# 5) الدمج والموقع
-git checkout main && git merge --ff-only dev/review-2026-11 && git push origin main
-npm run build:hosting && npm run check:guard     # مع VITE_WHEEL_MODE=live
-vercel deploy --prebuilt --prod
-
-# 6) الحملة: لوحة الإدارة ← الدولاب ← «تعبئة الحملة الافتتاحية» ← راجع النسب والتكلفة ← حفظ
+```powershell
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-## التحقق بعد النشر (من حسابك، لا طلبات زبائن)
+- الناتج الأول = **سر Telegram** (`TELEGRAM_WEBHOOK_SECRET`)
+- الناتج الثاني = **سر الدولاب** (`WHEEL_PHONE_SECRET`)
 
-1. زائر بلا حساب: يظهر الدولاب، اللف يعمل، الجائزة محفوظة 60 دقيقة مع العداد.
+## الخطوة 2 — Cloudflare: إضافة السرّين
+
+Workers & Pages ← `anta-order-v2` ← Settings ← Variables and Secrets ← Add:
+
+| Type | Name | Value |
+|---|---|---|
+| Secret | `TELEGRAM_WEBHOOK_SECRET` | الناتج الأول |
+| Secret | `WHEEL_PHONE_SECRET` | الناتج الثاني |
+
+إضافة سر تنشئ نسخة جديدة من الـ Worker **بنفس السلوك الحالي** (الكود الحالي لا يستخدمهما). لا تضف أي شيء آخر من اللوحة؛ باقي الإعدادات تأتي من الملف في الخطوة 4.
+
+## الخطوة 3 — Vercel: متغير واحد
+
+المشروع `global-store-oz2a` ← Settings ← Environment Variables ← Add:
+
+| Key | Value | Environment |
+|---|---|---|
+| `VITE_WHEEL_MODE` | `live` | Production فقط |
+
+وتأكد أن `VITE_ORDER_SIGN_IN` **غير موجود** (أو ليس `optional`)؛ غيابه = تسجيل Google عند تأكيد الطلب. لا تضغط Redeploy الآن.
+
+## الخطوة 4 — القواعد ثم الـ Worker (أوامر؛ أنفّذها أنا بعد موافقتك إن كانت هذه الطرفية مسجّلة الدخول، وإلا تنفّذها أنت)
+
+```bash
+# تسجيل الدخول مرة واحدة (أنت، في المتصفح): npx wrangler login   و   firebase login
+
+# 4أ) القواعد: الفرق الوحيد عن الحالية أن طلبات on_acceptance محمية مثل on_delivery
+firebase deploy --only firestore:rules --project antastore1-82b50   # بملف firebase/firestore.rules.on-delivery
+
+# 4ب) في workers/order-worker/wrangler.production.local.toml غيّر/أضف داخل [vars]:
+#   STOCK_POLICY = "on_acceptance"
+#   APPROVAL_MODE = "telegram"
+#   WHEEL_MODE = "live"
+#   WHEEL_CAMPAIGN = "opening-1"
+#   ORDER_SIGN_IN = "google"
+#   (TELEGRAM_ADMIN_USER_IDS موجود بالفعل)
+cd workers/order-worker
+npx wrangler deploy --config wrangler.production.local.toml
+```
+
+إن نقص أي إعداد أو سر، **يرفض الـ Worker التشغيل** ويطبع السبب (لا يعمل بإعدادات ناقصة).
+
+## الخطوة 5 — Telegram: ربط الأزرار بالـ Worker (أنت)
+
+عنوان الـ Worker = نفس قيمة `VITE_WORKER_URL` في Vercel. في PowerShell (يطلب التوكن والسر دون إظهارهما):
+
+```powershell
+$t = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR((Read-Host "Bot token" -AsSecureString)))
+$s = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR((Read-Host "TELEGRAM_WEBHOOK_SECRET" -AsSecureString)))
+$w = Read-Host "Worker URL (https://...workers.dev)"
+Invoke-RestMethod "https://api.telegram.org/bot$t/getWebhookInfo" | ConvertTo-Json      # سجّل الـ url الحالي إن وُجد
+Invoke-RestMethod -Method Post "https://api.telegram.org/bot$t/setWebhook" -ContentType 'application/json' -Body (@{ url = "$w/telegram/webhook"; secret_token = $s; allowed_updates = @('callback_query'); drop_pending_updates = $true } | ConvertTo-Json)
+Invoke-RestMethod "https://api.telegram.org/bot$t/getWebhookInfo" | ConvertTo-Json      # url صحيح و last_error_message فارغ
+```
+
+## الخطوة 6 — الموقع
+
+```bash
+git checkout main && git merge --ff-only dev/review-2026-11 && git push origin main   # Vercel يبني وينشر تلقائيًا
+```
+
+قبل حفظ الحملة: لا تظهر نافذة الدولاب، وصفحته تعرض «مغلق» (لا حملة = لا لف ولا جوائز).
+
+## الخطوة 7 — الحملة (أنت، في لوحة الإدارة)
+
+لوحة الإدارة ← الدولاب ← «تعبئة الحملة الافتتاحية (50 د.أ، 30 يومًا من الآن)» ← راجع النسب والتكلفة ← **حفظ**. من هذه اللحظة تبدأ الـ 30 يومًا.
+
+## الاختبار الحقيقي (من حسابك، لا طلبات زبائن)
+
+1. نافذة خاصة، بلا حساب: يظهر الدولاب، اللف يعمل، العداد 60 دقيقة.
 2. «تأكيد الطلب» ← Google ← Turnstile ← «تأكيد الطلب النهائي»: طلب صغير بالدفع عند الاستلام.
-3. تصل رسالة Telegram بالأزرار: ❌ رفض ← الحجز يُفك، لا خصم. طلب ثانٍ: ✅ قبول ← المخزون ينقص مرة واحدة، اللوحة «قيد التجهيز». إلغاء من اللوحة ← يعود مرة واحدة.
-4. لوحة الميزانية: المحجوز يعود بعد الرفض / الإلغاء؛ المتاح لا يتجاوز 50.
+3. تصل رسالة Telegram بزرّي ✅ ❌. اضغط ❌: لا خصم، الحجز يُفك.
+4. طلب ثانٍ ← ✅: المخزون ينقص مرة واحدة واللوحة «قيد التجهيز». اضغط ✅ مرة أخرى: لا تغيير. ثم 🚫 وتأكيد: يعود مرة واحدة.
+5. لوحة الميزانية: المتاح 50 ناقص المحجوز فقط.
 
-## التراجع (بالترتيب، بلا فقد بيانات)
+## التراجع (لا يُحذف أي طلب)
 
-1. الحملة: إيقافها من اللوحة (active=false) — فوري.
-2. الموقع: Vercel ← Promote للنشر السابق (أو `VITE_WHEEL_MODE` فارغ وإعادة البناء).
-3. الـ Worker: `WHEEL_MODE="off"`، `STOCK_POLICY="on_delivery"`، `APPROVAL_MODE="off"`، `ORDER_SIGN_IN` محذوف، ثم `wrangler deploy`؛ أو `npx wrangler rollback 2ea16078…` (المعرّف الكامل). الطلبات المنشأة بـ `on_acceptance` تبقى تُدار بسياستها المسجّلة.
-4. Telegram: `deleteWebhook` (أو إعادة الـ URL السابق).
-5. القواعد: تبقى (تقبل السياستين)؛ أو إعادة ruleset 760798d0 من Firebase Console.
+| المشكلة | الإجراء |
+|---|---|
+| الحملة فقط | لوحة الإدارة ← إيقاف الحملة ← حفظ (فوري) |
+| واجهة الموقع | Vercel ← Instant Rollback إلى `dpl_DNAuUwBjjLg3N968pHAvKq5pJqrk` |
+| الـ Worker | أعد في الملف `STOCK_POLICY="on_delivery"`، `APPROVAL_MODE="off"`، `WHEEL_MODE="off"`، احذف `ORDER_SIGN_IN`، ثم `wrangler deploy` — أو Cloudflare ← Deployments ← Rollback إلى `2ea16078…` (**ليس** `274978a8`) |
+| أزرار Telegram | `deleteWebhook` (أو أعد الـ url المسجّل) |
+| القواعد | تبقى كما هي (تقبل السياستين)؛ عند الحاجة: Firebase ← Rules ← ruleset `760798d0` |
 
-## قرارات مفتوحة (لا تمنع الإطلاق)
+بعد أي تراجع: الطلبات التي قُبلت بالسياسة الجديدة تكمل بها (الإلغاء يعيد المخزون مرة واحدة)، والقديمة بقواعدها — مختبر (P14).
 
-- هدية 4 وهدية 5 حدّهما الأدنى 5 د.أ كما اتُّفق؛ النظام ينبّه ويقترح 15 د.أ.
-- الهدايا مُحتسبة في الميزانية **بقيمتها الكاملة** (التكلفة الفعلية أقل أو مساوية).
+## قرارات مفتوحة لا تمنع الإطلاق
+
+- هدية 4 وهدية 5 حدّهما الأدنى 5 د.أ (النظام ينبّه ويقترح 15).
+- الهدايا مُحتسبة بقيمتها الكاملة في الميزانية.
 - خصم الكمية 10% يُجمع مع جائزة الدولاب.
+- Worker v1 ما زال يعمل للتبويبات القديمة؛ إيقافه قرار منفصل.
