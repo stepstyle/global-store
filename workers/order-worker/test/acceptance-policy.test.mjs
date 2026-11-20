@@ -149,6 +149,47 @@ test('P13 ONE authorised Telegram account (owner 2026-11-21): any other account,
   for (const bad of ['@owner', '', '123, abc']) assert.ok(loadConfig({ ...BASE, ENVIRONMENT: 'local', FIREBASE_PROJECT_ID: 'demo-x', TELEGRAM_ADMIN_USER_IDS: bad }).errors.some((e) => /TELEGRAM_ADMIN_USER_IDS/.test(e)), `refused: "${bad}"`);
 });
 
+test('P14 SWITCH DAY: orders created by today\'s production Worker (on_delivery, Telegram off) keep their own rules after the switch to on_acceptance', async () => {
+  // today's production settings (wrangler.production.local.toml before the launch)
+  const OLD = { STOCK_POLICY: 'on_delivery', APPROVAL_MODE: 'off' };
+  const a = await create(makeOrder([line('p-simple', 2)]), env(OLD));
+  const b = await create(makeOrder([line('p-simple', 3)]), env(OLD));
+  const c = await create(makeOrder([line('p-simple', 1)]), env(OLD));
+  assert.equal(await reserved('p-simple'), 6);
+  assert.equal(await productStock('p-simple'), 10, 'on_delivery: nothing deducted at creation');
+  // ---- the Worker now runs the launch settings (on_acceptance + Telegram) ----
+  // a Telegram button can not decide an old order (it never had one): nothing changes
+  await press(env(), a.id, 'acc');
+  await press(env(), a.id, 'cfc');
+  assert.equal(await productStock('p-simple'), 10);
+  assert.equal(await reserved('p-simple'), 6);
+  // the dashboard moves old orders as before: deducted ONCE at delivery, reservation released
+  assert.equal((await setStatus(env(), a.id, 'processing')).status, 200, 'an old order is not "waiting for acceptance"');
+  assert.equal((await setStatus(env(), a.id, 'delivered')).status, 200);
+  assert.equal(await productStock('p-simple'), 8);
+  assert.equal(await reserved('p-simple'), 4);
+  assert.deepEqual((await order(a.id)).inventory, { policy: 'on_delivery', state: 'deducted' }, 'keeps its own policy');
+  await setStatus(env(), a.id, 'delivered');
+  assert.equal(await productStock('p-simple'), 8, 'never twice');
+  // cancelling an old order releases its reservation (nothing was deducted)
+  assert.equal((await setStatus(env(), b.id, 'cancelled')).status, 200);
+  assert.equal(await productStock('p-simple'), 8);
+  assert.equal(await reserved('p-simple'), 1);
+  // a NEW order next to an old one: reserved at creation, deducted on acceptance; the old one still on delivery
+  const n = await create(makeOrder([line('p-simple', 2)]));
+  assert.equal((await ledger(n.id)).stockPolicy, 'on_acceptance');
+  await press(env(), n.id, 'acc');
+  assert.equal(await productStock('p-simple'), 6);
+  assert.equal((await setStatus(env(), c.id, 'delivered')).status, 200);
+  assert.equal(await productStock('p-simple'), 5);
+  assert.equal(await reserved('p-simple'), 0);
+  // rollback (back to today's settings): the accepted new order still follows ITS policy — cancel returns once
+  assert.equal((await setStatus(env(OLD), n.id, 'cancelled')).status, 200);
+  assert.equal(await productStock('p-simple'), 7);
+  await setStatus(env(OLD), n.id, 'cancelled');
+  assert.equal(await productStock('p-simple'), 7, 'never twice');
+});
+
 test('P04 cancel AFTER acceptance from Telegram (confirm step): stock back ONCE; a second cancel changes nothing', async () => {
   const o = await create(makeOrder([line('p-simple', 4)]));
   await press(env(), o.id, 'acc');
