@@ -5,39 +5,11 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getFirebaseAuth } from '../../services/firebase';
 import type { SubmitDeps } from '../../services/orderSubmit';
 import { BACKEND_ENABLED } from '../../config/deployEnv';
-import { getWheelAdmin, getWheelSpins, newSlotId, saveWheelCampaign, slotShares, suggestedWeights, suggestForBudget, projectBudget, DEFAULT_ASSUMPTIONS, tierW, TIERS, TIER_AR, TIER_SHORT_AR, type AdminCampaign, type AdminFailure, type AdminSlot, type AdminSpinRow, type AdminWheel, type Tier } from '../../services/wheelAdmin';
+import { agreedTemplate, launchCampaign, LAUNCH_BUDGET_JOD, LAUNCH_DAYS, getWheelAdmin, getWheelSpins, newSlotId, saveWheelCampaign, slotShares, suggestedWeights, suggestForBudget, projectBudget, DEFAULT_ASSUMPTIONS, tierW, TIERS, TIER_AR, TIER_SHORT_AR, type AdminCampaign, type AdminFailure, type AdminSlot, type AdminSpinRow, type AdminWheel, type Tier } from '../../services/wheelAdmin';
 import { checkCampaign } from '../../../workers/order-worker/src/wheel.js';
 
 const TYPE_AR: Record<AdminSlot['type'], string> = { gift: 'هدية', discount: 'خصم نقدي', free_delivery: 'توصيل مجاني', none: 'حظ أوفر' };
 const STATUS_AR: Record<string, string> = { issued: 'أولية (غير مستخدمة)', reserved: 'مرفقة بطلب — بانتظار التسليم', consumed: 'مستحقة ومستخدمة', expired: 'منتهية / ملغاة', none: 'حظ أوفر' };
-
-/** the prizes agreed with the owner — ALL inactive with weight 0 and quantity 0: the owner sets chances and stock */
-function agreedTemplate(): AdminCampaign {
-  const now = new Date();
-  const end = new Date(now.getTime() + 30 * 86_400_000);
-  const s = (o: Partial<AdminSlot> & Pick<AdminSlot, 'id' | 'type' | 'label'>): AdminSlot => ({ weight: 0, quantity: 0, active: false, minOrderJod: 5, appliesTo: 'this_order', ...o });
-  return {
-    active: false, minOrderJod: 5, budgetJod: 0, budgetPer100Jod: 12, budgetStartJod: 0, startsAt: now.toISOString(), endsAt: end.toISOString(), giftOnCancel: 'return',
-    freeFirstChance: true, openGiftsPerPhone: 1, prizeValidDays: 7, terms: '',
-    prizes: [
-      s({ id: 'ship-1', type: 'free_delivery', label: 'توصيل مجاني', icon: '🚚', valueJod: 3, unitCostJod: 3 }),
-      s({ id: 'disc-1', type: 'discount', label: 'خصم دينار', icon: '💸', valueJod: 1, unitCostJod: 1 }),
-      { id: 'none-1', type: 'none', label: 'حظ أوفر', weight: 0, active: true },
-      s({ id: 'gift-2', type: 'gift', label: 'هدية بقيمة 2 د.أ', icon: '🎁', valueJod: 2, unitCostJod: 2 }),
-      s({ id: 'gift-3', type: 'gift', label: 'هدية بقيمة 3 د.أ', icon: '🎁', valueJod: 3, unitCostJod: 3 }),
-      s({ id: 'watch-1', type: 'gift', label: 'هدية ساعة', icon: '⌚', valueJod: 0, unitCostJod: 0, minOrderJod: 15 }),
-      { id: 'none-2', type: 'none', label: 'حظ أوفر', weight: 0, active: true },
-      s({ id: 'gift-4', type: 'gift', label: 'هدية بقيمة 4 د.أ', icon: '🎁', valueJod: 4, unitCostJod: 4 }),
-      s({ id: 'toy-1', type: 'gift', label: 'هدية لعبة', icon: '🧸', valueJod: 0, unitCostJod: 0 }),
-      s({ id: 'second-4', type: 'discount', label: 'خصم 4 د.أ على الطلب الثاني', icon: '🔁', valueJod: 4, unitCostJod: 4, minOrderJod: 15, appliesTo: 'next_order' }),
-      { id: 'none-3', type: 'none', label: 'حظ أوفر', weight: 0, active: true },
-      s({ id: 'gift-5', type: 'gift', label: 'هدية بقيمة 5 د.أ', icon: '🎁', valueJod: 5, unitCostJod: 5 }),
-      s({ id: 'acc-1', type: 'gift', label: 'نثريات وإكسسوارات', icon: '✏️', valueJod: 0, unitCostJod: 0 }),
-      s({ id: 'disc-4', type: 'discount', label: 'خصم 4 د.أ', icon: '💰', valueJod: 4, unitCostJod: 4, minOrderJod: 15 }),
-      s({ id: 'disc-5', type: 'discount', label: 'خصم 5 د.أ', icon: '💰', valueJod: 5, unitCostJod: 5, minOrderJod: 15 }),
-    ],
-  };
-}
 
 const toLocal = (iso: string | null | undefined) => {
   if (!iso) return '';
@@ -144,13 +116,17 @@ export default function WheelAdmin() {
   return (
     <div className="space-y-6" dir="rtl" data-testid="wheel-admin">
       <div className="rounded-3xl border border-gold-200 bg-gold-50 p-4 text-sm font-bold text-ink-900">
-        نسخة تجريبية: الدولاب يعمل فقط في البيئة التجريبية (WHEEL_MODE=test). لا يُفعَّل على الموقع الحقيقي إلا بموافقة ونشر منفصلين.
+        {data?.mode === 'live'
+          ? 'الدولاب على الموقع الحقيقي (WHEEL_MODE=live): كل حفظ يطبَّق على الزبائن فورًا. الخادم يرفض أي حملة تتجاوز الميزانية.'
+          : 'نسخة تجريبية: الدولاب يعمل فقط في البيئة التجريبية (WHEEL_MODE=test). لا يُفعَّل على الموقع الحقيقي إلا بموافقة ونشر منفصلين.'}
       </div>
 
       {!draft ? (
         <div className="rounded-3xl border border-slate-200 bg-white p-6">
           <p className="font-bold text-slate-700">لا توجد حملة بعد.</p>
           <button type="button" className="mt-3 rounded-xl bg-ink-900 px-4 py-2 font-black text-white" onClick={() => setDraft(agreedTemplate())} data-testid="wheel-admin-template">إنشاء الحملة من الجوائز المتفق عليها (كلها موقوفة، بلا أوزان)</button>
+          <button type="button" className="mt-3 ms-2 rounded-xl border border-gold-300 bg-gold-50 px-4 py-2 font-black text-ink-900" onClick={() => setDraft(launchCampaign())} data-testid="wheel-admin-launch">تعبئة الحملة الافتتاحية ({LAUNCH_BUDGET_JOD} د.أ، {LAUNCH_DAYS} يومًا من الآن) — مسودة للمراجعة</button>
+          <p className="mt-2 text-xs font-bold text-slate-500">لا يُحفظ شيء قبل الضغط على «حفظ». الجوائز مجهولة التكلفة تبقى موقوفة.</p>
         </div>
       ) : (
         <>

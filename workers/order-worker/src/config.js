@@ -171,8 +171,10 @@ export function loadConfig(env = {}) {
     const prodApproval = str(env.APPROVAL_MODE) || 'off';
     const prodOk = (prodPolicy === 'on_delivery' && prodApproval === 'off') || (prodPolicy === 'on_acceptance' && prodApproval === 'telegram');
     if (!prodOk) errors.push('production requires STOCK_POLICY=on_delivery with APPROVAL_MODE=off, or STOCK_POLICY=on_acceptance with APPROVAL_MODE=telegram');
-    // the prize wheel is NOT approved (legal + financial terms of the campaign): production refuses to start with it on
-    if (!['', 'off'].includes(str(env.WHEEL_MODE))) errors.push('production requires WHEEL_MODE=off (the wheel campaign is not approved)');
+    // prize wheel: owner's decision (2026-11-21, opening campaign 50 JOD / 30 days) — production runs it ONLY as
+    // WHEEL_MODE=live (same server rules as 'test': campaign id, random phone secret, reservation-based stock policy);
+    // 'test' stays local / staging only, so a staging config copied to production refuses to run
+    if (!['', 'off', 'live'].includes(str(env.WHEEL_MODE))) errors.push('production requires WHEEL_MODE=off or WHEEL_MODE=live (test is staging-only)');
     // the staging access gate (src/http.js) has no meaning in production: a production Worker that carries the
     // variable is refused outright instead of silently ignoring it
     if (str(env.STAGING_ACCESS_TOKEN)) errors.push('production must not set STAGING_ACCESS_TOKEN (staging-only gate)');
@@ -208,17 +210,17 @@ export function loadConfig(env = {}) {
   // on_creation (default, unchanged): deducted when the order is created (STOCK_MODE), or on Telegram acceptance.
   // on_delivery: reserved at creation (stockReservations, src/reservations.js; an order that needs more than
   //              stock - reserved is refused), deducted ONCE when the admin marks it delivered (src/fulfilment.js).
-  // prize wheel (src/wheel.js): 'off' (default) | 'test' (local / staging only — production refuses it above)
-  const wheelMode = oneOf(env.WHEEL_MODE, ['off', 'test'], 'off');
-  if (!wheelMode) errors.push('WHEEL_MODE must be off|test');
+  // prize wheel (src/wheel.js): 'off' (default) | 'test' (local / staging only) | 'live' (production; same rules)
+  const wheelMode = oneOf(env.WHEEL_MODE, ['off', 'test', 'live'], 'off');
+  if (!wheelMode) errors.push('WHEEL_MODE must be off|test|live');
   const wheelCampaignId = str(env.WHEEL_CAMPAIGN);
-  if (wheelMode === 'test' && !/^[a-z0-9-]{3,40}$/.test(wheelCampaignId)) errors.push('WHEEL_MODE=test requires WHEEL_CAMPAIGN (a campaign id: a-z 0-9 -)');
+  if (wheelMode !== 'off' && !/^[a-z0-9-]{3,40}$/.test(wheelCampaignId)) errors.push('WHEEL_MODE=test requires WHEEL_CAMPAIGN (a campaign id: a-z 0-9 -)');
   // server-only HMAC key for delivery numbers (src/wheel.js phoneKey); never in a browser bundle, never logged
   const wheelPhoneSecret = str(env.WHEEL_PHONE_SECRET);
   // a RANDOM value (e.g. `openssl rand -base64 48`) set with `wrangler secret put` — never in wrangler.toml or the repo.
   // Length + variety check refuses placeholders like 'xxxx…' or '1234…' (the value itself is never logged).
-  if (wheelMode === 'test' && (wheelPhoneSecret.length < 32 || new Set(wheelPhoneSecret).size < 12)) errors.push('WHEEL_MODE=test requires a random WHEEL_PHONE_SECRET (at least 32 characters, not a placeholder)');
-  if (wheelMode === 'test' && !['on_delivery', 'on_acceptance'].includes(str(env.STOCK_POLICY))) errors.push('WHEEL_MODE=test requires STOCK_POLICY=on_delivery or on_acceptance (prizes go through the reservation)');
+  if (wheelMode !== 'off' && (wheelPhoneSecret.length < 32 || new Set(wheelPhoneSecret).size < 12)) errors.push('WHEEL_MODE=test requires a random WHEEL_PHONE_SECRET (at least 32 characters, not a placeholder)');
+  if (wheelMode !== 'off' && !['on_delivery', 'on_acceptance'].includes(str(env.STOCK_POLICY))) errors.push('WHEEL_MODE=test requires STOCK_POLICY=on_delivery or on_acceptance (prizes go through the reservation)');
   // on_acceptance: RESERVED at creation (like on_delivery), DEDUCTED once when the order is accepted (Telegram button or
   // automatic acceptance, src/approval.js), returned once on a cancellation after acceptance; every later status goes
   // through the Worker (src/fulfilment.js) so the prize wheel follows the order. Requires APPROVAL_MODE=telegram.

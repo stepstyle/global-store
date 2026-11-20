@@ -1,5 +1,5 @@
-// Prize wheel — TEST ONLY. Visible only in a build with VITE_WHEEL_MODE=test (never set for production: the
-// production Worker also refuses WHEEL_MODE != off). The draw happens on the Worker; the browser only asks and shows.
+// Prize wheel. Visible only in a build with VITE_WHEEL_MODE=test (sandbox / local) or =live (the approved production
+// campaign). The draw happens on the Worker; the browser only asks and shows.
 //
 // Nothing here is a protection: the Worker decides the result, stores it (under a ticket, then the account), re-checks the
 // prize (owner, status, expiry, minimum, previous delivered order, prices) on every order. The browser only keeps a
@@ -7,9 +7,14 @@
 import { normalizeWorkerUrl, type SubmitDeps } from './orderSubmit.ts';
 
 declare const __DEPLOY_ENV__: string | undefined;
-// never in a production build, whatever the variable says (the production Worker refuses the wheel as well)
+// a production build never shows the TEST wheel (only an explicit VITE_WHEEL_MODE=live)
 const PRODUCTION_BUILD = typeof __DEPLOY_ENV__ !== 'undefined' && __DEPLOY_ENV__ === 'production';
-export const WHEEL_ENABLED = !PRODUCTION_BUILD && (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WHEEL_MODE === 'test';
+declare const __WHEEL_MODE__: string | undefined;
+// a Vite build: the constant from vite.config.ts (folded at build time); Node tests: the variable, if any
+const VITE_WHEEL = typeof __WHEEL_MODE__ !== 'undefined' ? __WHEEL_MODE__ : (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WHEEL_MODE;
+// 'test': sandbox / local builds only (a production build ignores it). 'live': the approved production campaign
+// (owner's decision 2026-11-21) — the production Worker must run WHEEL_MODE=live too, otherwise every call is a 404.
+export const WHEEL_ENABLED = VITE_WHEEL === 'live' || (!PRODUCTION_BUILD && VITE_WHEEL === 'test');
 export const WHEEL_SPIN_ID_RE = /^[a-z0-9-]{1,40}_[A-Za-z0-9_-]{1,128}_\d{1,4}$/;
 const PRIZE_KEY = 'anta_wheel_prize_v1';
 const POPUP_KEY = 'anta_wheel_popup_seen_v1';

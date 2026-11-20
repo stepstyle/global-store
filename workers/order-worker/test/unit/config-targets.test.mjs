@@ -156,3 +156,23 @@ test('production refuses the prize wheel (WHEEL_MODE must stay off until the cam
   assert.ok(on.errors.some((e) => /WHEEL_MODE=off/.test(e)));
   assert.equal(loadConfig({ ...PRODUCTION, WHEEL_MODE: 'off' }).ok, true);
 });
+
+test('production runs the APPROVED wheel only as WHEEL_MODE=live, with every server requirement (owner 2026-11-21)', () => {
+  withTarget('production');
+  const live = {
+    ...PRODUCTION, STOCK_POLICY: 'on_acceptance', APPROVAL_MODE: 'telegram', STOCK_MODE: 'apply', TELEGRAM_BOT_TOKEN: 'fake', TELEGRAM_CHAT_ID: '-1001234567890',
+    TELEGRAM_WEBHOOK_SECRET: 'f'.repeat(40), TELEGRAM_ADMIN_USER_IDS: '123456789',
+    WHEEL_MODE: 'live', WHEEL_CAMPAIGN: 'launch-1', WHEEL_PHONE_SECRET: 'Zq8Lr2Vt6Wn0Pb4Hc9Kd1Mf5Jg3Xs7Ye-unit',
+  };
+  const ok = loadConfig(live);
+  assert.deepEqual(ok.errors, []);
+  assert.equal(ok.wheelMode, 'live');
+  assert.equal(ok.autoApprovalMode, 'off', 'automatic acceptance stays OFF unless set');
+  assert.equal(loadConfig({ ...live, WHEEL_CAMPAIGN: undefined }).ok, false, 'no campaign id');
+  assert.equal(loadConfig({ ...live, WHEEL_PHONE_SECRET: 'x'.repeat(40) }).ok, false, 'placeholder phone secret');
+  assert.equal(loadConfig({ ...live, WHEEL_PHONE_SECRET: undefined }).ok, false, 'no phone secret');
+  assert.equal(loadConfig({ ...live, TELEGRAM_ADMIN_USER_IDS: undefined }).ok, false, 'Telegram acceptance without admins');
+  assert.equal(loadConfig({ ...live, TELEGRAM_WEBHOOK_SECRET: undefined }).ok, false, 'Telegram acceptance without webhook secret');
+  assert.equal(loadConfig({ ...live, WHEEL_MODE: 'test' }).ok, false, 'the staging mode is still refused');
+  assert.equal(loadConfig({ ...live, WHEEL_MODE: 'on' }).ok, false, 'typo');
+});

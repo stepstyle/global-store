@@ -602,6 +602,8 @@ async function runDeliverySuite() {
 }
 
 // ---------------------------------------------------------------- wheel suite (WHEEL_MODE=test, VITE_WHEEL_MODE=test)
+// E2E_WHEEL_MODE=live: the same suite with the production mode on both sides (Worker + Vite)
+const E2E_WHEEL_MODE = process.env.E2E_WHEEL_MODE === 'live' ? 'live' : 'test';
 async function runWheelSuite() {
   const repoRoot = resolvePath(WORKER_ROOT, '../..');
   const base = `http://127.0.0.1:${PORTS.vite}`;
@@ -649,7 +651,7 @@ async function runWheelSuite() {
     VITE_FIRESTORE_EMULATOR_HOST: `127.0.0.1:${PORTS.emulator}`, VITE_AUTH_EMULATOR_HOST: `127.0.0.1:${PORTS.authEmulator}`,
     // the browser's ID tokens go through the TEST re-signing proxy (the Worker refuses the emulator's unsigned tokens)
     VITE_WORKER_URL: `${URLS.mock}/ui`, VITE_ORDER_ADMIN_URL: `${URLS.mock}/ui`,
-    VITE_WHEEL_MODE: 'test',
+    VITE_WHEEL_MODE: E2E_WHEEL_MODE,
   };
   const vite = spawn(process.execPath, [join(repoRoot, 'node_modules/vite/bin/vite.js'), '--port', String(PORTS.vite), '--strictPort', '--host', '127.0.0.1'], { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
   vite.stdout.pipe(log);
@@ -659,7 +661,7 @@ async function runWheelSuite() {
   await launchChrome({ port: PORTS.cdp, tmpDir: TMP, track: (child) => children.push({ label: 'chrome', child }) });
   uiMode = 'pass';
   uiAuthMode = 'resign';
-  console.log(`[inner] wheel suite: Worker WHEEL_MODE=test (campaign ${WHEEL_CAMPAIGN_ID}), rules ${RULES_NAME}, Vite ${base} with VITE_WHEEL_MODE=test, headless Chrome`);
+  console.log(`[inner] wheel suite: Worker WHEEL_MODE=${E2E_WHEEL_MODE} (campaign ${WHEEL_CAMPAIGN_ID}), rules ${RULES_NAME}, Vite ${base} with VITE_WHEEL_MODE=${E2E_WHEEL_MODE}, headless Chrome`);
   return runWheelScenarios({
     base, admin, ownerUid,
     shotsDir: process.env.E2E_SHOTS_DIR || join(TMP, 'shots'),
@@ -723,7 +725,7 @@ try {
     ...(SUITE === 'delivery' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', SYNC_DIRECT_STATUS: 'true' } : {}),
     // prize wheel: TEST mode with a TEST campaign, a random per-run HMAC secret (never written anywhere), production
     // settings otherwise (except Turnstile: the local web app sends no token)
-    ...(SUITE === 'wheel' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', ORDER_SIGN_IN: 'google', WHEEL_MODE: 'test', WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(36).toString('base64url') } : {}),
+    ...(SUITE === 'wheel' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', ORDER_SIGN_IN: 'google', WHEEL_MODE: E2E_WHEEL_MODE, WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(36).toString('base64url') } : {}),
     ...(SUITE === 'approval' || SUITE === 'auto' ? {
       APPROVAL_MODE: 'telegram', TELEGRAM_CHAT_ID: APPROVAL.chatId, TELEGRAM_ADMIN_USER_IDS: APPROVAL.adminIds.join(','),
       TELEGRAM_WEBHOOK_SECRET: T.webhook, PRICE_CHECK_MODE: 'enforce',

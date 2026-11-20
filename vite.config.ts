@@ -8,7 +8,10 @@ export default defineConfig(({ mode }) => {
   // `vite --mode staging` (npm run dev:staging) reads env files ONLY from env/staging/ — never the repository root
   // (.env.local, production files). Every other mode keeps Vite's default (the root), unchanged.
   const envDir = mode === 'staging' ? STAGING_ENV_DIR : undefined;
-  const firebaseTarget = loadEnv(mode, path.resolve(__dirname, envDir ?? '.'), 'VITE_').VITE_FIREBASE_TARGET;
+  const viteEnv = loadEnv(mode, path.resolve(__dirname, envDir ?? '.'), 'VITE_');
+  const firebaseTarget = viteEnv.VITE_FIREBASE_TARGET;
+  // prize wheel build mode, folded at build time so a build without the wheel does not even contain its code
+  const wheelMode = viteEnv.VITE_WHEEL_MODE === 'live' || viteEnv.VITE_WHEEL_MODE === 'test' ? viteEnv.VITE_WHEEL_MODE : 'off';
 
   // 🛡️ Fail-closed deployment guard (see scripts/deploy-env.mjs and src/config/deployEnv.ts)
   const { deployEnv, reason } = resolveDeployEnv(process.env, { firebaseTarget });
@@ -31,7 +34,7 @@ export default defineConfig(({ mode }) => {
       react(),
       sandboxHtml(),
     ],
-    define: { __DEPLOY_ENV__: JSON.stringify(deployEnv) },
+    define: { __DEPLOY_ENV__: JSON.stringify(deployEnv), __WHEEL_MODE__: JSON.stringify(wheelMode) },
     // sandbox: no VITE_* value is exposed to the client bundle (local-test values are validated by firebaseEnvGuard)
     ...(deployEnv === 'sandbox' ? { envPrefix: SANDBOX_ENV_PREFIX } : {}),
     resolve: {

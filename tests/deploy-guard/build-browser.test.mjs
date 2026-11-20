@@ -138,6 +138,13 @@ await t('X22', 'prize wheel: a PRODUCTION build never contains the wheel, even w
   assert.ok(!allText(builds.prod.out).includes('wheel-page'), 'default production build');
 });
 
+await t('X23', 'prize wheel LIVE: a production build with VITE_WHEEL_MODE=live contains the wheel and still passes the production guard', async () => {
+  const liveWheel = build('prod-wheel-live', { VERCEL: '1', VERCEL_ENV: 'production', ...FAKE, VITE_WHEEL_MODE: 'live' });
+  const txt = allText(liveWheel.out);
+  for (const marker of ['wheel-page', 'wheel/spin', 'wheel/state']) assert.ok(txt.includes(marker), marker);
+  assert.equal(checkGuard(liveWheel.out, 'production', FAKE).status, 0, 'production guard still passes');
+});
+
 await t('X18', 'the checker itself fails on the wrong build (production dist as sandbox, sandbox dist as production)', async () => {
   assert.equal(checkGuard(builds.prod.out, 'sandbox', FAKE).status, 1);
   assert.equal(checkGuard(builds.preview.out, 'production').status, 1);

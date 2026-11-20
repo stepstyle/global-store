@@ -132,6 +132,77 @@ export function suggestedWeights(p: AdminSlot): Record<Tier, number> {
 }
 
 /** a fresh, unused slot id (a-z 0-9 -) */
+/** the prizes agreed with the owner — ALL inactive with weight 0 and quantity 0: the owner sets chances and stock */
+export function agreedTemplate(): AdminCampaign {
+  const now = new Date();
+  const end = new Date(now.getTime() + 30 * 86_400_000);
+  const s = (o: Partial<AdminSlot> & Pick<AdminSlot, 'id' | 'type' | 'label'>): AdminSlot => ({ weight: 0, quantity: 0, active: false, minOrderJod: 5, appliesTo: 'this_order', ...o });
+  return {
+    active: false, minOrderJod: 5, budgetJod: 0, budgetPer100Jod: 12, budgetStartJod: 0, startsAt: now.toISOString(), endsAt: end.toISOString(), giftOnCancel: 'return',
+    freeFirstChance: true, openGiftsPerPhone: 1, prizeValidDays: 7, terms: '',
+    prizes: [
+      s({ id: 'ship-1', type: 'free_delivery', label: 'توصيل مجاني', icon: '🚚', valueJod: 3, unitCostJod: 3 }),
+      s({ id: 'disc-1', type: 'discount', label: 'خصم دينار', icon: '💸', valueJod: 1, unitCostJod: 1 }),
+      { id: 'none-1', type: 'none', label: 'حظ أوفر', weight: 0, active: true },
+      s({ id: 'gift-2', type: 'gift', label: 'هدية بقيمة 2 د.أ', icon: '🎁', valueJod: 2, unitCostJod: 2 }),
+      s({ id: 'gift-3', type: 'gift', label: 'هدية بقيمة 3 د.أ', icon: '🎁', valueJod: 3, unitCostJod: 3 }),
+      s({ id: 'watch-1', type: 'gift', label: 'هدية ساعة', icon: '⌚', valueJod: 0, unitCostJod: 0, minOrderJod: 15 }),
+      { id: 'none-2', type: 'none', label: 'حظ أوفر', weight: 0, active: true },
+      s({ id: 'gift-4', type: 'gift', label: 'هدية بقيمة 4 د.أ', icon: '🎁', valueJod: 4, unitCostJod: 4 }),
+      s({ id: 'toy-1', type: 'gift', label: 'هدية لعبة', icon: '🧸', valueJod: 0, unitCostJod: 0 }),
+      s({ id: 'second-4', type: 'discount', label: 'خصم 4 د.أ على الطلب الثاني', icon: '🔁', valueJod: 4, unitCostJod: 4, minOrderJod: 15, appliesTo: 'next_order' }),
+      { id: 'none-3', type: 'none', label: 'حظ أوفر', weight: 0, active: true },
+      s({ id: 'gift-5', type: 'gift', label: 'هدية بقيمة 5 د.أ', icon: '🎁', valueJod: 5, unitCostJod: 5 }),
+      s({ id: 'acc-1', type: 'gift', label: 'نثريات وإكسسوارات', icon: '✏️', valueJod: 0, unitCostJod: 0 }),
+      s({ id: 'disc-4', type: 'discount', label: 'خصم 4 د.أ', icon: '💰', valueJod: 4, unitCostJod: 4, minOrderJod: 15 }),
+      s({ id: 'disc-5', type: 'discount', label: 'خصم 5 د.أ', icon: '💰', valueJod: 5, unitCostJod: 5, minOrderJod: 15 }),
+    ],
+  };
+}
+
+// ------------------------------------------------------------------ OPENING CAMPAIGN (owner's decision 2026-11-21)
+/**
+ * 50 JOD for the first 30 days from activation, available from the start (no 12-per-100 growth, no renewal):
+ * budgetJod = budgetStartJod = 50, budgetPer100Jod = 0. The quantities below add up to EXACTLY 50 JOD at their cost,
+ * so the Worker's own rule (sum of quantity x cost <= budget) makes an overspend impossible, on top of the held / spent
+ * check of every spin. Conservative chances (per 1000 spins, new / returning / loyal): mostly the 1 JOD discount, big
+ * prizes rare, a better chance for loyal customers (3+ delivered orders) on every prize, three "حظ أوفر".
+ * Prizes with an unknown cost (watch, toy, accessories) stay in the list, INACTIVE with weight 0 and quantity 0.
+ * Gifts "worth X JOD" are budgeted at their full value X (what the store spends on them can only be lower).
+ * A draft to review in the dashboard: nothing is saved until the owner presses save.
+ */
+export const LAUNCH_BUDGET_JOD = 50;
+export const LAUNCH_DAYS = 30;
+export const LAUNCH_PLAN: Record<string, { quantity: number; weights: [number, number, number]; active: boolean }> = {
+  'disc-1': { quantity: 10, weights: [100, 110, 130], active: true },
+  'ship-1': { quantity: 3, weights: [30, 40, 55], active: true },
+  'gift-2': { quantity: 3, weights: [30, 40, 55], active: true },
+  'gift-3': { quantity: 1, weights: [10, 15, 25], active: true },
+  'second-4': { quantity: 1, weights: [15, 20, 25], active: true },
+  'disc-4': { quantity: 1, weights: [5, 8, 15], active: true },
+  'gift-4': { quantity: 1, weights: [3, 5, 10], active: true },
+  'gift-5': { quantity: 1, weights: [2, 3, 8], active: true },
+  'disc-5': { quantity: 1, weights: [2, 3, 7], active: true },
+  'none-1': { quantity: 0, weights: [268, 252, 224], active: true },
+  'none-2': { quantity: 0, weights: [268, 252, 223], active: true },
+  'none-3': { quantity: 0, weights: [267, 252, 223], active: true },
+};
+/** the agreed prizes with the opening plan applied (unknown-cost prizes: kept, inactive, weight 0, quantity 0) */
+export function launchCampaign(now: Date = new Date()): AdminCampaign {
+  const t = agreedTemplate();
+  const prizes = t.prizes.map((p): AdminSlot => {
+    const plan = LAUNCH_PLAN[p.id];
+    if (!plan) return { ...p, active: false, weight: 0, weights: { new: 0, returning: 0, loyal: 0 }, quantity: 0, costConfirmed: false };
+    const [n, r, l] = plan.weights;
+    const out: AdminSlot = { ...p, active: plan.active, weight: n, weights: { new: n, returning: r, loyal: l } };
+    return p.type === 'none' ? out : { ...out, quantity: plan.quantity, costConfirmed: true };
+  });
+  return {
+    ...t, active: true, budgetJod: LAUNCH_BUDGET_JOD, budgetStartJod: LAUNCH_BUDGET_JOD, budgetPer100Jod: 0,
+    startsAt: now.toISOString(), endsAt: new Date(now.getTime() + LAUNCH_DAYS * 86_400_000).toISOString(), prizes,
+  };
+}
+
 export function newSlotId(existing: string[], type: AdminSlot['type']): string {
   const base = type === 'none' ? 'none' : type === 'free_delivery' ? 'ship' : type === 'discount' ? 'disc' : 'gift';
   for (let i = 1; i < 1000; i++) if (!existing.includes(`${base}-${i}`)) return `${base}-${i}`;
