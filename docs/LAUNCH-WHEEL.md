@@ -57,8 +57,13 @@ Workers & Pages ← `anta-order-v2` ← Settings ← Variables and Secrets ← A
 ```bash
 # تسجيل الدخول مرة واحدة (أنت، في المتصفح): npx wrangler login   و   firebase login
 
-# 4أ) القواعد: الفرق الوحيد عن الحالية أن طلبات on_acceptance محمية مثل on_delivery
-firebase deploy --only firestore:rules --project antastore1-82b50   # بملف firebase/firestore.rules.on-delivery
+# 4أ) القواعد — ليس `firebase deploy` (firebase.json لا يحدد ملف قواعد). من مجلد
+#     ../release-wheel-launch-2026-11 (ملفان + سكربت قراءة فقط):
+node rules-compare-readonly.mjs firestore.rules.before-launch firestore.rules.launch
+#     المتوقع: before-launch equal=true (الحي = نسخة 1ea8a1c)، launch يختلف في سطر workerManaged فقط
+node ../release-rollback-2026-11-19/fb-rules-deploy.mjs firestore.rules.launch
+#     المتوقع في آخر سطر: live == file: true
+#     التراجع: node ../release-rollback-2026-11-19/fb-rules-deploy.mjs firestore.rules.before-launch
 
 # 4ب) في workers/order-worker/wrangler.production.local.toml غيّر/أضف داخل [vars]:
 #   STOCK_POLICY = "on_acceptance"
