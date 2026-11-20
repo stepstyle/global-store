@@ -15,7 +15,8 @@ const PRIZE_KEY = 'anta_wheel_prize_v1';
 const POPUP_KEY = 'anta_wheel_popup_seen_v1';
 
 export type PrizeType = 'gift' | 'discount' | 'free_delivery' | 'none';
-export type WheelSlot = { id: string; type: PrizeType; label: string; description: string; icon: string; color: string | null; imageUrl: string; valueJod: number; minOrderJod: number; appliesTo: 'this_order' | 'next_order' };
+// chance: the REAL chance of this segment for this customer (0..1, from the Worker; segments are drawn the same size)
+export type WheelSlot = { id: string; type: PrizeType; label: string; description: string; icon: string; color: string | null; imageUrl: string; valueJod: number; minOrderJod: number; appliesTo: 'this_order' | 'next_order'; chance: number | null };
 export type WheelSpin = {
   spinId: string; n: number; prizeId: string; label: string; status: string; orderId: string | null;
   type: PrizeType; valueJod: number; minOrderJod: number | null; appliesTo: 'this_order' | 'next_order'; description: string; expiresAt: string | null;
@@ -67,6 +68,7 @@ export const slotOf = (s: any): WheelSlot | null =>
         icon: typeof s.icon === 'string' ? s.icon.slice(0, 8) : '', color: typeof s.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(s.color) ? s.color : null,
         imageUrl: typeof s.imageUrl === 'string' && /^https:\/\//.test(s.imageUrl) ? s.imageUrl : '',
         valueJod: n0(s.valueJod), minOrderJod: n0(s.minOrderJod), appliesTo: appliesOf(s.appliesTo),
+        chance: typeof s.chance === 'number' && s.chance >= 0 && s.chance <= 1 ? s.chance : null,
       }
     : null;
 

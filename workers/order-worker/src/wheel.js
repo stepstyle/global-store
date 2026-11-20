@@ -217,6 +217,15 @@ export function checkCampaign(raw) {
   const endsAt = ms(raw.endsAt);
   if (minOrderJod === null || minOrderJod < 0) fail('الحد الأدنى العام للطلب غير صالح');
   if (budgetJod === null || budgetJod < 0) fail('ميزانية الحملة غير صالحة');
+  // the owner's planning ceiling: prize cost per 100 DELIVERED orders (12 JOD), plus an opening amount the campaign may
+  // spend before any order is delivered (default 0: no prize can be drawn before the first deliveries)
+  // (a campaign saved from the dashboard always carries it — 12 by default; a document without it only has the hard cap)
+  const budgetPer100Jod = raw.budgetPer100Jod === undefined || raw.budgetPer100Jod === null ? null : num(raw.budgetPer100Jod);
+  const budgetStartJod = raw.budgetStartJod === undefined || raw.budgetStartJod === null ? 0 : num(raw.budgetStartJod);
+  if (raw.budgetPer100Jod !== undefined && raw.budgetPer100Jod !== null && (budgetPer100Jod === null || budgetPer100Jod < 0 || budgetPer100Jod > 1000)) fail('ميزانية كل 100 طلب غير صالحة');
+  if (raw.active === true && budgetPer100Jod === null) warnings.push('لا يوجد سقف «لكل 100 طلب»: الحد الوحيد هو الميزانية القصوى');
+  if (budgetStartJod === null || budgetStartJod < 0) fail('الرصيد الافتتاحي غير صالح');
+  if (budgetJod !== null && budgetStartJod !== null && budgetStartJod > budgetJod) fail('الرصيد الافتتاحي أكبر من الميزانية القصوى');
   if (noPrizeWeight === null) fail('وزن «بدون جائزة» غير صالح');
   if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt) || endsAt <= startsAt) fail('تاريخ البداية والنهاية غير صالحين');
   if (!['return', 'expire'].includes(raw.giftOnCancel)) fail('سياسة الجائزة عند الإلغاء غير صالحة');
@@ -262,7 +271,7 @@ export function checkCampaign(raw) {
     const pStarts = optMs(p.startsAt);
     const pEnds = optMs(p.endsAt);
     if ((pStarts !== null && !Number.isFinite(pStarts)) || (pEnds !== null && !Number.isFinite(pEnds)) || (pStarts !== null && pEnds !== null && pEnds <= pStarts)) { fail(`${at}: تاريخ الخانة غير صالح`); continue; }
-    const display = { id: p.id, type, label, description, icon, color, imageUrl, weight, weights: weights ?? { new: weight, returning: weight, loyal: weight }, active, startsAt: pStarts, endsAt: pEnds };
+    const display = { id: p.id, type, label, description, icon, color, imageUrl, weight, weights: weights ?? { new: weight, returning: weight, loyal: weight }, active, startsAt: pStarts, endsAt: pEnds, costConfirmed: p.costConfirmed === true };
     if (type === 'none') { prizes.push({ ...display, quantity: null, unitCostJod: 0, valueJod: 0, minOrderJod: 0, appliesTo: 'this_order', productId: null, variantId: null, validDays: null }); continue; }
     const quantity = int(p.quantity);
     if (quantity === null) { fail(`${at}: الكمية المتاحة يجب أن تكون عددًا صحيحًا ≥ 0`); continue; }
@@ -290,6 +299,7 @@ export function checkCampaign(raw) {
     if (value >= 4 && pMin < BIG_PRIZE_SUGGESTED_MIN_JOD) warnings.push(`${at} «${label}»: قيمتها ${value} د.أ وحدّها الأدنى ${pMin} د.أ فقط — قد تسبب خسارة؛ يُقترح ${BIG_PRIZE_SUGGESTED_MIN_JOD} د.أ`);
     if (type === 'free_delivery' && valueJod > 3) warnings.push(`${at} «${label}»: سقف التوصيل المجاني ${valueJod} د.أ أعلى من أغلى توصيل حالي (3 د.أ)`);
     if (pMin > 0 && value / pMin > 0.4) warnings.push(`${at} «${label}»: قيمة الجائزة ${Math.round((value / pMin) * 100)}% من الحد الأدنى للطلب`);
+    if (active && TIERS.some((t) => display.weights[t] > 0) && p.costConfirmed !== true) warnings.push(`${at} «${label}»: تكلفتها الفعلية غير مؤكدة (${unitCostJod} د.أ مُدخلة) — لا تُعتمد الأوزان قبل تأكيدها`);
     if (quantity === 0 && active && TIERS.some((t) => display.weights[t] > 0)) warnings.push(`${at} «${label}»: الكمية 0 — لن تظهر على الدولاب`);
     if (pEnds !== null && Number.isFinite(endsAt) && pEnds > endsAt) warnings.push(`${at} «${label}»: تاريخ انتهائها بعد نهاية الحملة`);
     // owner's rule: the second-order discount only on products of 15 JOD or more
@@ -313,9 +323,10 @@ export function checkCampaign(raw) {
     }
   }
   if (costs.length) warnings.push(`متوسط التكلفة المتوقعة لكل لفة (قبل نفاد الكميات): ${costs.join('، ')}`);
+  if (raw.active === true && budgetPer100Jod !== null && budgetStartJod === 0 && prizes.some((p) => p.type !== 'none' && p.active)) warnings.push('الرصيد الافتتاحي 0: لن تُسحب أي جائزة قبل تسليم أول الطلبات (12 د.أ لكل 100 طلب مُسلَّم تُضاف تدريجيًا)');
   if (errors.length) return { campaign: null, errors, warnings };
   return {
-    campaign: { freeFirstChance: raw.freeFirstChance !== false, openGiftsPerPhone, prizeValidDays, active: raw.active === true, minOrderJod, budgetJod, noPrizeWeight, startsAt, endsAt, giftOnCancel: raw.giftOnCancel, prizes, terms: typeof raw.terms === 'string' ? raw.terms.slice(0, 2000) : '' },
+    campaign: { freeFirstChance: raw.freeFirstChance !== false, openGiftsPerPhone, prizeValidDays, active: raw.active === true, minOrderJod, budgetJod, budgetPer100Jod, budgetStartJod, noPrizeWeight, startsAt, endsAt, giftOnCancel: raw.giftOnCancel, prizes, terms: typeof raw.terms === 'string' ? raw.terms.slice(0, 2000) : '' },
     errors,
     warnings,
   };
@@ -366,9 +377,13 @@ export function displaySlots(campaign, remainingById, now = Date.now(), tier = '
   const shown = (p) => (p.type === 'none'
     ? p.active && (p.startsAt === null || now >= p.startsAt) && (p.endsAt === null || now < p.endsAt)
     : slotDrawable(p, remainingById, now, tier));
+  // the REAL chance of each segment for this customer (honesty: segments are drawn the same size, chances are not)
+  const drawable = campaign.prizes.filter((p) => slotDrawable(p, remainingById, now, tier));
+  const total = drawable.reduce((s, p) => s + tierWeight(p, tier), 0) + (campaign.noPrizeWeight || 0);
   return campaign.prizes.filter(shown).map((p) => ({
     id: p.id, type: p.type, label: p.label, description: p.description, icon: p.icon, color: p.color, imageUrl: p.imageUrl,
     valueJod: p.valueJod, minOrderJod: p.minOrderJod, appliesTo: p.appliesTo,
+    chance: total > 0 && drawable.includes(p) ? Math.round((tierWeight(p, tier) / total) * 1000) / 1000 : 0,
   }));
 }
 
@@ -413,11 +428,55 @@ async function readCampaign(fs, cfg) {
   return { doc, campaign: doc.exists ? validCampaign(decodeFields(doc.fields)) : null };
 }
 
+/** what can still be won: the pool, MINUS every prize the campaign's budget cannot pay now (budget-aware) */
 async function poolRemaining(fs, cid, campaign) {
   const prizes = (campaign?.prizes || []).filter((p) => p.type !== 'none');
-  const docs = prizes.length ? await fs.batchGet(prizes.map((p) => `wheelPool/${cid}_${p.id}`)) : [];
-  return new Map(prizes.map((p, i) => [p.id, docs[i].exists ? Number(decodeFields(docs[i].fields).remaining) || 0 : 0]));
+  const docs = prizes.length ? await fs.batchGet([...prizes.map((p) => `wheelPool/${cid}_${p.id}`), budgetPath(cid)]) : [];
+  const pool = new Map(prizes.map((p, i) => [p.id, docs[i].exists ? Number(decodeFields(docs[i].fields).remaining) || 0 : 0]));
+  return campaign ? affordable(campaign, pool, budgetState(campaign, docs[prizes.length])) : pool;
 }
+
+// ------------------------------------------------------------------ campaign BUDGET (owner: 12 JOD per 100 delivered orders)
+/**
+ * wheelBudget/{cid} (Worker only): { deliveredOrders, heldMils, spentMils } in thousandths of a JOD (exact integers).
+ *   allowance = min(budgetJod, budgetStartJod + budgetPer100Jod / 100 x deliveredOrders)
+ *   held      = cost of prizes won and not used yet (issued / waiting / reserved / guest tickets)
+ *   spent     = cost of prizes used by DELIVERED orders
+ * A prize is drawn only if its cost fits in allowance - held - spent, and the spin commits only on the budget version
+ * it read: concurrent spins / retries can never spend the same JOD twice. A prize that ends (expired, cancelled,
+ * refused) gives its cost back IN THE SAME commit that returns its pool unit — exactly once.
+ * Cost of a prize = its unitCostJod (a discount / free delivery: its value or cap; a gift: what it costs the store).
+ */
+export const budgetPath = (cid) => `wheelBudget/${cid}`;
+export const costMils = (p) => Math.max(0, Math.round((Number(p?.unitCostJod) || 0) * 1000));
+export function budgetState(campaign, doc) {
+  const d = doc?.exists ? decodeFields(doc.fields) : {};
+  const deliveredOrders = Math.max(0, Number(d.deliveredOrders) || 0);
+  const heldMils = Number(d.heldMils) || 0;
+  const spentMils = Number(d.spentMils) || 0;
+  const capMils = Math.round((campaign?.budgetJod ?? 0) * 1000);
+  // no per-100 ceiling stored (only documents not saved from the dashboard): the hard cap alone
+  const per100 = campaign?.budgetPer100Jod;
+  const earnedMils = per100 === null || per100 === undefined ? capMils : Math.round((campaign?.budgetStartJod ?? 0) * 1000) + Math.round((per100 * 1000 * deliveredOrders) / 100);
+  const allowanceMils = Math.min(capMils, earnedMils);
+  return { deliveredOrders, heldMils, spentMils, capMils, allowanceMils, availableMils: allowanceMils - heldMils - spentMils };
+}
+/** the pool as the BUDGET allows it: a prize whose cost does not fit in what is available counts as sold out */
+export function affordable(campaign, pool, b) {
+  const out = new Map(pool);
+  for (const p of campaign.prizes) if (p.type !== 'none' && costMils(p) > b.availableMils) out.set(p.id, 0);
+  return out;
+}
+/** budget writes: the spin's hold (conditional on the version read) and the releases / moves (unconditional) */
+export const budgetHold = (fs, cid, doc, mils) => (doc.exists
+  ? { update: { name: fs.name(budgetPath(cid)), fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: 'heldMils', increment: { integerValue: String(mils) } }], currentDocument: { updateTime: doc.updateTime } }
+  : { update: { name: fs.name(budgetPath(cid)), fields: encodeFields({ campaignId: cid, deliveredOrders: 0, heldMils: mils, spentMils: 0 }) }, currentDocument: { exists: false } });
+export const budgetMove = (fs, cid, fields) => ({
+  update: { name: fs.name(budgetPath(cid)), fields: encodeFields({ campaignId: cid }) }, updateMask: { fieldPaths: ['campaignId'] },
+  updateTransforms: Object.entries(fields).filter(([, v]) => v).map(([fieldPath, v]) => ({ fieldPath, increment: { integerValue: String(v) } })),
+});
+/** the release of a prize's held cost (its stored costMils; older results without it: nothing) */
+export const budgetRelease = (fs, sp) => (Number(sp?.costMils) > 0 ? [budgetMove(fs, sp.campaignId, { heldMils: -Number(sp.costMils) })] : []);
 
 /**
  * Has this VERIFIED account an order that was really DELIVERED (not just created, not cancelled)? Read by the Worker
@@ -502,7 +561,7 @@ export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = s
     const entPath = `wheelEntitlements/${cid}_${uid}`;
     const pooled = campaign.prizes.filter((p) => p.type !== 'none');
     const poolPaths = pooled.map((p) => `wheelPool/${cid}_${p.id}`);
-    const [entDoc, ...poolDocs] = await fs.batchGet([entPath, ...poolPaths]);
+    const [entDoc, budgetDoc, ...poolDocs] = await fs.batchGet([entPath, budgetPath(cid), ...poolPaths]);
     const e = entitlement(entDoc, campaign.freeFirstChance ? 1 : 0);
     if (e.used >= e.granted) {
       // no chance left: the LAST stored result again (a retry / refresh / second tab never draws twice)
@@ -510,10 +569,13 @@ export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = s
       return { status: 200, body: { ok: true, repeated: true, chancesLeft: 0, result: last.exists ? publicSpin(decodeFields(last.fields)) : null } };
     }
     const remaining = new Map(pooled.map((p, i) => [p.id, poolDocs[i].exists ? Number(decodeFields(poolDocs[i].fields).remaining) || 0 : 0]));
+    // the campaign budget decides too: a prize the budget cannot pay now is not drawn (like a sold-out prize)
+    const budget = budgetState(campaign, budgetDoc);
+    const drawPool = affordable(campaign, remaining, budget);
     const at = now();
     // a second-order prize this account can never use is not drawn (the wheel it is shown hides it too)
     // ...drawn with the weights of the account's tier (server-side count of delivered orders)
-    const drawnId = drawPrize(campaignFor(campaign, sst, cfg, at), remaining, rand, at, tier);
+    const drawnId = drawPrize(campaignFor(campaign, sst, cfg, at), drawPool, rand, at, tier);
     const slot = campaign.prizes.find((p) => p.id === drawnId) || null;
     // a "none" slot ("حظ أوفر") is a real segment of the wheel but wins nothing
     const prize = slot && slot.type !== 'none' ? slot : null;
@@ -537,8 +599,8 @@ export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = s
       // issuedExpiry exists ONLY while the prize is unclaimed ('issued' / 'waiting'): the cron's query
       // (expireUnclaimedPrizes) reads exactly the expired unclaimed prizes, oldest first, and nothing else
       ...window,
-      // the chances this result was drawn with (audit; never changed afterwards)
-      tier, deliveredCount: delivered,
+      // the chances this result was drawn with (audit; never changed afterwards) + the cost it holds in the budget
+      tier, deliveredCount: delivered, ...(prize ? { costMils: costMils(prize) } : {}),
       createdAt: new Date(at),
     };
     const writes = [
@@ -554,6 +616,8 @@ export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = s
     if (prize) {
       const i = pooled.findIndex((p) => p.id === prize.id);
       writes.push({ update: { name: fs.name(poolPaths[i]), fields: encodeFields({ remaining: remaining.get(prize.id) - 1 }) }, updateMask: { fieldPaths: ['remaining'] }, currentDocument: { updateTime: poolDocs[i].updateTime } });
+      // the budget, on the version read: two spins can never spend the same JOD
+      if (costMils(prize) > 0) writes.push(budgetHold(fs, cid, budgetDoc, costMils(prize)));
     }
     const r = await fs.commit(writes);
     if (r.ok) {
@@ -656,6 +720,10 @@ export async function wheelStatusWrites(fs, L, orderId, from, to, at) {
   // every status change of the account's orders moves its order sequence (a second-order discount being placed at the
   // same moment re-reads: a delivery / cancellation / return changes which order is the actual second)
   if (w.uid) writes.push(accountSeqBump(fs, w.uid));
+  // the campaign budget grows with DELIVERED orders (12 JOD / 100) and shrinks again when a delivered order is returned
+  // (in the status commit, which carries the ledger's version: each transition counted once)
+  if (from !== 'delivered' && to === 'delivered') writes.push(budgetMove(fs, w.campaignId, { deliveredOrders: 1 }));
+  if (from === 'delivered' && to === 'cancelled') writes.push(budgetMove(fs, w.campaignId, { deliveredOrders: -1 }));
   const spin = w.spinId ? await fs.get(`wheelSpins/${w.spinId}`) : null;
   // the delivery number's open-gift slot is freed exactly once: on delivery, or on cancellation before delivery
   // (this runs inside the status-change commit, which carries the ledger's version: a transition is applied once)
@@ -689,6 +757,8 @@ export async function wheelStatusWrites(fs, L, orderId, from, to, at) {
     }
     if (spin?.exists && decodeFields(spin.fields).status === 'reserved') {
       writes.push({ update: { name: fs.name(`wheelSpins/${w.spinId}`), fields: encodeFields({ status: 'consumed', consumedAt: at }) }, updateMask: { fieldPaths: ['status', 'consumedAt'] }, currentDocument: { updateTime: spin.updateTime } });
+      // its cost moves from held to SPENT (used by a delivered order)
+      { const c = Number(decodeFields(spin.fields).costMils) || 0; if (c > 0) writes.push(budgetMove(fs, w.campaignId, { heldMils: -c, spentMils: c })); }
     }
     if (w.chanceEligible && w.uid) {
       const grant = await fs.get(`wheelGrants/${orderId}`);
@@ -724,6 +794,7 @@ export async function wheelStatusWrites(fs, L, orderId, from, to, at) {
         } else {
           writes.push({ update: { name: d.name, fields: encodeFields({ status: 'expired', expiredAt: at, expiredReason: 'first_order_cancelled', issuedExpiry: null, firstOrderId: null }) }, updateMask: { fieldPaths: ['status', 'expiredAt', 'expiredReason', 'issuedExpiry', 'firstOrderId'] }, ...guard });
           writes.push({ update: { name: fs.name(`wheelPool/${ws.campaignId || w.campaignId}_${ws.prizeId}`), fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: 'remaining', increment: { integerValue: '1' } }], currentDocument: { exists: true } });
+          writes.push(...budgetRelease(fs, { ...ws, campaignId: ws.campaignId || w.campaignId }));
         }
       }
     }
@@ -739,6 +810,7 @@ export async function wheelStatusWrites(fs, L, orderId, from, to, at) {
       writes.push({ update: { name: fs.name(`wheelSpins/${w.spinId}`), fields: encodeFields({ status: back, orderId: null, releasedAt: at, issuedExpiry, ...(back === 'expired' ? { expiredAt: at } : {}) }) }, updateMask: { fieldPaths: ['status', 'orderId', 'releasedAt', 'issuedExpiry', ...(back === 'expired' ? ['expiredAt'] : [])] }, currentDocument: { updateTime: spin.updateTime } });
       if (back === 'expired' && sp.prizeId && sp.prizeId !== NO_PRIZE) {
         writes.push({ update: { name: fs.name(`wheelPool/${sp.campaignId || w.campaignId}_${sp.prizeId}`), fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: 'remaining', increment: { integerValue: '1' } }], currentDocument: { exists: true } });
+        writes.push(...budgetRelease(fs, { ...sp, campaignId: sp.campaignId || w.campaignId }));
       }
     }
     if (from === 'delivered' && w.chanceEligible && w.uid) {
@@ -793,7 +865,7 @@ export async function expireUnclaimedPrizes(fs, cfg, { now = Date.now(), pageSiz
         // not 'issued' any more (should not happen): only the stale marker is cleared, nothing is returned
         // only the PRIZE document changes (and its pool unit): the first order itself is never touched
         { update: { name: d.name, fields: encodeFields(valid ? { status: 'expired', expiredAt: new Date(now), issuedExpiry: null, ...(sp.status === 'waiting' ? { expiredReason: sp.firstOrderId ? 'first_order_not_delivered' : 'no_first_order' } : {}) } : { issuedExpiry: null }) }, updateMask: { fieldPaths: valid ? ['status', 'expiredAt', 'issuedExpiry', ...(sp.status === 'waiting' ? ['expiredReason'] : [])] : ['issuedExpiry'] }, currentDocument: { updateTime: d.updateTime } },
-        ...(valid ? [{ update: { name: fs.name(`wheelPool/${sp.campaignId}_${sp.prizeId}`), fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: 'remaining', increment: { integerValue: '1' } }], currentDocument: { exists: true } }] : []),
+        ...(valid ? [{ update: { name: fs.name(`wheelPool/${sp.campaignId}_${sp.prizeId}`), fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: 'remaining', increment: { integerValue: '1' } }], currentDocument: { exists: true } }, ...budgetRelease(fs, sp)] : []),
       ]);
       if (r.ok && valid) expired += 1;
     }

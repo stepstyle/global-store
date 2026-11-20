@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getFirebaseAuth } from '../../services/firebase';
 import type { SubmitDeps } from '../../services/orderSubmit';
 import { BACKEND_ENABLED } from '../../config/deployEnv';
-import { getWheelAdmin, getWheelSpins, newSlotId, saveWheelCampaign, slotShares, suggestedWeights, tierW, TIERS, TIER_AR, TIER_SHORT_AR, type AdminCampaign, type AdminFailure, type AdminSlot, type AdminSpinRow, type AdminWheel, type Tier } from '../../services/wheelAdmin';
+import { getWheelAdmin, getWheelSpins, newSlotId, saveWheelCampaign, slotShares, suggestedWeights, suggestForBudget, projectBudget, DEFAULT_ASSUMPTIONS, tierW, TIERS, TIER_AR, TIER_SHORT_AR, type AdminCampaign, type AdminFailure, type AdminSlot, type AdminSpinRow, type AdminWheel, type Tier } from '../../services/wheelAdmin';
 import { checkCampaign } from '../../../workers/order-worker/src/wheel.js';
 
 const TYPE_AR: Record<AdminSlot['type'], string> = { gift: 'هدية', discount: 'خصم نقدي', free_delivery: 'توصيل مجاني', none: 'حظ أوفر' };
@@ -17,7 +17,7 @@ function agreedTemplate(): AdminCampaign {
   const end = new Date(now.getTime() + 30 * 86_400_000);
   const s = (o: Partial<AdminSlot> & Pick<AdminSlot, 'id' | 'type' | 'label'>): AdminSlot => ({ weight: 0, quantity: 0, active: false, minOrderJod: 5, appliesTo: 'this_order', ...o });
   return {
-    active: false, minOrderJod: 5, budgetJod: 0, startsAt: now.toISOString(), endsAt: end.toISOString(), giftOnCancel: 'return',
+    active: false, minOrderJod: 5, budgetJod: 0, budgetPer100Jod: 12, budgetStartJod: 0, startsAt: now.toISOString(), endsAt: end.toISOString(), giftOnCancel: 'return',
     freeFirstChance: true, openGiftsPerPhone: 1, prizeValidDays: 7, terms: '',
     prizes: [
       s({ id: 'ship-1', type: 'free_delivery', label: 'توصيل مجاني', icon: '🚚', valueJod: 3, unitCostJod: 3 }),
@@ -89,8 +89,12 @@ export default function WheelAdmin() {
       return { ...q, weights, weight: weights.new };
     }),
   } : d));
-  /** fills the SUGGESTED weights into the draft (not saved; the owner reviews costs and budget first) */
-  const suggest = () => setDraft((d) => (d ? { ...d, prizes: d.prizes.map((p) => { const w = suggestedWeights(p); return { ...p, weights: w, weight: w.new }; }) } : d));
+  // planning assumptions for the projection (never stored): customer mix + spins per delivered order
+  const [assume, setAssume] = useState(DEFAULT_ASSUMPTIONS);
+  const projection = useMemo(() => (draft ? projectBudget(draft, assume) : null), [draft, assume]);
+  /** fills CONSERVATIVE weights for the per-100 budget into the draft (not saved; confirmed costs only) */
+  const suggest = () => setDraft((d) => (d ? { ...d, prizes: suggestForBudget(d, assume) } : d));
+  void suggestedWeights;
 
   const setC = (patch: Partial<AdminCampaign>) => setDraft((d) => (d ? { ...d, ...patch } : d));
   const setSlot = (i: number, patch: Partial<AdminSlot>) => setDraft((d) => (d ? { ...d, prizes: d.prizes.map((p, k) => (k === i ? { ...p, ...patch } : p)) } : d));
@@ -163,6 +167,8 @@ export default function WheelAdmin() {
               <div><label className={lbl}>النهاية</label><input type="datetime-local" className={field} value={toLocal(draft.endsAt)} onChange={(e) => setC({ endsAt: fromLocal(e.target.value) || draft.endsAt })} /></div>
               <div><label className={lbl}>الحد الأدنى العام (د.أ) — لكسب لفة جديدة</label><input type="number" min="0" step="0.5" className={field} value={draft.minOrderJod} onChange={(e) => setC({ minOrderJod: numIn(e.target.value) })} /></div>
               <div><label className={lbl}>الميزانية القصوى (د.أ)</label><input type="number" min="0" step="1" className={field} value={draft.budgetJod} onChange={(e) => setC({ budgetJod: numIn(e.target.value) })} data-testid="wheel-admin-budget" /></div>
+              <div><label className={lbl}>سقف التكلفة لكل 100 طلب مُسلَّم (د.أ)</label><input type="number" min="0" step="0.5" className={field} value={draft.budgetPer100Jod ?? 12} onChange={(e) => setC({ budgetPer100Jod: numIn(e.target.value) })} data-testid="wheel-admin-per100" /></div>
+              <div><label className={lbl}>رصيد افتتاحي قبل أول التسليمات (د.أ)</label><input type="number" min="0" step="0.5" className={field} value={draft.budgetStartJod ?? 0} onChange={(e) => setC({ budgetStartJod: numIn(e.target.value) })} data-testid="wheel-admin-start" /></div>
               <div><label className={lbl}>صلاحية الجائزة غير المستخدمة</label><p className={`${field} bg-slate-50 text-slate-700`} data-testid="wheel-admin-hold">{data.prizeHoldMinutes ?? 60} دقيقة من لحظة اللفة — بعدها تنتهي ويعود حجزها تلقائيًا (إعداد الخادم WHEEL_PRIZE_HOLD_MINUTES)</p></div>
               <div><label className={lbl}>جوائز مفتوحة لكل رقم هاتف</label><input type="number" min="1" className={field} value={draft.openGiftsPerPhone ?? 1} onChange={(e) => setC({ openGiftsPerPhone: numIn(e.target.value) })} /></div>
               <div><label className={lbl}>عند إلغاء الطلب</label>
@@ -196,6 +202,7 @@ export default function WheelAdmin() {
                       {(['gift', 'discount', 'free_delivery', 'none'] as const).map((t) => <option key={t} value={t}>{TYPE_AR[t]}</option>)}
                     </select>
                     <label className="flex items-center gap-1 text-xs font-bold"><input type="checkbox" checked={p.active !== false} onChange={(e) => setSlot(i, { active: e.target.checked })} /> مفعّلة</label>
+                    {p.type !== 'none' && <label className="flex items-center gap-1 text-xs font-bold" title="التكلفة الفعلية على المكتبة مؤكدة"><input type="checkbox" checked={p.costConfirmed === true} onChange={(e) => setSlot(i, { costConfirmed: e.target.checked })} data-testid="wheel-admin-cost-confirmed" /> التكلفة مؤكدة</label>}
                     <span className="ms-auto flex flex-wrap gap-1 text-[11px] font-black text-ink-700" data-testid="wheel-admin-share">{TIERS.map((t) => <span key={t} className="rounded-md bg-slate-100 px-1.5 py-0.5" data-testid={`wheel-admin-share-${t}`}>{TIER_SHORT_AR[t]} {Math.round(((sharesBy?.[t][p.id]) || 0) * 1000) / 10}%</span>)}</span>
                     <button type="button" onClick={() => move(i, -1)} className="rounded-lg border px-2 text-sm" aria-label="أعلى">↑</button>
                     <button type="button" onClick={() => move(i, 1)} className="rounded-lg border px-2 text-sm" aria-label="أسفل">↓</button>
@@ -248,9 +255,44 @@ export default function WheelAdmin() {
                 <p className="mt-1 text-xs leading-relaxed">تُحسب الفئة على الخادم من الطلبات <b>المُسلَّمة</b> منذ أول طلب (الملغاة والمرتجعة لا تُحسب): {TIERS.map((t) => TIER_AR[t]).join('، ')}. اللفة بدون تسجيل دخول تستخدم أوزان «جديد» دائمًا، ونتيجتها لا تتغير بعد تسجيل الدخول.</p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button type="button" onClick={suggest} className="rounded-xl border border-sky-300 bg-white px-3 py-1.5 text-xs font-black text-sky-900" data-testid="wheel-admin-suggest">تعبئة أوزان مقترحة للمراجعة</button>
-                  <span className="text-[11px] font-bold">اقتراح غير نهائي ولا يُحفظ تلقائيًا: الكميات والميزانية ما زالت 0، وتُعتمد النسب بعد مراجعة التكاليف.</span>
+                  <span className="text-[11px] font-bold">اقتراح محافظ غير نهائي ولا يُحفظ تلقائيًا: يستهدف 85% من سقف «لكل 100 طلب»، ويعطي وزنًا فقط للجوائز المؤكدة تكلفتها. تُعتمد النسب بعد مراجعة التكاليف.</span>
                 </div>
               </div>
+              {data.budget && (() => {
+                const b = data.budget;
+                const tone = b.usedPct >= 100 ? 'border-red-300 bg-red-50 text-red-900' : b.usedPct >= 80 ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900';
+                return (
+                  <div className={`rounded-2xl border p-4 text-sm font-bold ${tone}`} data-testid="wheel-admin-budget-state" data-used={b.usedPct}>
+                    <p className="font-black">ميزانية الحملة الآن (من الخادم)</p>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs md:grid-cols-6">
+                      <span>طلبات مُسلَّمة: <b>{b.deliveredOrders}</b></span>
+                      <span>المسموح: <b>{b.allowanceJod} د.أ</b></span>
+                      <span>محجوز: <b>{b.heldJod} د.أ</b></span>
+                      <span>مصروف: <b>{b.spentJod} د.أ</b></span>
+                      <span>المتاح: <b>{b.availableJod} د.أ</b></span>
+                      <span>المستخدم: <b>{b.usedPct}%</b></span>
+                    </div>
+                    <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-white/70"><div className="h-full rounded-full bg-current" style={{ width: `${Math.min(100, b.usedPct)}%` }} /></div>
+                    <p className="mt-2 text-[11px]">المسموح = الأقل بين الميزانية القصوى ({b.capJod} د.أ) و(الرصيد الافتتاحي {b.startJod} د.أ + {b.per100Jod ?? '—'} د.أ لكل 100 طلب مُسلَّم). الجائزة التي لا يكفيها المتاح لا تُسحب ولا تظهر.{b.usedPct >= 80 ? ' ⚠️ اقتربت الحملة من حدّها.' : ''}</p>
+                  </div>
+                );
+              })()}
+              {projection && (
+                <div className={`rounded-2xl border p-4 text-sm font-bold ${projection.per100 > (draft.budgetPer100Jod ?? 12) ? 'border-red-300 bg-red-50 text-red-900' : 'border-slate-200 bg-white text-slate-800'}`} data-testid="wheel-admin-projection" data-per100={Math.round(projection.per100 * 100) / 100}>
+                  <p className="font-black">التكلفة المتوقعة بهذه الأوزان (تقدير، لا ضمان)</p>
+                  <div className="mt-2 grid grid-cols-1 gap-1 text-xs md:grid-cols-3">
+                    {TIERS.map((t) => <span key={t}>لكل لفة — {TIER_SHORT_AR[t]}: <b>{Math.round(projection.perSpin[t] * 1000) / 1000} د.أ</b></span>)}
+                  </div>
+                  <p className="mt-2 text-xs">لكل 100 طلب مُسلَّم: <b data-testid="wheel-admin-projection-per100">{Math.round(projection.per100 * 100) / 100} د.أ</b> (الهدف {draft.budgetPer100Jod ?? 12} د.أ){projection.per100 > (draft.budgetPer100Jod ?? 12) ? ' — ⚠️ أعلى من الهدف' : ''}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+                    <span>افتراضات:</span>
+                    {TIERS.map((t) => (
+                      <label key={t} className="flex items-center gap-1">{TIER_SHORT_AR[t]} %<input type="number" min="0" max="100" className="w-16 rounded border px-1" value={Math.round(assume.mix[t] * 100)} onChange={(e) => setAssume((a) => ({ ...a, mix: { ...a.mix, [t]: Math.max(0, numIn(e.target.value)) / 100 } }))} /></label>
+                    ))}
+                    <label className="flex items-center gap-1">لفات لكل طلب<input type="number" min="0" step="0.1" className="w-16 rounded border px-1" value={assume.spinsPerOrder} onChange={(e) => setAssume((a) => ({ ...a, spinsPerOrder: Math.max(0, numIn(e.target.value)) }))} /></label>
+                  </div>
+                </div>
+              )}
               {check.warnings.length > 0 && (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-900" data-testid="wheel-admin-warnings">
                   <p className="font-black">تنبيهات مالية / شروط (لا تمنع الحفظ):</p>

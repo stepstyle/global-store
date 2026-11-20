@@ -26,6 +26,7 @@
 
 import { encodeFields, decodeFields, isConflict } from './firestore.js';
 import { log } from './http.js';
+import { budgetPath, budgetState, affordable, budgetHold, budgetRelease, costMils } from './wheel.js';
 import { NO_PRIZE, SPIN_ATTEMPTS, campaignOpen, drawPrize, entitlement, prizeHoldMs, secureRand, validCampaign, isSecondOrderPrize, secondOrderState, secondOrderTerms, secondOrderFields, secondOrderWindowMs } from './wheel.js';
 
 const DAY_MS = 86_400_000;
@@ -72,7 +73,7 @@ export async function guestSpin(fs, cfg, ticket, ip, { now = () => Date.now(), r
     const iPath = await ipPath(cfg.wheelPhoneSecret, cid, ip || 'unknown', day);
     const pooled = (campaign?.prizes || []).filter((p) => p.type !== 'none');
     const poolPaths = pooled.map((p) => `wheelPool/${cid}_${p.id}`);
-    const [gDoc, ipDoc, ...poolDocs] = await fs.batchGet([gPath, iPath, ...poolPaths]);
+    const [gDoc, ipDoc, budgetDoc, ...poolDocs] = await fs.batchGet([gPath, iPath, budgetPath(cid), ...poolPaths]);
     // the same ticket: the stored result, whatever happened to the campaign since (never a second draw)
     if (gDoc.exists) return { status: 200, body: { ok: true, repeated: true, result: publicGuest(decodeFields(gDoc.fields)) } };
     const open = campaignOpen(campaign, at);
@@ -85,7 +86,8 @@ export async function guestSpin(fs, cfg, ticket, ip, { now = () => Date.now(), r
     const remaining = new Map(pooled.map((p, i) => [p.id, poolDocs[i].exists ? Number(decodeFields(poolDocs[i].fields).remaining) || 0 : 0]));
     // no account = no trusted order history: ALWAYS the chances of a NEW customer (owner's rule). The result is fixed
     // here; signing in later links it as it is — never re-drawn with the account's tier.
-    const drawnId = drawPrize(campaign, remaining, rand, at, 'new');
+    // ...and only prizes the campaign BUDGET can pay now (a guest's won prize holds its cost until it is claimed / ends)
+    const drawnId = drawPrize(campaign, affordable(campaign, remaining, budgetState(campaign, budgetDoc)), rand, at, 'new');
     const slot = campaign.prizes.find((p) => p.id === drawnId) || null;
     const prize = slot && slot.type !== 'none' ? slot : null;
     // second-order prize (owner's exception): no 60-minute use window — its 5 days start at the account's first
@@ -97,7 +99,7 @@ export async function guestSpin(fs, cfg, ticket, ip, { now = () => Date.now(), r
       campaignId: cid, prizeId: slot ? slot.id : NO_PRIZE, label: slot ? slot.label : 'حظ أوفر',
       productId: prize?.productId ?? null, variantId: prize?.variantId ?? null,
       // the prize terms, FIXED now: the claim copies them as they are (an admin edit never changes a won prize)
-      prizeType: prize ? prize.type : 'none', tier: 'new',
+      prizeType: prize ? prize.type : 'none', tier: 'new', ...(prize ? { costMils: costMils(prize) } : {}),
       ...(prize ? { valueJod: prize.valueJod, minOrderJod: prize.minOrderJod, appliesTo: prize.appliesTo, description: prize.description } : {}),
       status: prize ? 'held' : NO_PRIZE,
       // holdExpiry exists ONLY while a won unit is held for an unclaimed ticket (the cron query reads exactly those)
@@ -114,6 +116,7 @@ export async function guestSpin(fs, cfg, ticket, ip, { now = () => Date.now(), r
     if (prize) {
       const i = pooled.indexOf(prize);
       writes.push({ update: { name: fs.name(poolPaths[i]), fields: encodeFields({ remaining: remaining.get(prize.id) - 1 }) }, updateMask: { fieldPaths: ['remaining'] }, currentDocument: { updateTime: poolDocs[i].updateTime } });
+      if (costMils(prize) > 0) writes.push(budgetHold(fs, cid, budgetDoc, costMils(prize)));
     }
     const r = await fs.commit(writes);
     if (r.ok) {
@@ -135,6 +138,8 @@ export async function guestState(fs, cfg, ticket) {
 }
 
 const spinId = (cid, uid, n) => `${cid}_${uid}_${n}`;
+/** a ticket's held unit AND its held cost go back together (one commit) */
+const poolBacks = (fs, g) => [poolBack(fs, g), ...budgetRelease(fs, g)];
 const poolBack = (fs, g) => ({ update: { name: fs.name(`wheelPool/${g.campaignId}_${g.prizeId}`), fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: 'remaining', increment: { integerValue: '1' } }], currentDocument: { exists: true } });
 
 /**
@@ -177,7 +182,7 @@ export async function claimGuest(fs, cfg, uid, ticket, { now = () => Date.now(),
       // never spun — this spin still IS its welcome spin, recorded as expired (signing in late never gives a fresh draw)
       const fresh = e.used === 0 && e.granted >= 1;
       if (releasedUnclaimed && !fresh) return { status: 409, body: { ok: false, code: 'WHEEL_GUEST_EXPIRED' } };
-      const writes = [close('expired', fresh ? { claimedBy: uid, claimedSpin: spinId(cid, uid, 1) } : {}), ...(lapsedHeld ? [poolBack(fs, g)] : [])];
+      const writes = [close('expired', fresh ? { claimedBy: uid, claimedSpin: spinId(cid, uid, 1) } : {}), ...(lapsedHeld ? poolBacks(fs, g) : [])];
       if (fresh) {
         writes.push(
           { update: { name: fs.name(sPath), fields: encodeFields({ campaignId: cid, uid, n: 1, prizeId: g.prizeId, label: g.label, prizeType: g.prizeType || 'none', valueJod: g.valueJod, minOrderJod: g.minOrderJod, appliesTo: g.appliesTo, ...(email ? { email: String(email).slice(0, 200) } : {}), status: 'expired', expiresAt: g.expiresAt ?? null, expiredAt: new Date(at), fromGuest: true, createdAt: g.createdAt instanceof Date ? g.createdAt : new Date(at), claimedAt: new Date(at) }) }, currentDocument: { exists: false } },
@@ -192,7 +197,7 @@ export async function claimGuest(fs, cfg, uid, ticket, { now = () => Date.now(),
       continue;
     }
     if (e.used > 0 || e.granted < 1) {
-      const r = await fs.commit([close('refused', { refusedFor: uid }), ...(held ? [poolBack(fs, g)] : [])]);
+      const r = await fs.commit([close('refused', { refusedFor: uid }), ...(held ? poolBacks(fs, g) : [])]);
       if (r.ok) {
         log('wheel.guest_refused', { campaignId: cid });
         return { status: 409, body: { ok: false, code: 'WHEEL_ACCOUNT_HAS_SPIN' } };
@@ -212,7 +217,7 @@ export async function claimGuest(fs, cfg, uid, ticket, { now = () => Date.now(),
       // this account's actual second order is behind it: the prize cannot be used. It still is the welcome spin.
       const fresh = { campaignId: cid, uid, n: 1, prizeId: g.prizeId, label: g.label, prizeType: g.prizeType, valueJod: g.valueJod, minOrderJod: g.minOrderJod, appliesTo: g.appliesTo, ...(email ? { email: String(email).slice(0, 200) } : {}), status: 'expired', expiresAt: null, expiredAt: new Date(at), expiredReason: 'not_second_order', fromGuest: true, createdAt: g.createdAt instanceof Date ? g.createdAt : new Date(at), claimedAt: new Date(at) };
       const r = await fs.commit([
-        close('expired', { claimedBy: uid, claimedSpin: spinId(cid, uid, 1) }), poolBack(fs, g),
+        close('expired', { claimedBy: uid, claimedSpin: spinId(cid, uid, 1) }), ...poolBacks(fs, g),
         { update: { name: fs.name(sPath), fields: encodeFields(fresh) }, currentDocument: { exists: false } },
         entDoc.exists
           ? { update: { name: fs.name(entPath), fields: encodeFields({ used: 1 }) }, updateMask: { fieldPaths: ['used'] }, currentDocument: { updateTime: entDoc.updateTime } }
@@ -234,6 +239,8 @@ export async function claimGuest(fs, cfg, uid, ticket, { now = () => Date.now(),
         : issued && g.expiresAt instanceof Date ? { expiresAt: g.expiresAt, issuedExpiry: g.expiresAt } : {}),
       // drawn with the NEW-customer chances before signing in — kept as it is (never re-drawn after the tier is known)
       tier: g.tier || 'new',
+      // the held cost now belongs to the account's result (released / spent with it)
+      ...(issued && Number(g.costMils) > 0 ? { costMils: Number(g.costMils) } : {}),
       fromGuest: true, createdAt: g.createdAt instanceof Date ? g.createdAt : new Date(at), claimedAt: new Date(at),
     };
     const writes = [
@@ -276,7 +283,7 @@ export async function releaseExpiredGuestHolds(fs, cfg, { now = Date.now(), page
       const valid = g.status === 'held' && g.prizeId && g.prizeId !== NO_PRIZE;
       const r = await fs.commit([
         { update: { name: d.name, fields: encodeFields(valid ? { status: 'expired', holdExpiry: null, closedAt: new Date(now) } : { holdExpiry: null }) }, updateMask: { fieldPaths: valid ? ['status', 'holdExpiry', 'closedAt'] : ['holdExpiry'] }, currentDocument: { updateTime: d.updateTime } },
-        ...(valid ? [poolBack(fs, g)] : []),
+        ...(valid ? poolBacks(fs, g) : []),
       ]);
       if (r.ok && valid) released += 1;
     }

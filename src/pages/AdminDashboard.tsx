@@ -924,7 +924,7 @@ const AdminDashboard: React.FC = () => {
                 { title: t('totalSales'), value: money(stats.sales), icon: DollarSign, color: 'bg-emerald-50 text-emerald-600', border: 'border-emerald-100' },
                 { title: t('newOrders'), value: newOrdersCount, icon: Package, color: 'bg-amber-50 text-amber-600', border: 'border-amber-100' },
                 { title: t('users'), value: stats.users.toLocaleString(), icon: Users, color: 'bg-sky-50 text-sky-600', border: 'border-sky-100' },
-                { title: 'Avg Value', value: money(stats.avg), icon: BarChart, color: 'bg-slate-50 text-slate-600', border: 'border-slate-100' },
+                { title: language === 'ar' ? 'متوسط قيمة الطلب' : 'Avg Value', value: money(stats.avg), icon: BarChart, color: 'bg-slate-50 text-slate-600', border: 'border-slate-100' },
               ].map((stat, idx) => (
                 <div key={idx} className={`bg-white p-6 rounded-[2rem] border ${stat.border} shadow-sm hover:shadow-md transition-all duration-300 group`}>
                   <div className="flex items-center gap-4">

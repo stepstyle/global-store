@@ -12,15 +12,16 @@ export const tierW = (p: Pick<AdminSlot, 'weight' | 'weights'>, t: Tier) => (p.w
 
 export type AdminSlot = {
   id: string; type: 'gift' | 'discount' | 'free_delivery' | 'none'; label: string; description?: string; icon?: string; color?: string | null; imageUrl?: string;
-  weight: number; weights?: Partial<Record<Tier, number>>; active?: boolean; startsAt?: string | null; endsAt?: string | null;
+  weight: number; weights?: Partial<Record<Tier, number>>; costConfirmed?: boolean; active?: boolean; startsAt?: string | null; endsAt?: string | null;
   quantity?: number; unitCostJod?: number; valueJod?: number; minOrderJod?: number; appliesTo?: 'this_order' | 'next_order';
   productId?: string | null; variantId?: string | null; validDays?: number | null;
 };
 export type AdminCampaign = {
-  active: boolean; minOrderJod: number; budgetJod: number; noPrizeWeight?: number; startsAt: string; endsAt: string; giftOnCancel: 'return' | 'expire';
+  active: boolean; minOrderJod: number; budgetJod: number; budgetPer100Jod?: number | null; budgetStartJod?: number; noPrizeWeight?: number; startsAt: string; endsAt: string; giftOnCancel: 'return' | 'expire';
   freeFirstChance?: boolean; openGiftsPerPhone?: number; prizeValidDays?: number; terms?: string; prizes: AdminSlot[];
 };
-export type AdminWheel = { mode: string; campaignId: string; prizeHoldMinutes: number; exists: boolean; updateTime: string | null; campaign: AdminCampaign | null; errors: string[]; warnings: string[]; pool: Record<string, number | null> };
+export type AdminWheel = { mode: string; campaignId: string; prizeHoldMinutes: number; exists: boolean; updateTime: string | null; campaign: AdminCampaign | null; errors: string[]; warnings: string[]; pool: Record<string, number | null>;
+  budget?: { deliveredOrders: number; allowanceJod: number; capJod: number; heldJod: number; spentJod: number; availableJod: number; usedPct: number; per100Jod: number | null; startJod: number } };
 export type AdminSpinRow = { spinId: string; uid: string; email: string; n: number; prizeId: string; label: string; tier?: string | null; deliveredCount?: number | null; type: string; valueJod: number | null; minOrderJod: number | null; appliesTo: string; status: string; orderId: string | null; createdAt: string | null; expiresAt: string | null };
 export type AdminFailure = { ok: false; status: number; code: string; errors?: string[]; warnings?: string[] };
 export type AdminResult<T> = { ok: true; value: T } | AdminFailure;
@@ -63,6 +64,62 @@ export function slotShares(c: Pick<AdminCampaign, 'prizes' | 'noPrizeWeight'>, t
  * By the store's cost of one unit: <= 1 JOD [60, 65, 70] · <= 2 [25, 28, 32] · <= 3 [10, 12, 15] · <= 5 [3, 4, 6] ·
  * more [1, 1, 2]; each "حظ أوفر" [120, 115, 110] (new, returning, loyal).
  */
+// ------------------------------------------------------------------ budget (owner: 12 JOD per 100 delivered orders)
+export type BudgetAssumptions = { mix: Record<Tier, number>; spinsPerOrder: number };
+/** planning assumptions (editable in the dashboard, never stored): customer mix and spins per delivered order */
+export const DEFAULT_ASSUMPTIONS: BudgetAssumptions = { mix: { new: 0.6, returning: 0.25, loyal: 0.15 }, spinsPerOrder: 1.3 };
+const drawableNow = (p: AdminSlot) => p.active !== false && (p.type === 'none' || (p.quantity ?? 0) > 0);
+const costOf = (p: AdminSlot) => (p.type === 'none' ? 0 : Math.max(0, Number(p.unitCostJod ?? 0)));
+/**
+ * Expected prize cost per spin for each tier (what the Worker would draw with these weights, prizes with stock only),
+ * then per 100 delivered orders = 100 x spinsPerOrder x the mix-weighted cost per spin. A PROJECTION, not a guarantee.
+ */
+export function projectBudget(c: Pick<AdminCampaign, 'prizes' | 'noPrizeWeight'>, a: BudgetAssumptions = DEFAULT_ASSUMPTIONS) {
+  const perSpin = {} as Record<Tier, number>;
+  for (const t of TIERS) {
+    const ps = c.prizes.filter((p) => drawableNow(p) && tierW(p, t) > 0);
+    const total = ps.reduce((s, p) => s + tierW(p, t), 0) + (c.noPrizeWeight || 0);
+    perSpin[t] = total > 0 ? ps.reduce((s, p) => s + tierW(p, t) * costOf(p), 0) / total : 0;
+  }
+  const mixTotal = TIERS.reduce((s, t) => s + Math.max(0, a.mix[t]), 0) || 1;
+  const perSpinMix = TIERS.reduce((s, t) => s + (Math.max(0, a.mix[t]) / mixTotal) * perSpin[t], 0);
+  return { perSpin, perSpinMix, per100: 100 * a.spinsPerOrder * perSpinMix };
+}
+/**
+ * CONSERVATIVE weights for a per-100 target (a starting point, never applied or saved by itself):
+ *   - only prizes whose real cost is CONFIRMED get a weight (an unconfirmed cost -> 0, cannot be planned)
+ *   - cheaper = more common (by cost class), costly = rare; loyal customers a measured edge (x1.15 returning, x1.4 loyal)
+ *   - each "حظ أوفر" 10000; prize weights scaled per tier so the projection lands at `margin` (85%) of the target
+ *     (target per spin split new 0.85 : returning 1.0 : loyal 1.3, normalised to the mix)
+ */
+export function suggestForBudget(c: AdminCampaign, a: BudgetAssumptions = DEFAULT_ASSUMPTIONS, margin = 0.85): AdminSlot[] {
+  const per100 = c.budgetPer100Jod ?? 12;
+  const B = (per100 * margin) / (100 * a.spinsPerOrder);
+  const f: Record<Tier, number> = { new: 0.85, returning: 1, loyal: 1.3 };
+  const mixTotal = TIERS.reduce((s, t) => s + Math.max(0, a.mix[t]), 0) || 1;
+  const norm = TIERS.reduce((s, t) => s + (Math.max(0, a.mix[t]) / mixTotal) * f[t], 0) || 1;
+  const edge: Record<Tier, number> = { new: 1, returning: 1.15, loyal: 1.4 };
+  const base = (p: AdminSlot) => { const k = costOf(p); return k <= 1 ? 60 : k <= 2 ? 25 : k <= 3 ? 10 : k <= 5 ? 3 : 1; };
+  const NONE_W = 10_000;
+  const nones = c.prizes.filter((p) => p.type === 'none' && p.active !== false).length;
+  const plannable = (p: AdminSlot) => p.type !== 'none' && p.costConfirmed === true && costOf(p) > 0;
+  const scale = {} as Record<Tier, number>;
+  for (const t of TIERS) {
+    const target = (B * f[t]) / norm;
+    const ps = c.prizes.filter(plannable);
+    const R = ps.reduce((s, p) => s + base(p) * edge[t], 0);
+    const C = ps.reduce((s, p) => s + base(p) * edge[t] * costOf(p), 0);
+    // cost per spin = s*C / (N + s*R) = target  ->  s = target*N / (C - target*R)
+    scale[t] = C - target * R > 0 ? (target * NONE_W * nones) / (C - target * R) : 0;
+  }
+  return c.prizes.map((p) => {
+    if (p.type === 'none') return { ...p, weights: { new: NONE_W, returning: NONE_W, loyal: NONE_W }, weight: NONE_W };
+    if (!plannable(p)) return { ...p, weights: { new: 0, returning: 0, loyal: 0 }, weight: 0 };
+    const w = Object.fromEntries(TIERS.map((t) => [t, Math.floor(scale[t] * base(p) * edge[t])])) as Record<Tier, number>;
+    return { ...p, weights: w, weight: w.new };
+  });
+}
+
 export function suggestedWeights(p: AdminSlot): Record<Tier, number> {
   const row = (a: number, b: number, c: number) => ({ new: a, returning: b, loyal: c });
   if (p.type === 'none') return row(120, 115, 110);

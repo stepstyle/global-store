@@ -1,7 +1,7 @@
 // Prize wheel — loyalty tiers, dashboard side (pure parts): shares per tier like the Worker, the SUGGESTED weights.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { slotShares, suggestedWeights, tierW, TIERS } from '../../src/services/wheelAdmin.ts';
+import { slotShares, suggestedWeights, suggestForBudget, projectBudget, DEFAULT_ASSUMPTIONS, tierW, TIERS } from '../../src/services/wheelAdmin.ts';
 import { checkCampaign, drawPrize, tierWeight } from '../../workers/order-worker/src/wheel.js';
 
 const slot = (o) => ({ type: 'discount', label: 'x', valueJod: 1, minOrderJod: 5, quantity: 10, unitCostJod: 1, weight: 0, ...o });
@@ -40,4 +40,26 @@ test('the SUGGESTED weights (a starting point, never applied by itself): cheap c
   for (const cost of [1, 2, 3, 5, 9]) assert.ok(s(cost).loyal >= s(cost).new, `loyal edge for cost ${cost}`);
   const none = suggestedWeights({ id: 'none-1', type: 'none', label: 'حظ أوفر', weight: 0 });
   assert.ok(none.new >= none.loyal, 'loyal customers get "حظ أوفر" a little less often');
+});
+
+test('budget projection = weights x costs x spins per order (by hand), and the conservative suggestion lands UNDER the 12 JOD / 100 target', () => {
+  const prizes = [
+    slot({ id: 'd1', unitCostJod: 1, costConfirmed: true, weights: { new: 10, returning: 10, loyal: 10 } }),
+    ...[1, 2, 3].map((i) => ({ id: `none-${i}`, type: 'none', label: 'حظ أوفر', weight: 0, active: true, weights: { new: 30, returning: 30, loyal: 30 } })),
+  ];
+  const p = projectBudget({ prizes, noPrizeWeight: 0 }, { mix: { new: 1, returning: 0, loyal: 0 }, spinsPerOrder: 1 });
+  assert.ok(Math.abs(p.perSpin.new - 10 / 100) < 1e-12); // 10 of 100 weight, 1 JOD
+  assert.ok(Math.abs(p.per100 - 10) < 1e-9);
+  // the agreed prizes (illustrative costs; unknown costs excluded)
+  const P = (id, cost, extra = {}) => slot({ id, type: 'gift', unitCostJod: cost, valueJod: cost, quantity: 100, active: true, costConfirmed: cost > 0, ...extra });
+  const camp = { budgetPer100Jod: 12, noPrizeWeight: 0, prizes: [P('ship-1', 3, { type: 'free_delivery' }), P('disc-1', 1, { type: 'discount' }), P('gift-2', 2), P('gift-3', 3), P('watch-1', 0), P('gift-4', 4), P('second-4', 4, { type: 'discount', appliesTo: 'next_order' }), P('gift-5', 5), P('disc-4', 4, { type: 'discount' }), P('disc-5', 5, { type: 'discount' }), ...[1, 2, 3].map((i) => ({ id: `none-${i}`, type: 'none', label: 'حظ أوفر', weight: 0, active: true }))] };
+  const sug = suggestForBudget(camp, DEFAULT_ASSUMPTIONS);
+  const proj = projectBudget({ ...camp, prizes: sug }, DEFAULT_ASSUMPTIONS);
+  assert.ok(proj.per100 <= 12 && proj.per100 >= 8, `projection ${proj.per100}`);
+  assert.deepEqual(sug.find((p) => p.id === 'watch-1').weights, { new: 0, returning: 0, loyal: 0 }, 'an unconfirmed / unknown cost is never planned');
+  const big = sug.find((p) => p.id === 'disc-5');
+  const small = sug.find((p) => p.id === 'disc-1');
+  for (const t of TIERS) assert.ok(small.weights[t] > big.weights[t] * 10, `${t}: the cheap prize far more common`);
+  assert.ok(big.weights.loyal > big.weights.new, 'the big prize: more likely for loyal customers');
+  assert.ok(slotShares({ ...camp, prizes: sug }, 'loyal')['disc-5'] < 0.005, '...but still rare (< 0.5%)');
 });

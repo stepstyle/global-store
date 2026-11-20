@@ -267,6 +267,27 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
             </div>
           )}
 
+          {/* honesty: the segments are drawn the SAME size; the chances are not — say so and show them */}
+          <p className="mt-4 text-center text-[11px] font-bold text-ink-600" data-testid="wheel-odds-note">{L('حجم الخانات متساوٍ ولا يمثّل فرصة الفوز؛ معظم اللفات «حظ أوفر». الفرص الفعلية في «فرص الفوز» أدناه.', 'Segments are drawn the same size; that is not the chance of winning — most spins are "better luck". The real chances are under "Chances" below.')}</p>
+          {slots.some((s) => s.chance !== null) && (
+            <details className="mt-3 text-xs text-ink-700" data-testid="wheel-odds">
+              <summary className="cursor-pointer font-black">{L('فرص الفوز', 'Chances')}</summary>
+              <ul className="mt-2 space-y-0.5 ps-1">
+                {(Object.values(slots.reduce((acc, s) => {
+                  // the three "حظ أوفر" segments are one outcome: shown as one line with their total chance
+                  const k = s.type === 'none' ? 'none' : s.id;
+                  acc[k] = acc[k] ? { ...acc[k], chance: (acc[k].chance ?? 0) + (s.chance ?? 0) } : { ...s };
+                  return acc;
+                }, {} as Record<string, WheelSlot>)) as WheelSlot[]).map((s) => (
+                  <li key={s.id} className="flex justify-between gap-3" data-testid="wheel-odds-row" data-slot-id={s.type === 'none' ? 'none' : s.id} data-chance={s.chance ?? ''}>
+                    <span>{s.type === 'none' ? L('حظ أوفر (الخانات الثلاث)', 'Better luck (the three segments)') : s.label}</span>
+                    <span className="font-black tabular-nums" dir="ltr">{s.chance === null ? '—' : `${(Math.round(s.chance * 1000) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 })}%`}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1 text-[11px]">{L('الفرص لفئتك الحالية (حسب طلباتك المُسلَّمة؛ الزائر دون حساب = زبون جديد)، وتتغير مع نفاد الكميات وميزانية الحملة.', 'For your current tier (from your delivered orders; a visitor without an account = new customer); they change as prizes run out and with the campaign budget.')}</p>
+            </details>
+          )}
           <details className="mt-5 text-xs text-ink-700">
             <summary className="cursor-pointer font-black">{L('الشروط', 'Terms')}</summary>
             <ul className="mt-2 list-disc space-y-1 ps-5">

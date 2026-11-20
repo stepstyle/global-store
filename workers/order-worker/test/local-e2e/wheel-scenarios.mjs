@@ -165,6 +165,12 @@ export function buildWheelScenarios(ctx) {
       const segs = await t.evaluate(`[...document.querySelectorAll('[data-testid=wheel-segment]')].map((s) => s.dataset.slotType + ':' + s.dataset.slotId)`);
       assert.deepEqual(segs, ['discount:disc-1', 'none:none-1', 'gift:gift-2', 'none:none-2', 'gift:watch', 'none:none-3']);
       assert.equal((await t.evaluate(`[...document.querySelectorAll('[data-testid=wheel-segment] text')].map((x) => x.textContent).join('|')`)).split('حظ أوفر').length - 1, 3, 'the three "حظ أوفر" labels are drawn');
+      // honesty: equal segments are NOT equal chances — the note + the real chances (server) adding up to 100%
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-odds-note]').innerText`), /حجم الخانات متساوٍ ولا يمثّل فرصة الفوز/);
+      const odds = await t.evaluate(`[...document.querySelectorAll('[data-testid=wheel-odds-row]')].map((r) => [r.dataset.slotId, Number(r.dataset.chance)])`);
+      assert.deepEqual(odds.map((o) => o[0]), ['disc-1', 'none', 'gift-2', 'watch'], 'the three "حظ أوفر" as one line');
+      assert.ok(Math.abs(odds.reduce((s, o) => s + o[1], 0) - 1) < 0.01, JSON.stringify(odds));
+      assert.ok(Math.abs(odds.find((o) => o[0] === 'watch')[1] - 1 / 10) < 0.002, 'watch: weight 1 of 10');
       const label = await t.evaluate(`document.querySelector('[data-testid=wheel-spin]').innerText.trim()`);
       assert.equal(label, 'لفّ الدولاب');
       assert.doesNotMatch(await t.evaluate(`document.querySelector('[data-testid=wheel-popup]').innerText`), /سجّل الدخول بـ Google ولفّ/);
@@ -491,8 +497,15 @@ export function buildWheelScenarios(ctx) {
       // suggested weights: filled into the draft for review, NOT saved
       const before = (await get(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`)).prizes.find((p) => p.id === 'none-1').weights;
       await t.evaluate(`document.querySelector('[data-testid=wheel-admin-suggest]').click(); true`);
-      await t.waitFor(`document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="none-1"] [data-testid=wheel-admin-weight-new]')?.value === '120'`, 10_000, 'suggestion filled in the draft');
-      assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="none-1"] [data-testid=wheel-admin-weight-loyal]').value`), '110');
+      // the CONSERVATIVE budget suggestion: each "حظ أوفر" 10000; prizes with an UNCONFIRMED cost get 0
+      await t.waitFor(`document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="none-1"] [data-testid=wheel-admin-weight-new]')?.value === '10000'`, 10_000, 'suggestion filled in the draft');
+      assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="none-1"] [data-testid=wheel-admin-weight-loyal]').value`), '10000');
+      assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="gift-1"] [data-testid=wheel-admin-weight-new]').value`), '0', 'cost not confirmed -> not planned');
+      // the budget, from the server, and the projection with these weights
+      assert.ok(await t.evaluate(`!!document.querySelector('[data-testid=wheel-admin-budget-state]')`), 'budget state shown');
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-admin-budget-state]').innerText`), /المسموح[\s\S]*محجوز[\s\S]*مصروف[\s\S]*المتاح/);
+      assert.ok(Number(await t.evaluate(`document.querySelector('[data-testid=wheel-admin-projection]').dataset.per100`)) >= 0);
+      assert.ok(await t.evaluate(`!!document.querySelector('[data-testid=wheel-admin-cost-confirmed]')`), 'cost-confirmed checkbox per prize');
       await shot(t, 'wu06-admin-tiers');
       assert.deepEqual((await get(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`)).prizes.find((p) => p.id === 'none-1').weights, before, 'not saved by itself');
       await fresh(t);
@@ -633,6 +646,61 @@ export function buildWheelScenarios(ctx) {
       await sleep(1_500);
       assert.equal((await spinDoc(uid2, 1)).status, 'reserved', 'the window passing after the order changes nothing');
       assert.equal((await get(`orders/${o2}`)).wheelPrize.discountJod, 1);
+    }],
+    ['WU09', 'SITE TOUR (desktop 1366 + phone 390, Arabic RTL + English LTR): home, shop, search, product, cart, checkout, account, my orders, tracking, about, wheel, admin — no horizontal scroll, right direction, no uncaught JS error, content present; screenshots for review', async (t) => {
+      await ctx.setCampaign([{ id: 'disc-1', type: 'discount', label: 'خصم دينار', valueJod: 1, minOrderJod: 5, weight: 1, quantity: 5 }, ...NONES]);
+      const email = 'wheel.tour@example.invalid';
+      const pw = 'Test-pass-12345';
+      await ctx.createGoogleCustomer({ email, password: pw, name: 'زبون الجولة' });
+      // every uncaught error / unhandled rejection of the page is recorded (the app's own console noise is not)
+      await t.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__tourErrors = []; addEventListener('error', (e) => window.__tourErrors.push(String(e.message || e.type))); addEventListener('unhandledrejection', (e) => window.__tourErrors.push('rejection: ' + String(e.reason && (e.reason.message || e.reason))));` });
+      const pages = [
+        ['home', '#/'], ['shop', '#/shop'], ['search', '#/shop?search=%D8%AF%D9%81%D8%AA%D8%B1'], ['product', '#/product/p-simple'],
+        ['cart', '#/cart'], ['checkout', '#/checkout'], ['account', '#/account'], ['my-orders', '#/my-orders'],
+        ['tracking', '#/tracking'], ['about', '#/about'], ['wheel', '#/wheel'],
+      ];
+      const problems = [];
+      const visit = async (label, hash, lang) => {
+        await t.navigate(`${ctx.base}/?tour=${Date.now()}${hash}`);
+        await t.waitFor(`document.readyState === 'complete' && (document.querySelector('main, #root')?.innerText || '').trim().length > 40`, 30_000, `${label} content`);
+        await sleep(1_200);
+        const st = await t.evaluate(`({ w: document.documentElement.scrollWidth, vw: innerWidth, dir: document.documentElement.dir || getComputedStyle(document.body).direction, errs: (window.__tourErrors || []).slice(0, 3) })`);
+        if (st.w > st.vw + 1) problems.push(`${lang} ${label}: horizontal scroll ${st.w} > ${st.vw}`);
+        if (st.dir !== (lang === 'ar' ? 'rtl' : 'ltr')) problems.push(`${lang} ${label}: direction ${st.dir}`);
+        if (st.errs.length) problems.push(`${lang} ${label}: JS errors ${JSON.stringify(st.errs)}`);
+        // the floating wheel button never covers a price / quantity (product, cart)
+        if (['product', 'cart'].includes(label) && (await t.evaluate(`!!document.querySelector('[data-testid=wheel-fab]')`))) problems.push(`${lang} ${label}: wheel button over the page`);
+        if (label === 'product' && lang === 'ar' && /No media available/.test(await t.evaluate(`document.body.innerText`))) problems.push('ar product: English placeholder');
+      };
+      for (const [vw, vh, mobile, tag] of [[1366, 900, false, 'desk'], [390, 844, true, 'phone']]) {
+        await viewport(t, vw, vh, mobile);
+        await fresh(t);
+        await openCheckoutWith(t, CART_OK); // a cart for the cart / checkout pages (and language = ar)
+        await t.evaluate(`localStorage.setItem('anta_wheel_popup_seen_v1', '1'); true`);
+        await signIn(t, email, pw);
+        for (const [label, hash] of pages) {
+          await visit(label, hash, 'ar');
+          if (['home', 'product', 'checkout', 'wheel', 'shop'].includes(label)) await shot(t, `wu09-${tag}-${label}`, { full: false });
+        }
+        // English (where the site offers it)
+        await t.evaluate(`localStorage.setItem('language', 'en'); true`);
+        for (const [label, hash] of pages.filter(([l]) => ['home', 'shop', 'product', 'cart', 'checkout'].includes(l))) {
+          await visit(label, hash, 'en');
+          if (label === 'home') await shot(t, `wu09-${tag}-home-en`, { full: false });
+        }
+        await t.evaluate(`localStorage.setItem('language', 'ar'); true`);
+        // the dashboard (admin)
+        await signIn(t, ctx.admin.email, ctx.admin.password);
+        await t.evaluate(`if (location.hash !== '#/admin') location.hash = '#/admin'; true`);
+        await t.waitFor(`document.body.innerText.includes('لوحة التحكم')`, 30_000, 'dashboard');
+        await sleep(1_000);
+        const a = await t.evaluate(`({ w: document.documentElement.scrollWidth, vw: innerWidth, errs: (window.__tourErrors || []).slice(0, 3) })`);
+        if (a.w > a.vw + 1) problems.push(`${tag} admin: horizontal scroll ${a.w} > ${a.vw}`);
+        if (a.errs.length) problems.push(`${tag} admin: JS errors ${JSON.stringify(a.errs)}`);
+        await shot(t, `wu09-${tag}-admin`, { full: false });
+        await signIn(t, email, pw);
+      }
+      assert.deepEqual(problems, []);
     }],
   ];
 }

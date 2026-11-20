@@ -11,6 +11,8 @@ import WheelExperience from './WheelExperience';
 
 const { useLocation } = ReactRouterDOM as any;
 const QUIET_PATHS = [/^\/checkout/, /^\/admin/, /^\/login/, /^\/order-success/, /^\/wheel/];
+// the small floating button is also hidden where it would cover the price / quantity (found on phones)
+const FAB_HIDDEN_PATHS = [/^\/product\//, /^\/cart/];
 
 export default function WheelPopup() {
   const { language } = useCart() as any;
@@ -58,7 +60,7 @@ export default function WheelPopup() {
 
   return (
     <>
-      {!open && !quiet && available !== false && (
+      {!open && !quiet && available !== false && !FAB_HIDDEN_PATHS.some((re) => re.test(location?.pathname || '')) && (
         <button
           type="button" onClick={() => setOpen(true)} data-testid="wheel-fab"
           className="fixed bottom-24 start-4 z-[60] flex items-center gap-2 rounded-full border border-gold-200 bg-paper-50/95 px-3.5 py-2 text-sm font-black text-ink-900 shadow-lift backdrop-blur focus:outline-none focus-visible:ring-4 focus-visible:ring-gold-300"

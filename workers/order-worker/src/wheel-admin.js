@@ -11,7 +11,7 @@
 //                                The previous version is kept in wheelCampaignHistory (nothing is lost).
 //   GET  /admin/wheel/spins      the latest results: prize, status, order number, account (uid + e-mail)
 import { encodeFields, decodeFields, isConflict } from './firestore.js';
-import { checkCampaign, validCampaign } from './wheel.js';
+import { checkCampaign, validCampaign, budgetPath, budgetState } from './wheel.js';
 import { log } from './http.js';
 
 const iso = (v) => (v instanceof Date ? v.toISOString() : v ?? null);
@@ -29,12 +29,12 @@ function campaignJson(raw) {
 /** what is written: ONLY the fields checkCampaign understood (normalised), dates as Firestore timestamps */
 function storable(c, actorUid) {
   return {
-    active: c.active, minOrderJod: c.minOrderJod, budgetJod: c.budgetJod, noPrizeWeight: c.noPrizeWeight,
+    active: c.active, minOrderJod: c.minOrderJod, budgetJod: c.budgetJod, budgetPer100Jod: c.budgetPer100Jod, budgetStartJod: c.budgetStartJod, noPrizeWeight: c.noPrizeWeight,
     startsAt: new Date(c.startsAt), endsAt: new Date(c.endsAt), giftOnCancel: c.giftOnCancel,
     freeFirstChance: c.freeFirstChance, openGiftsPerPhone: c.openGiftsPerPhone, prizeValidDays: c.prizeValidDays, terms: c.terms,
     prizes: c.prizes.map((p) => ({
       id: p.id, type: p.type, label: p.label, description: p.description, icon: p.icon, color: p.color, imageUrl: p.imageUrl,
-      weight: p.weight, weights: p.weights, active: p.active, startsAt: p.startsAt === null ? null : new Date(p.startsAt), endsAt: p.endsAt === null ? null : new Date(p.endsAt),
+      weight: p.weight, weights: p.weights, costConfirmed: p.costConfirmed === true, active: p.active, startsAt: p.startsAt === null ? null : new Date(p.startsAt), endsAt: p.endsAt === null ? null : new Date(p.endsAt),
       ...(p.type === 'none' ? {} : {
         quantity: p.quantity, unitCostJod: p.unitCostJod, valueJod: p.valueJod, minOrderJod: p.minOrderJod, appliesTo: p.appliesTo,
         productId: p.productId, variantId: p.variantId, validDays: p.validDays,
@@ -52,7 +52,15 @@ export async function adminWheelGet(fs, cfg) {
   const pooled = (check.campaign?.prizes || (Array.isArray(raw?.prizes) ? raw.prizes : [])).filter((p) => p && p.type !== 'none' && typeof p.id === 'string');
   const poolDocs = pooled.length ? await fs.batchGet(pooled.map((p) => `wheelPool/${cid}_${p.id}`)) : [];
   const pool = Object.fromEntries(pooled.map((p, i) => [p.id, poolDocs[i].exists ? Number(decodeFields(poolDocs[i].fields).remaining) || 0 : null]));
-  return { status: 200, body: { ok: true, mode: cfg.wheelMode, campaignId: cid, prizeHoldMinutes: cfg.wheelPrizeHoldMinutes ?? 60, exists: doc.exists, updateTime: doc.exists ? doc.updateTime : null, campaign: campaignJson(raw), errors: check.errors, warnings: check.warnings, pool } };
+  // the campaign's money: what it may spend now (12 JOD / 100 delivered orders + opening, capped), held, spent, left
+  const b = budgetState(check.campaign, await fs.get(budgetPath(cid)));
+  const jod = (m) => Math.round(m) / 1000;
+  const budget = {
+    deliveredOrders: b.deliveredOrders, allowanceJod: jod(b.allowanceMils), capJod: jod(b.capMils), heldJod: jod(b.heldMils), spentJod: jod(b.spentMils),
+    availableJod: jod(b.availableMils), usedPct: b.allowanceMils > 0 ? Math.round(((b.heldMils + b.spentMils) / b.allowanceMils) * 1000) / 10 : (b.heldMils + b.spentMils > 0 ? 100 : 0),
+    per100Jod: check.campaign?.budgetPer100Jod ?? 12, startJod: check.campaign?.budgetStartJod ?? 0,
+  };
+  return { status: 200, body: { ok: true, mode: cfg.wheelMode, campaignId: cid, prizeHoldMinutes: cfg.wheelPrizeHoldMinutes ?? 60, exists: doc.exists, updateTime: doc.exists ? doc.updateTime : null, campaign: campaignJson(raw), errors: check.errors, warnings: check.warnings, pool, budget } };
 }
 
 export async function adminWheelSave(fs, cfg, body, actorUid) {

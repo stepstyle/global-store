@@ -616,7 +616,7 @@ const ProductDetails: React.FC = () => {
                       <StableProductImage src={activeMedia.url} alt={productTitle} className={`${imgFit} bg-transparent p-0 w-full h-full`} />
                     </div>
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400 font-semibold">No media available</div>
+                    <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400 font-semibold">{isAR ? 'لا توجد صورة' : 'No media available'}</div>
                   )}
                   <button onClick={() => toggleWishlist(product)} className="absolute top-4 end-4 p-3 bg-white/90 backdrop-blur-md rounded-full shadow-md text-slate-300 hover:text-red-500 z-30">
                     <Heart size={24} className={isLiked ? 'text-red-500' : ''} fill={isLiked ? 'currentColor' : 'none'} />
