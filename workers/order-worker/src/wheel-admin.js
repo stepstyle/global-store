@@ -52,7 +52,7 @@ export async function adminWheelGet(fs, cfg) {
   const pooled = (check.campaign?.prizes || (Array.isArray(raw?.prizes) ? raw.prizes : [])).filter((p) => p && p.type !== 'none' && typeof p.id === 'string');
   const poolDocs = pooled.length ? await fs.batchGet(pooled.map((p) => `wheelPool/${cid}_${p.id}`)) : [];
   const pool = Object.fromEntries(pooled.map((p, i) => [p.id, poolDocs[i].exists ? Number(decodeFields(poolDocs[i].fields).remaining) || 0 : null]));
-  return { status: 200, body: { ok: true, mode: cfg.wheelMode, campaignId: cid, exists: doc.exists, updateTime: doc.exists ? doc.updateTime : null, campaign: campaignJson(raw), errors: check.errors, warnings: check.warnings, pool } };
+  return { status: 200, body: { ok: true, mode: cfg.wheelMode, campaignId: cid, prizeHoldMinutes: cfg.wheelPrizeHoldMinutes ?? 60, exists: doc.exists, updateTime: doc.exists ? doc.updateTime : null, campaign: campaignJson(raw), errors: check.errors, warnings: check.warnings, pool } };
 }
 
 export async function adminWheelSave(fs, cfg, body, actorUid) {

@@ -36,6 +36,12 @@ export async function phoneKey(secret, campaignId, phone) {
   return `${campaignId}_${[...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
 export const SPIN_ATTEMPTS = 5;
+/**
+ * How long a won, not-yet-used prize stays valid: WHEEL_PRIZE_HOLD_MINUTES (owner's rule: 60 minutes from the spin).
+ * Past it the prize can no longer be attached to an order and its pool unit goes back (expireUnclaimedPrizes, also run
+ * before every spin). A prize attached to an order in time follows that order (delivered / cancelled), not the clock.
+ */
+export const prizeHoldMs = (cfg) => (Number.isFinite(cfg?.wheelPrizeHoldMinutes) && cfg.wheelPrizeHoldMinutes > 0 ? cfg.wheelPrizeHoldMinutes : 60) * 60_000;
 const ID_RE = /^[a-z0-9-]{1,40}$/;
 export const PRIZE_TYPES = Object.freeze(['gift', 'discount', 'free_delivery', 'none']);
 export const MAX_SLOTS = 24;
@@ -274,7 +280,7 @@ export async function wheelPublic(fs, cfg, { now = Date.now() } = {}) {
   const slots = open.ok ? displaySlots(campaign, await poolRemaining(fs, cfg.wheelCampaignId, campaign), now) : [];
   return {
     status: 200,
-    body: { ok: true, campaign: open.ok ? 'open' : open.code, slots, minOrderJod: campaign?.minOrderJod ?? null, prizeValidDays: campaign?.prizeValidDays ?? null, terms: campaign?.terms ?? '' },
+    body: { ok: true, campaign: open.ok ? 'open' : open.code, slots, minOrderJod: campaign?.minOrderJod ?? null, prizeHoldMinutes: prizeHoldMs(cfg) / 60_000, terms: campaign?.terms ?? '' },
   };
 }
 
@@ -295,7 +301,7 @@ export async function wheelState(fs, cfg, uid, { now = Date.now() } = {}) {
     status: 200,
     body: {
       ok: true, mode: cfg.wheelMode, campaign: open.ok ? 'open' : open.code,
-      minOrderJod: campaign?.minOrderJod ?? null, terms: campaign?.terms ?? '',
+      minOrderJod: campaign?.minOrderJod ?? null, terms: campaign?.terms ?? '', prizeHoldMinutes: prizeHoldMs(cfg) / 60_000,
       chancesLeft: open.ok ? Math.max(0, e.granted - e.used) : 0, spins, slots,
       // for the "second order" discount: shown as "usable now" or "after your first delivered order"
       previousDelivered: spins.some((s) => s.appliesTo === 'next_order' && s.status === 'issued') ? await hasDeliveredOrder(fs, uid) : null,
@@ -328,7 +334,7 @@ export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = s
     // a "none" slot ("حظ أوفر") is a real segment of the wheel but wins nothing
     const prize = slot && slot.type !== 'none' ? slot : null;
     const n = e.used + 1;
-    const validMs = (prize?.validDays ?? campaign.prizeValidDays) * DAY_MS;
+    const validMs = prizeHoldMs(cfg);
     const spin = {
       campaignId: cid, uid, n, prizeId: slot ? slot.id : NO_PRIZE,
       label: slot ? slot.label : 'حظ أوفر',
@@ -459,10 +465,18 @@ export async function wheelStatusWrites(fs, L, orderId, from, to, at) {
     }
   } else if (to === 'cancelled') {
     if (from !== 'delivered' && spin?.exists && decodeFields(spin.fields).status === 'reserved') {
-      const back = w.giftOnCancel === 'expire' ? 'expired' : 'issued';
       const sp = decodeFields(spin.fields);
-      const issuedExpiry = back === 'issued' && sp.expiresAt instanceof Date ? sp.expiresAt : null;
-      writes.push({ update: { name: fs.name(`wheelSpins/${w.spinId}`), fields: encodeFields({ status: back, orderId: null, releasedAt: at, issuedExpiry }) }, updateMask: { fieldPaths: ['status', 'orderId', 'releasedAt', 'issuedExpiry'] }, currentDocument: { updateTime: spin.updateTime } });
+      const atMs = at instanceof Date ? at.getTime() : Number(at);
+      // 'return' gives the prize back ONLY while its window is still open; past it (or with policy 'expire') the prize
+      // ends here and its pool unit goes back IN THIS COMMIT — the commit carries the ledger's and the spin's versions,
+      // so a repeated cancellation / overlapping run cannot return it twice (and the cron never sees it: no marker)
+      const stillValid = sp.expiresAt instanceof Date && sp.expiresAt.getTime() > atMs;
+      const back = w.giftOnCancel === 'return' && stillValid ? 'issued' : 'expired';
+      const issuedExpiry = back === 'issued' ? sp.expiresAt : null;
+      writes.push({ update: { name: fs.name(`wheelSpins/${w.spinId}`), fields: encodeFields({ status: back, orderId: null, releasedAt: at, issuedExpiry, ...(back === 'expired' ? { expiredAt: at } : {}) }) }, updateMask: { fieldPaths: ['status', 'orderId', 'releasedAt', 'issuedExpiry', ...(back === 'expired' ? ['expiredAt'] : [])] }, currentDocument: { updateTime: spin.updateTime } });
+      if (back === 'expired' && sp.prizeId && sp.prizeId !== NO_PRIZE) {
+        writes.push({ update: { name: fs.name(`wheelPool/${sp.campaignId || w.campaignId}_${sp.prizeId}`), fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: 'remaining', increment: { integerValue: '1' } }], currentDocument: { exists: true } });
+      }
     }
     if (from === 'delivered' && w.chanceEligible && w.uid) {
       const grant = await fs.get(`wheelGrants/${orderId}`);

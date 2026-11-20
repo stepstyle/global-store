@@ -12,7 +12,7 @@ export type AdminCampaign = {
   active: boolean; minOrderJod: number; budgetJod: number; noPrizeWeight?: number; startsAt: string; endsAt: string; giftOnCancel: 'return' | 'expire';
   freeFirstChance?: boolean; openGiftsPerPhone?: number; prizeValidDays?: number; terms?: string; prizes: AdminSlot[];
 };
-export type AdminWheel = { mode: string; campaignId: string; exists: boolean; updateTime: string | null; campaign: AdminCampaign | null; errors: string[]; warnings: string[]; pool: Record<string, number | null> };
+export type AdminWheel = { mode: string; campaignId: string; prizeHoldMinutes: number; exists: boolean; updateTime: string | null; campaign: AdminCampaign | null; errors: string[]; warnings: string[]; pool: Record<string, number | null> };
 export type AdminSpinRow = { spinId: string; uid: string; email: string; n: number; prizeId: string; label: string; type: string; valueJod: number | null; minOrderJod: number | null; appliesTo: string; status: string; orderId: string | null; createdAt: string | null; expiresAt: string | null };
 export type AdminFailure = { ok: false; status: number; code: string; errors?: string[]; warnings?: string[] };
 export type AdminResult<T> = { ok: true; value: T } | AdminFailure;

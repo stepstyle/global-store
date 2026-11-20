@@ -9,6 +9,7 @@
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { guestPath } from '../../src/wheel-guest.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SET_VAL = `const setVal = (el, v) => {
@@ -492,6 +493,98 @@ export function buildWheelScenarios(ctx) {
       const L = await get(`orderLedger/${o}`);
       assert.equal(L.serverPricing.shipping, 0, 'delivery waived by the server');
       assert.equal(L.serverPricing.total, 6.75, '7.5 - 0.75 + 0');
+    }],
+    ['WU08', '60-MINUTE WINDOW: the time left is shown and counts down (popup + checkout); when it ends: "expired" message in the wheel and in checkout, the prize is NOT applied and the order goes WITHOUT it (server total); its unit goes back once; an order confirmed in time keeps its prize', async (t) => {
+      await ctx.setCampaign([{ id: 'disc-1', type: 'discount', label: 'خصم دينار', valueJod: 1, minOrderJod: 5, weight: BIG, quantity: 5 }, ...NONES]);
+      /** the stored window of a document moved into the past (time travel for the test only) */
+      const age = async (path) => {
+        const d = await get(path);
+        const past = new Date(Date.now() - 61 * 60_000);
+        for (const f of ['expiresAt', 'issuedExpiry', 'holdExpiry']) if (d[f] instanceof Date) d[f] = past;
+        await ctx.put(path, d);
+      };
+      await viewport(t, 1366, 900, false);
+      await fresh(t);
+      // ---- guest: countdown, then expired
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-spin]')`, 25_000, 'popup');
+      await spinAndWait(t);
+      await waitResult(t);
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-countdown]')`, 10_000, 'countdown shown');
+      const c1 = await t.evaluate(`(() => { const c = document.querySelector('[data-testid=wheel-countdown]'); return { ms: Number(c.dataset.remainingMs), text: c.textContent }; })()`);
+      assert.ok(c1.ms > 58 * 60_000 && c1.ms <= 60 * 60_000, `about 60 minutes left (${JSON.stringify(c1)})`);
+      assert.ok(/الوقت المتبقي لاستخدام الجائزة/.test(c1.text) && /\b(59|60|1):\d\d\b/.test(c1.text), `countdown text ${JSON.stringify(c1)}`);
+      await sleep(2_200);
+      const c2 = Number(await t.evaluate(`document.querySelector('[data-testid=wheel-countdown]').dataset.remainingMs`));
+      assert.ok(c2 < c1.ms - 1_000, `it counts down (${c1.ms} -> ${c2})`);
+      await shot(t, 'wu08-countdown');
+      const ticket = await t.evaluate(`localStorage.getItem('anta_wheel_guest_v1')`);
+      const gPath = await guestPath(WHEEL_CAMPAIGN_ID, ticket);
+      await age(gPath);
+      await t.reload();
+      await openPopupFromFab(t);
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-expired]')`, 20_000, 'expired message in the wheel');
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-expired]').innerText`), /انتهت صلاحية الجائزة[\s\S]*60 دقيقة/);
+      assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=wheel-won]')`), false, 'not shown as a usable prize');
+      await shot(t, 'wu08-expired-wheel');
+      await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
+      await openCheckoutWith(t, CART_OK);
+      await t.waitFor(`!!document.querySelector('[data-testid=checkout-wheel-expired]')`, 20_000, 'expired message in checkout');
+      assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=checkout-wheel-gift]')`), false, 'not applied');
+      // ---- signed in: an account prize applies with its countdown; past the window the order goes WITHOUT it
+      const email = 'wheel.hold@example.invalid';
+      const pw = 'Test-pass-12345';
+      const uid = await ctx.createGoogleCustomer({ email, password: pw, name: 'زبون المهلة' });
+      await signIn(t, email, pw);
+      await openCheckoutWith(t, CART_OK, email);
+      // the expired guest ticket still USES the welcome spin (recorded as expired): no fresh draw after signing in late
+      const sp = await until(async () => spinDoc(uid, 1), 20_000, 'welcome spin recorded');
+      assert.equal(sp.status, 'expired');
+      assert.equal((await get(gPath)).status, 'expired');
+      assert.equal((await get(`wheelPool/${WHEEL_CAMPAIGN_ID}_disc-1`)).remaining, 5, 'the unit came back once');
+      await t.waitFor(`/انتهت صلاحية جائزة الدولاب \\(60 دقيقة/.test(document.querySelector('[data-testid=checkout-wheel-notice]')?.innerText || '')`, 20_000, 'told why the prize was not linked');
+      assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=checkout-wheel-gift]')`), false, 'not applied');
+      await shot(t, 'wu08-expired-at-sign-in');
+      await fillToPayment(t, '0795100008');
+      await clickConfirm(t);
+      assert.equal(await outcome(t), 'success');
+      const o1 = await t.evaluate(`location.hash.split('/').pop()`);
+      assert.equal((await get(`orders/${o1}`)).wheelPrize, undefined, 'sent WITHOUT the expired prize');
+      assert.equal((await get(`orderLedger/${o1}`)).serverPricing.total, 9.75, '7.5 - 0.75 volume + 3 delivery, no prize');
+      // an ACCOUNT prize whose window passes while unused: the checkout shows it expired and does not apply it
+      const email3 = 'wheel.late@example.invalid';
+      const uid3 = await ctx.createGoogleCustomer({ email: email3, password: pw, name: 'زبون متأخر' });
+      await signIn(t, email3, pw);
+      await t.evaluate(`location.hash = '#/wheel'; true`);
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-page] [data-testid=wheel-spin]')`, 25_000, 'wheel page');
+      await spinAndWait(t);
+      await waitResult(t);
+      await age(`wheelSpins/${WHEEL_CAMPAIGN_ID}_${uid3}_1`);
+      await openCheckoutWith(t, CART_OK, email3);
+      await t.waitFor(`!!document.querySelector('[data-testid=checkout-wheel-expired]')`, 20_000, 'expired box in checkout');
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=checkout-wheel-expired]').innerText`), /انتهت صلاحية جائزة الدولاب[\s\S]*60 دقيقة/);
+      assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=summary-wheel-discount]')`), false, 'no prize line in the summary');
+      await shot(t, 'wu08-expired-checkout');
+      // a prize used IN TIME keeps it after the window: an account with a fresh prize orders, then its window passes
+      const email2 = 'wheel.intime@example.invalid';
+      const uid2 = await ctx.createGoogleCustomer({ email: email2, password: pw, name: 'زبون في الوقت' });
+      await signIn(t, email2, pw);
+      await t.evaluate(`location.hash = '#/wheel'; true`);
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-page] [data-testid=wheel-spin]')`, 25_000, 'wheel page');
+      await spinAndWait(t);
+      await waitResult(t);
+      await openCheckoutWith(t, CART_OK, email2);
+      await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'applies' && !!document.querySelector('[data-testid=checkout-wheel-countdown]')`, 20_000, 'prize applies with its countdown');
+      await fillToPayment(t, '0795100009');
+      await clickConfirm(t);
+      assert.equal(await outcome(t), 'success');
+      const o2 = await t.evaluate(`location.hash.split('/').pop()`);
+      assert.equal((await spinDoc(uid2, 1)).status, 'reserved');
+      await age(`wheelSpins/${WHEEL_CAMPAIGN_ID}_${uid2}_1`);
+      await ctx.triggerCron();
+      await sleep(1_500);
+      assert.equal((await spinDoc(uid2, 1)).status, 'reserved', 'the window passing after the order changes nothing');
+      assert.equal((await get(`orders/${o2}`)).wheelPrize.discountJod, 1);
     }],
   ];
 }

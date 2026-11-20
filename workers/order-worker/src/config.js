@@ -277,7 +277,8 @@ export function loadConfig(env = {}) {
     // spin BEFORE signing in (src/wheel-guest.js): guest spins per IP per day (0 = no guest spin; a shared mobile IP can
     // serve several homes, so not too low), and how long a won unit is held for an unclaimed ticket
     wheelGuestPerIpDay: Math.max(0, Math.min(1000, num(env.WHEEL_GUEST_PER_IP_DAY, 10))),
-    wheelGuestHoldHours: Math.max(1, Math.min(720, num(env.WHEEL_GUEST_HOLD_HOURS, 48))),
+    // a won, unused prize is valid this long from the spin (owner's rule: 60 minutes); see src/wheel.js prizeHoldMs
+    wheelPrizeHoldMinutes: Math.max(5, Math.min(1440, num(env.WHEEL_PRIZE_HOLD_MINUTES, 60))),
     currency,
     email: {
       apiKey: str(env.SENDGRID_API_KEY),

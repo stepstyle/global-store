@@ -14,10 +14,11 @@ import type { SubmitDeps } from '../../services/orderSubmit';
 import { BACKEND_ENABLED } from '../../config/deployEnv';
 import {
   fetchWheelPublic, fetchWheelState, spinWheel, choosePrize, prizeText, targetRotation, usablePrize,
-  spinAsGuest, fetchGuestResult, claimGuestResult, guestAsSpin,
+  spinAsGuest, fetchGuestResult, claimGuestResult, guestAsSpin, prizeExpired, DEFAULT_HOLD_MINUTES,
   type WheelSlot, type WheelSpin, type WheelState,
 } from '../../services/wheel';
 import WheelDial from './WheelDial';
+import PrizeCountdown from './PrizeCountdown';
 
 const { Link } = ReactRouterDOM as any;
 const SPIN_MS = 4600;
@@ -57,6 +58,10 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
   const [duration, setDuration] = useState(0);
   const [result, setResult] = useState<WheelSpin | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
+  // the prize window (minutes, from the Worker) and a re-render when the shown prize's time is up
+  const [holdMin, setHoldMin] = useState(DEFAULT_HOLD_MINUTES);
+  const [, setExpiredTick] = useState(0);
+  const onExpire = useCallback(() => setExpiredTick((n) => n + 1), []);
   const alive = useRef(true);
   // set on EVERY mount (React may mount, unmount and mount again: a flag left false would drop every answer)
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -97,6 +102,7 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
     if (p.value.campaign !== 'open' || p.value.slots.length < 2) { setPhase('closed'); return; }
     setSlots(p.value.slots);
     setTerms(p.value.terms);
+    setHoldMin(p.value.prizeHoldMinutes);
     setPhase('ready');
     if (getFirebaseAuth()?.currentUser) await loadAccount();
     else { setSt(null); await showGuest(p.value.slots); }
@@ -173,9 +179,9 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
   };
 
   const won = result && usablePrize(result);
+  const expired = !!result && prizeExpired(result);
   const isGuestResult = !!result && !result.spinId;
   const myPrizes = (st?.spins || []).filter((s) => s.type !== 'none').slice().reverse();
-  const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(isAR ? 'ar-JO' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '');
   const used = guestSpun && !signedIn;
 
   return (
@@ -204,7 +210,13 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
 
           <div aria-live="polite" role="status" className="mt-4 min-h-[1rem]" data-testid="wheel-result" data-prize-id={result?.prizeId || ''} data-prize-type={result?.type || ''} data-guest={isGuestResult ? '1' : '0'}>
             {msg && <p className="rounded-2xl bg-paper-200 p-3 text-sm font-bold text-ink-800" data-testid="wheel-message">{msg}</p>}
-            {result && (won ? (
+            {result && expired && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-4" data-testid="wheel-expired" data-prize-id={result.prizeId}>
+                <p className="font-heading text-base font-black text-red-800">{L(`انتهت صلاحية الجائزة: ${result.label}`, `The prize has expired: ${result.label}`)}</p>
+                <p className="mt-1 text-xs font-bold leading-relaxed text-red-800">{L(`كانت صالحة ${holdMin} دقيقة من لحظة اللفة ولم تُستخدم في طلب مؤكَّد خلالها، فلم تعد صالحة للاستعمال.`, `It was valid for ${holdMin} minutes from the spin and was not used in a confirmed order in time, so it can no longer be used.`)}</p>
+              </div>
+            )}
+            {result && !expired && (won ? (
               <div className="rounded-2xl border border-gold-200 bg-gold-50 p-4" data-testid="wheel-won" data-spin-id={result.spinId}>
                 <p className="font-heading text-lg font-black text-ink-950">{L(`مبروك! ظهرت لك: ${result.label}`, `Congratulations! You got: ${result.label}`)}</p>
                 <p className="mt-1 text-sm font-bold text-ink-800">{prizeText(result, isAR)}</p>
@@ -212,8 +224,9 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
                   {isGuestResult
                     ? L('النتيجة محفوظة في أنظمتنا لهذا المتصفح. أكمل تسوّقك؛ عند «تأكيد الطلب» تسجّل الدخول بـ Google فتُربط الجائزة بحسابك وتُطبَّق إذا حقق الطلب شروطها.', 'Your result is saved by our system for this browser. Keep shopping; at "Confirm order" you sign in with Google, the prize is linked to your account and applied if the order meets its conditions.')
                     : L('هذه نتيجة أولية: تُثبَّت الجائزة فقط عند تأكيد طلب يحقق شروطها، ولا تُصرف للطلبات الملغاة.', 'This is a provisional result: the prize is confirmed only with an order that meets its conditions, and never for cancelled orders.')}
-                  {result.expiresAt && L(` صالحة حتى ${fmtDate(result.expiresAt)}.`, ` Valid until ${fmtDate(result.expiresAt)}.`)}
+                  {L(` صالحة ${holdMin} دقيقة من لحظة اللفة: أكّد طلبًا مؤهَّلًا قبل انتهائها لتبقى مرتبطة به.`, ` Valid for ${holdMin} minutes from the spin: confirm a qualifying order before it ends to keep it.`)}
                 </p>
+                {result.expiresAt && <p className="mt-2 text-sm"><PrizeCountdown expiresAt={result.expiresAt} isAR={isAR} onExpire={onExpire} testId="wheel-countdown" /></p>}
                 <div className="mt-3 flex flex-wrap gap-2">
                   {variant === 'popup' && <button type="button" onClick={onClose} className="rounded-xl bg-ink-900 px-4 py-2 text-sm font-black text-paper-50" data-testid="wheel-continue">{L('أكمل التسوق', 'Continue shopping')}</button>}
                   <Link to="/cart" onClick={onClose} className="rounded-xl border border-ink-200 bg-white px-4 py-2 text-sm font-black text-ink-900">{L('اذهب إلى السلة', 'Go to cart')}</Link>
@@ -232,9 +245,10 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
                   <li key={s.spinId} className="rounded-xl border border-ink-100 bg-white p-2.5 text-sm" data-testid="wheel-spin-row" data-status={s.status} data-spin-id={s.spinId}>
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-black text-ink-900">{s.label}</span>
-                      <span className="text-[11px] font-bold text-ink-600">{(isAR ? STATUS_AR : STATUS_EN)[s.status] || s.status}</span>
+                      <span className="text-[11px] font-bold text-ink-600">{(isAR ? STATUS_AR : STATUS_EN)[prizeExpired(s) ? 'expired' : s.status] || s.status}</span>
                     </div>
-                    <p className="mt-0.5 text-xs text-ink-600">{prizeText(s, isAR)}{s.status === 'issued' && s.expiresAt ? L(` — حتى ${fmtDate(s.expiresAt)}`, ` — until ${fmtDate(s.expiresAt)}`) : ''}{s.orderId ? L(` — الطلب ${s.orderId}`, ` — order ${s.orderId}`) : ''}</p>
+                    <p className="mt-0.5 text-xs text-ink-600">{prizeText(s, isAR)}{s.orderId ? L(` — الطلب ${s.orderId}`, ` — order ${s.orderId}`) : ''}</p>
+                    {s.status === 'issued' && !prizeExpired(s) && s.expiresAt && <p className="mt-0.5 text-xs"><PrizeCountdown expiresAt={s.expiresAt} isAR={isAR} onExpire={onExpire} testId="wheel-row-countdown" /></p>}
                   </li>
                 ))}
               </ul>
@@ -246,7 +260,7 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
             <ul className="mt-2 list-disc space-y-1 ps-5">
               <li>{L('النتيجة تُحدَّد وتُحفظ في أنظمتنا؛ تحديث الصفحة أو إعادة فتح الدولاب لا يمنح لفة جديدة.', 'The result is decided and stored by our system; refreshing or reopening the wheel does not give a new spin.')}</li>
               <li>{L('عند تأكيد الطلب تُربط النتيجة بحساب Google الخاص بك. لكل حساب نتيجة ترحيبية واحدة؛ إن كان لحسابك نتيجة سابقة تبقى هي المعتمدة.', 'At checkout the result is linked to your Google account. Each account has one welcome result; if your account already has one, that one stays.')}</li>
-              <li>{L('الجائزة التي لم تُربط بحساب تُحجز لمدة محدودة ثم تعود إلى الحملة.', 'A prize not linked to an account is held for a limited time, then goes back to the campaign.')}</li>
+              <li>{L(`الجائزة صالحة ${holdMin} دقيقة من لحظة اللفة. إذا أكّدت طلبًا مؤهَّلًا خلالها ترتبط به وتتبع حالته (التسليم أو الإلغاء)، وإلا تنتهي ويعود حجزها إلى الحملة تلقائيًا.`, `The prize is valid for ${holdMin} minutes from the spin. Confirm a qualifying order in that time and it follows the order (delivery or cancellation); otherwise it ends and goes back to the campaign automatically.`)}</li>
               <li>{L('لكل جائزة حد أدنى لقيمة المنتجات (قبل الخصم ودون التوصيل) وصلاحية تظهر عند الفوز.', 'Each prize has a minimum products total (before the prize, delivery excluded) and a validity shown when you win.')}</li>
               <li>{L('جائزة واحدة كحد أقصى لكل طلب، ولا تُجمع الجوائز.', 'At most one prize per order; prizes cannot be combined.')}</li>
               <li>{L('تُلغى الجائزة إذا أُلغي الطلب أو أُرجع.', 'The prize is cancelled if the order is cancelled or returned.')}</li>

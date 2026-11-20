@@ -216,7 +216,17 @@ test('G06 an unclaimed ticket holds its unit for a limited time: expired at the 
   assert.equal(await remaining('disc-1'), 3);
   assert.equal((await getDecoded(await guestPath(CID, t2))).status, 'expired');
   assert.equal((await gClaim(BOB, t2)).body.code, 'WHEEL_GUEST_EXPIRED');
-  assert.equal(await count('wheelSpins'), 0);
+  // a late claim still USES the account's welcome spin (recorded as expired): signing in late never gives a new draw
+  assert.equal(await count('wheelSpins'), 2);
+  for (const uid of [ALICE, BOB]) {
+    assert.equal((await getDecoded(`wheelSpins/${CID}_${uid}_1`)).status, 'expired');
+    const again = await accSpin(uid);
+    assert.equal(again.body.repeated, true, uid);
+  }
+  // and the units came back exactly once each (claim, cron, repeated claims, spins: never twice)
+  assert.equal((await gClaim(ALICE, t1)).body.code, 'WHEEL_GUEST_EXPIRED');
+  await runCron(env());
+  assert.equal(await remaining('disc-1'), 3);
 });
 
 test('G07 per-IP limit for guest spins (an obstacle, not a proof): the 3rd ticket from one IP is refused; another IP passes; a stored ticket still answers', async () => {

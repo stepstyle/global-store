@@ -150,7 +150,7 @@ export default function WheelAdmin() {
               <div><label className={lbl}>النهاية</label><input type="datetime-local" className={field} value={toLocal(draft.endsAt)} onChange={(e) => setC({ endsAt: fromLocal(e.target.value) || draft.endsAt })} /></div>
               <div><label className={lbl}>الحد الأدنى العام (د.أ) — لكسب لفة جديدة</label><input type="number" min="0" step="0.5" className={field} value={draft.minOrderJod} onChange={(e) => setC({ minOrderJod: numIn(e.target.value) })} /></div>
               <div><label className={lbl}>الميزانية القصوى (د.أ)</label><input type="number" min="0" step="1" className={field} value={draft.budgetJod} onChange={(e) => setC({ budgetJod: numIn(e.target.value) })} data-testid="wheel-admin-budget" /></div>
-              <div><label className={lbl}>صلاحية الجائزة (أيام)</label><input type="number" min="1" max="365" className={field} value={draft.prizeValidDays ?? 30} onChange={(e) => setC({ prizeValidDays: numIn(e.target.value) })} /></div>
+              <div><label className={lbl}>صلاحية الجائزة غير المستخدمة</label><p className={`${field} bg-slate-50 text-slate-700`} data-testid="wheel-admin-hold">{data.prizeHoldMinutes ?? 60} دقيقة من لحظة اللفة — بعدها تنتهي ويعود حجزها تلقائيًا (إعداد الخادم WHEEL_PRIZE_HOLD_MINUTES)</p></div>
               <div><label className={lbl}>جوائز مفتوحة لكل رقم هاتف</label><input type="number" min="1" className={field} value={draft.openGiftsPerPhone ?? 1} onChange={(e) => setC({ openGiftsPerPhone: numIn(e.target.value) })} /></div>
               <div><label className={lbl}>عند إلغاء الطلب</label>
                 <select className={field} value={draft.giftOnCancel} onChange={(e) => setC({ giftOnCancel: e.target.value as 'return' | 'expire' })}>
@@ -206,7 +206,6 @@ export default function WheelAdmin() {
                           </div>
                         )}
                         {p.type === 'gift' && <div><label className={lbl}>منتج الهدية (اختياري — للمخزون)</label><input className={field} value={p.productId || ''} onChange={(e) => setSlot(i, { productId: e.target.value.trim() || null })} dir="ltr" placeholder="product id" /></div>}
-                        <div><label className={lbl}>صلاحية خاصة (أيام)</label><input type="number" min="1" max="365" className={field} value={p.validDays ?? ''} onChange={(e) => setSlot(i, { validDays: e.target.value === '' ? null : Math.floor(numIn(e.target.value)) })} /></div>
                       </>
                     )}
                     <div><label className={lbl}>رمز (إيموجي)</label><input className={field} value={p.icon || ''} maxLength={8} onChange={(e) => setSlot(i, { icon: e.target.value })} /></div>

@@ -15,8 +15,9 @@
 //                                           key: someone who reads the database cannot claim a result with it.
 //   wheelGuestIps/{hmac(ip, day)}           guest spins per IP per day (WHEEL_GUEST_PER_IP_DAY). HMAC with the server
 //                                           secret: the IP itself is never stored.
-// A won prize takes its unit from the pool at the spin (it was shown as won: it must exist at checkout). Unclaimed, it
-// goes back after WHEEL_GUEST_HOLD_HOURS (cron releaseExpiredGuestHolds), or at once when a claim is refused.
+// A won prize takes its unit from the pool at the spin (it was shown as won: it must exist at checkout). It is valid
+// WHEEL_PRIZE_HOLD_MINUTES (60) from the spin; unclaimed past that it goes back (releaseExpiredGuestHolds: cron + before
+// every spin), or at once when a claim is refused / comes too late.
 //
 // LIMITS (honest): before signing in there is no identity. Clearing the browser's storage / a private window / another
 // device gives a NEW spin; the per-IP limit only slows that down (and several homes can share one mobile IP). What is
@@ -25,10 +26,9 @@
 
 import { encodeFields, decodeFields, isConflict } from './firestore.js';
 import { log } from './http.js';
-import { NO_PRIZE, SPIN_ATTEMPTS, campaignOpen, drawPrize, entitlement, secureRand, validCampaign } from './wheel.js';
+import { NO_PRIZE, SPIN_ATTEMPTS, campaignOpen, drawPrize, entitlement, prizeHoldMs, secureRand, validCampaign } from './wheel.js';
 
 const DAY_MS = 86_400_000;
-const HOUR_MS = 3_600_000;
 export const TICKET_RE = /^[A-Za-z0-9_-]{43}$/;
 
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -86,7 +86,7 @@ export async function guestSpin(fs, cfg, ticket, ip, { now = () => Date.now(), r
     const drawnId = drawPrize(campaign, remaining, rand, at);
     const slot = campaign.prizes.find((p) => p.id === drawnId) || null;
     const prize = slot && slot.type !== 'none' ? slot : null;
-    const expiresAt = prize ? at + (prize.validDays ?? campaign.prizeValidDays) * DAY_MS : null;
+    const expiresAt = prize ? at + prizeHoldMs(cfg) : null;
     const g = {
       campaignId: cid, prizeId: slot ? slot.id : NO_PRIZE, label: slot ? slot.label : 'حظ أوفر',
       productId: prize?.productId ?? null, variantId: prize?.variantId ?? null,
@@ -95,7 +95,7 @@ export async function guestSpin(fs, cfg, ticket, ip, { now = () => Date.now(), r
       ...(prize ? { valueJod: prize.valueJod, minOrderJod: prize.minOrderJod, appliesTo: prize.appliesTo, description: prize.description } : {}),
       status: prize ? 'held' : NO_PRIZE,
       // holdExpiry exists ONLY while a won unit is held for an unclaimed ticket (the cron query reads exactly those)
-      ...(prize ? { expiresAt: new Date(expiresAt), holdExpiry: new Date(Math.min(expiresAt, at + cfg.wheelGuestHoldHours * HOUR_MS)) } : {}),
+      ...(prize ? { expiresAt: new Date(expiresAt), holdExpiry: new Date(expiresAt) } : {}),
       createdAt: new Date(at),
     };
     const writes = [
@@ -156,19 +156,35 @@ export async function claimGuest(fs, cfg, uid, ticket, { now = () => Date.now(),
       if (g.claimedBy === uid) return { status: 200, body: { ok: true, repeated: true, spinId: g.claimedSpin, result: publicGuest(g) } };
       return { status: 409, body: { ok: false, code: 'WHEEL_GUEST_CLAIMED' } };
     }
-    if (g.status !== 'held' && g.status !== NO_PRIZE) return { status: 409, body: { ok: false, code: g.status === 'refused' ? 'WHEEL_ACCOUNT_HAS_SPIN' : 'WHEEL_GUEST_EXPIRED' } };
+    // already released by the cron / a spin before anyone claimed it: still counts as the welcome spin (below), no unit
+    const releasedUnclaimed = g.status === 'expired' && !g.claimedBy;
+    if (g.status !== 'held' && g.status !== NO_PRIZE && !releasedUnclaimed) return { status: 409, body: { ok: false, code: g.status === 'refused' ? 'WHEEL_ACCOUNT_HAS_SPIN' : 'WHEEL_GUEST_EXPIRED' } };
     const held = g.status === 'held';
     const guard = { currentDocument: { updateTime: gDoc.updateTime } };
     const close = (status, extra = {}) => ({ update: { name: fs.name(gPath), fields: encodeFields({ status, holdExpiry: null, closedAt: new Date(at), ...extra }) }, updateMask: { fieldPaths: ['status', 'holdExpiry', 'closedAt', ...Object.keys(extra)] }, ...guard });
 
-    if (held && g.holdExpiry instanceof Date && g.holdExpiry.getTime() <= at) {
-      const r = await fs.commit([close('expired'), poolBack(fs, g)]);
+    const campaign = campaignDoc.exists ? validCampaign(decodeFields(campaignDoc.fields)) : null;
+    const e = entitlement(entDoc, campaign?.freeFirstChance === false ? 0 : 1);
+    const lapsedHeld = held && ((g.holdExpiry instanceof Date && g.holdExpiry.getTime() <= at) || (g.expiresAt instanceof Date && g.expiresAt.getTime() <= at));
+    if (lapsedHeld || releasedUnclaimed) {
+      // too late (the 60-minute window passed): the unit goes back (once: if still held), and — when the account has
+      // never spun — this spin still IS its welcome spin, recorded as expired (signing in late never gives a fresh draw)
+      const fresh = e.used === 0 && e.granted >= 1;
+      if (releasedUnclaimed && !fresh) return { status: 409, body: { ok: false, code: 'WHEEL_GUEST_EXPIRED' } };
+      const writes = [close('expired', fresh ? { claimedBy: uid, claimedSpin: spinId(cid, uid, 1) } : {}), ...(lapsedHeld ? [poolBack(fs, g)] : [])];
+      if (fresh) {
+        writes.push(
+          { update: { name: fs.name(sPath), fields: encodeFields({ campaignId: cid, uid, n: 1, prizeId: g.prizeId, label: g.label, prizeType: g.prizeType || 'none', valueJod: g.valueJod, minOrderJod: g.minOrderJod, appliesTo: g.appliesTo, ...(email ? { email: String(email).slice(0, 200) } : {}), status: 'expired', expiresAt: g.expiresAt ?? null, expiredAt: new Date(at), fromGuest: true, createdAt: g.createdAt instanceof Date ? g.createdAt : new Date(at), claimedAt: new Date(at) }) }, currentDocument: { exists: false } },
+          entDoc.exists
+            ? { update: { name: fs.name(entPath), fields: encodeFields({ used: 1 }) }, updateMask: { fieldPaths: ['used'] }, currentDocument: { updateTime: entDoc.updateTime } }
+            : { update: { name: fs.name(entPath), fields: encodeFields({ campaignId: cid, uid, granted: 1, used: 1 }) }, currentDocument: { exists: false } },
+        );
+      }
+      const r = await fs.commit(writes);
       if (r.ok) return { status: 409, body: { ok: false, code: 'WHEEL_GUEST_EXPIRED' } };
       if (!isConflict(r)) return { status: 503, body: { ok: false, code: 'UNAVAILABLE' } };
       continue;
     }
-    const campaign = campaignDoc.exists ? validCampaign(decodeFields(campaignDoc.fields)) : null;
-    const e = entitlement(entDoc, campaign?.freeFirstChance === false ? 0 : 1);
     if (e.used > 0 || e.granted < 1) {
       const r = await fs.commit([close('refused', { refusedFor: uid }), ...(held ? [poolBack(fs, g)] : [])]);
       if (r.ok) {

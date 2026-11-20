@@ -20,8 +20,8 @@ export type WheelSpin = {
   spinId: string; n: number; prizeId: string; label: string; status: string; orderId: string | null;
   type: PrizeType; valueJod: number; minOrderJod: number | null; appliesTo: 'this_order' | 'next_order'; description: string; expiresAt: string | null;
 };
-export type WheelPublic = { campaign: string; slots: WheelSlot[]; minOrderJod: number | null; prizeValidDays: number | null; terms: string };
-export type WheelState = { campaign: string; minOrderJod: number | null; terms: string; chancesLeft: number; spins: WheelSpin[]; slots: WheelSlot[]; previousDelivered: boolean | null };
+export type WheelPublic = { campaign: string; slots: WheelSlot[]; minOrderJod: number | null; prizeHoldMinutes: number; terms: string };
+export type WheelState = { campaign: string; minOrderJod: number | null; terms: string; prizeHoldMinutes: number; chancesLeft: number; spins: WheelSpin[]; slots: WheelSlot[]; previousDelivered: boolean | null };
 export type WheelResult<T> = { kind: 'ok'; value: T } | { kind: 'sign_in_required' } | { kind: 'not_verified' } | { kind: 'closed'; code: string } | { kind: 'unavailable' };
 
 const TYPES: PrizeType[] = ['gift', 'discount', 'free_delivery', 'none'];
@@ -75,13 +75,13 @@ const slotsOf = (v: unknown) => (Array.isArray(v) ? v.map(slotOf).filter(Boolean
 
 export const fetchWheelPublic = (workerUrl: string, deps: SubmitDeps) =>
   call<WheelPublic>('/wheel/public', 'GET', null, workerUrl, deps, (b) => ({
-    campaign: String(b.campaign || ''), slots: slotsOf(b.slots), minOrderJod: nOrNull(b.minOrderJod), prizeValidDays: nOrNull(b.prizeValidDays), terms: typeof b.terms === 'string' ? b.terms : '',
+    campaign: String(b.campaign || ''), slots: slotsOf(b.slots), minOrderJod: nOrNull(b.minOrderJod), prizeHoldMinutes: nOrNull(b.prizeHoldMinutes) || DEFAULT_HOLD_MINUTES, terms: typeof b.terms === 'string' ? b.terms : '',
   }), { anonymous: true });
 
 export const fetchWheelState = (idToken: string | null, workerUrl: string, deps: SubmitDeps) =>
   call<WheelState>('/wheel/state', 'GET', idToken, workerUrl, deps, (b) => ({
     campaign: String(b.campaign || ''), minOrderJod: typeof b.minOrderJod === 'number' ? b.minOrderJod : null,
-    terms: typeof b.terms === 'string' ? b.terms : '', chancesLeft: Math.max(0, Number(b.chancesLeft) || 0),
+    terms: typeof b.terms === 'string' ? b.terms : '', prizeHoldMinutes: nOrNull(b.prizeHoldMinutes) || DEFAULT_HOLD_MINUTES, chancesLeft: Math.max(0, Number(b.chancesLeft) || 0),
     spins: (Array.isArray(b.spins) ? b.spins : []).map(spinOf).filter(Boolean) as WheelSpin[],
     slots: slotsOf(b.slots), previousDelivered: typeof b.previousDelivered === 'boolean' ? b.previousDelivered : null,
   }));
@@ -219,6 +219,26 @@ export async function claimGuestResult(idToken: string | null, workerUrl: string
   clearGuestTicket();
   return out;
 }
+
+// ------------------------------------------------------------------ the 60-minute window (owner's rule)
+/** default shown when the Worker did not say (WHEEL_PRIZE_HOLD_MINUTES) */
+export const DEFAULT_HOLD_MINUTES = 60;
+/** milliseconds left before `expiresAt` (0 when past), or null when there is no end time */
+export function remainingMs(expiresAt: string | null | undefined, now = Date.now()): number | null {
+  const t = Date.parse(expiresAt || '');
+  return Number.isFinite(t) ? Math.max(0, t - now) : null;
+}
+/** "mm:ss" (or "h:mm:ss"), rounded UP so it never shows 00:00 while still valid */
+export function fmtRemaining(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return h ? `${h}:${p(m)}:${p(s % 60)}` : `${p(m)}:${p(s % 60)}`;
+}
+/** a won prize whose window passed while it was still unused (shown as expired, never applied) */
+export const prizeExpired = (s: Pick<WheelSpin, 'status' | 'type' | 'expiresAt'>, now = Date.now()) =>
+  (s.status === 'issued' || s.status === 'held') && s.type !== 'none' && !!s.expiresAt && Date.parse(s.expiresAt) <= now;
 
 /** a won prize the customer can still use (issued, not expired at `now`) */
 export const usablePrize = (s: WheelSpin, now = Date.now()) =>

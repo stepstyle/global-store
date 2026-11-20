@@ -66,6 +66,18 @@ async function signedInUid(request, cfg) {
   }
 }
 
+/**
+ * Before a draw: prizes whose 60-minute window passed without an order give their pool unit back NOW (a small page),
+ * so an expired prize is never counted as held when the next visitor spins — the 5-minute cron does the rest. Each
+ * release is one versioned commit: never twice. A failure here never blocks the spin.
+ */
+async function releaseLapsed(fs, cfg) {
+  await Promise.all([
+    expireUnclaimedPrizes(fs, cfg, { pageSize: 10, maxPages: 1 }).catch(() => null),
+    releaseExpiredGuestHolds(fs, cfg, { pageSize: 10, maxPages: 1 }).catch(() => null),
+  ]);
+}
+
 async function handle(request, env, ctx, cfg) {
   const url = new URL(request.url);
   const cors = corsHeaders(request, cfg);
@@ -255,7 +267,7 @@ async function handle(request, env, ctx, cfg) {
     const { body, error } = await readJsonBody(request, 1024);
     if (error === 413) return reply({ ok: false, code: 'PAYLOAD_TOO_LARGE' }, 413);
     if (error || !body || typeof body !== 'object') return reply({ ok: false, code: 'INVALID_JSON' }, 400);
-    if (url.pathname === '/wheel/guest/spin') { const r = await guestSpin(fs, cfg, body.ticket, ip); return reply(r.body, r.status); }
+    if (url.pathname === '/wheel/guest/spin') { await releaseLapsed(fs, cfg); const r = await guestSpin(fs, cfg, body.ticket, ip); return reply(r.body, r.status); }
     if (isState) { const r = await guestState(fs, cfg, body.ticket); return reply(r.body, r.status); }
     const who = await signedInUid(request, cfg);
     if (!who.ok) return reply({ ok: false, code: who.code }, 401);
@@ -281,6 +293,7 @@ async function handle(request, env, ctx, cfg) {
     }
     // one obstacle to throw-away accounts (NOT proof of a unique person: one person can own several verified e-mails)
     if (!who.emailVerified) return reply({ ok: false, code: 'WHEEL_ACCOUNT_NOT_VERIFIED' }, 403);
+    await releaseLapsed(fs, cfg);
     const r = await spinWheel(fs, cfg, who.uid, { email: who.email });
     return reply(r.body, r.status);
   }

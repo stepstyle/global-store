@@ -46,8 +46,9 @@ import LazyImage from '../components/LazyImage';
 import { BACKEND_ENABLED } from '../config/deployEnv';
 import {
   WHEEL_ENABLED, WHEEL_SPIN_ID_RE, chosenPrize, choosePrize, fetchWheelState, prizeEffect, prizeText, usablePrize,
-  claimGuestResult, fetchGuestResult, guestAsSpin, type WheelSpin, type WheelState,
+  claimGuestResult, fetchGuestResult, guestAsSpin, prizeExpired, DEFAULT_HOLD_MINUTES, type WheelSpin, type WheelState,
 } from '../services/wheel';
+import PrizeCountdown from '../components/wheel/PrizeCountdown';
 import { googleMessage, saveCheckoutResume, takeCheckoutResume, type GoogleOutcome } from '../services/googleGate';
 import { currentGoogleUid, finishGoogleRedirect, googlePopup, googleRedirect } from '../services/googleAuth';
 
@@ -243,6 +244,9 @@ const Checkout: React.FC = () => {
   const [wheelNotice, setWheelNotice] = useState('');
   const [wheelPick, setWheelPick] = useState<string | null>(() => chosenPrize()?.spinId ?? null);
   const [wheelRemoved, setWheelRemoved] = useState(false);
+  // re-evaluated when the shown prize's 60-minute window ends (PrizeCountdown), so it stops being applied at once
+  const [prizeClock, setPrizeClock] = useState(0);
+  const onPrizeExpire = useCallback(() => setPrizeClock((n) => n + 1), []);
   const wheelPrize = useMemo(() => {
     if (!WHEEL_ENABLED || wheelRemoved) return null;
     if (wheelState) {
@@ -250,7 +254,16 @@ const Checkout: React.FC = () => {
       return usable.find((s) => s.spinId === wheelPick) ?? usable[usable.length - 1] ?? null;
     }
     return guestPrize && usablePrize(guestPrize) ? guestPrize : null;
-  }, [wheelState, guestPrize, wheelPick, wheelRemoved]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wheelState, guestPrize, wheelPick, wheelRemoved, prizeClock]);
+  // nothing usable, but a prize whose window just passed: shown as EXPIRED (never applied, never sent)
+  const expiredPrize = useMemo(() => {
+    if (!WHEEL_ENABLED || wheelRemoved || wheelPrize) return null;
+    const list = wheelState ? wheelState.spins : guestPrize ? [guestPrize] : [];
+    return list.filter((s) => prizeExpired(s)).pop() ?? null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wheelState, guestPrize, wheelPrize, wheelRemoved, prizeClock]);
+  const holdMin = wheelState?.prizeHoldMinutes ?? DEFAULT_HOLD_MINUTES;
   const prizeIsGuest = !!wheelPrize && !wheelPrize.spinId;
   const wheelAttachRef = useRef<string | null>(null); // the spin id sent with the order (only when the prize applies)
   // Google sign-in at "confirm order" (owner's rule)
@@ -337,7 +350,7 @@ const Checkout: React.FC = () => {
     if (isStale()) return;
     if (c.kind === 'claimed' && c.result?.status === 'issued') { choosePrize({ spinId: c.spinId, label: c.result.label }); setWheelPick(c.spinId); }
     if (c.kind === 'account_has_spin') setWheelNotice(tr('لحسابك نتيجة دولاب سابقة، فبقيت هي المعتمدة ولم تُضف نتيجة اللفة التي قمت بها قبل تسجيل الدخول.', 'Your account already has a wheel result: it stays, and the spin made before signing in is not added.'));
-    else if (c.kind === 'expired') setWheelNotice(tr('انتهت مدة حجز جائزة الدولاب قبل تسجيل الدخول، فلم تُربط بحسابك.', 'The wheel prize hold ended before you signed in, so it was not linked to your account.'));
+    else if (c.kind === 'expired') setWheelNotice(tr('انتهت صلاحية جائزة الدولاب (60 دقيقة من لحظة اللفة) قبل تسجيل الدخول وتأكيد الطلب، فلم تعد صالحة للاستعمال. تُحسب لفّتك الترحيبية لهذا الحساب.', 'The wheel prize window (60 minutes from the spin) ended before you signed in and confirmed, so it can no longer be used. It counts as this account\'s welcome spin.'));
     else if (c.kind === 'claimed_by_other') setWheelNotice(tr('نتيجة الدولاب في هذا المتصفح مرتبطة بحساب آخر، فلا تُطبَّق على هذا الحساب.', 'The wheel result in this browser belongs to another account, so it does not apply here.'));
     else if (c.kind === 'unavailable') setWheelNotice(tr('تعذّر ربط جائزة الدولاب بحسابك الآن، فلن تُطبَّق على هذا الطلب. يمكنك إكمال الطلب بدونها أو إعادة المحاولة لاحقًا؛ تبقى محفوظة في هذا المتصفح.', 'The wheel prize could not be linked to your account right now, so it is not applied to this order. You can order without it or try later; it stays saved in this browser.'));
     const r = await fetchWheelState(t, url, workerDeps);
@@ -700,6 +713,8 @@ const Checkout: React.FC = () => {
       setTimeout(() => resultPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
       return;
     }
+    // the Worker refused the prize (expired, used, …): reload the prizes so the next confirmation is sent without it
+    if (String((r as any).code || '').startsWith('WHEEL_')) { setPrizeClock((n) => n + 1); void refreshWheel(); }
     // not confirmed: keep the cart, keep the exact payload for a same-number retry
     lastPayloadRef.current = 'payload' in r ? r.payload : r.status === 'rejected' ? null : lastPayloadRef.current;
     setSubmitResult(r);
@@ -1613,8 +1628,17 @@ const Checkout: React.FC = () => {
                     )}
                   </p>
                   {wheelPrize.expiresAt && (
-                    <p className="mt-1 text-[11px] text-ink-600">{tr('صالحة حتى', 'Valid until')} {new Date(wheelPrize.expiresAt).toLocaleDateString(isAR ? 'ar-JO' : 'en-GB')}</p>
+                    <p className="mt-1.5 text-xs">
+                      <PrizeCountdown expiresAt={wheelPrize.expiresAt} isAR={isAR} onExpire={onPrizeExpire} testId="checkout-wheel-countdown" />
+                      <span className="block text-[11px] font-bold text-ink-600">{tr(`صالحة ${holdMin} دقيقة من لحظة اللفة: أكّد الطلب قبل انتهائها لتبقى مرتبطة به.`, `Valid ${holdMin} minutes from the spin: confirm the order before it ends to keep it.`)}</span>
+                    </p>
                   )}
+                </div>
+              )}
+              {WHEEL_ENABLED && !wheelPrize && expiredPrize && (
+                <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm" role="status" data-testid="checkout-wheel-expired" data-prize-id={expiredPrize.prizeId}>
+                  <p className="font-black text-red-800">🎡 {tr(`انتهت صلاحية جائزة الدولاب: ${expiredPrize.label}`, `The wheel prize has expired: ${expiredPrize.label}`)}</p>
+                  <p className="mt-1 text-xs font-bold leading-relaxed text-red-800">{tr(`كانت صالحة ${holdMin} دقيقة من لحظة اللفة ولم تُستخدم في طلب مؤكَّد خلالها، فلم تعد صالحة للاستعمال ولن تُطبَّق. يمكنك إتمام الطلب بدونها.`, `It was valid for ${holdMin} minutes from the spin and was not used in a confirmed order in time, so it no longer applies. You can still place the order without it.`)}</p>
                 </div>
               )}
 
