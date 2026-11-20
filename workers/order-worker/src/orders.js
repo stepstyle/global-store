@@ -38,6 +38,11 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
   // STOCK_POLICY=on_delivery: NOTHING is deducted now either — the quantities are only RESERVED (below, after the
   // price check); src/fulfilment.js deducts once when the admin marks the order delivered.
   const onDelivery = !onApproval && cfg.stockPolicy === 'on_delivery';
+  // STOCK_POLICY=on_acceptance (with APPROVAL_MODE=telegram): RESERVED here like on_delivery; the ACCEPTANCE (Telegram /
+  // automatic, src/approval.js) deducts it once; every later status goes through src/fulfilment.js (prize wheel hooks)
+  const onAcceptance = onApproval && cfg.stockPolicy === 'on_acceptance';
+  const reserves = onDelivery || onAcceptance;
+  const invPolicy = onAcceptance ? 'on_acceptance' : 'on_delivery';
   if (onApproval || onDelivery) {
     for (const d of inv.deductions) { d.applied = false; d.skippedReason = d.skippedReason || (onApproval ? 'AWAITING_APPROVAL' : 'AWAITING_DELIVERY'); }
     inv.writes.length = 0;
@@ -82,10 +87,10 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     log('order.wheel_refused', { orderId: v.id, code: 'WHEEL_MIN_ORDER' });
     return { ok: false, conflict: false, wheelRefused: { code: 'WHEEL_MIN_ORDER', minOrderJod: prizeMin } };
   }
-  if (gift && !onDelivery) return { ok: false, conflict: false, wheelRefused: { code: 'WHEEL_OFF' } };
+  if (gift && !reserves) return { ok: false, conflict: false, wheelRefused: { code: 'WHEEL_OFF' } };
   let reservation = null;
   let reservationDocs = null;
-  if (onDelivery) {
+  if (reserves) {
     const resDocs = await fs.batchGet(productIds.map((pid) => `stockReservations/${pid}`));
     reservationDocs = new Map(productIds.map((pid, i) => [pid, resDocs[i]]));
     reservation = planReservation(giftLine ? [...lines, giftLine] : lines, products, reservationDocs);
@@ -146,8 +151,9 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     //   on_approval: nothing deducted; src/approval.js deducts exactly once when an admin accepts.
     // Ledgers written before this field existed are treated as on_creation (legacy: never deducted again).
     //   on_delivery: reserved here (reservations / inventory); src/fulfilment.js deducts once on delivery.
-    stockPolicy: onApproval ? 'on_approval' : onDelivery ? 'on_delivery' : 'on_creation',
-    ...(onDelivery
+    //   on_acceptance: reserved here; src/approval.js deducts once on ACCEPTANCE (orderLines, gift included).
+    stockPolicy: onAcceptance ? 'on_acceptance' : onApproval ? 'on_approval' : onDelivery ? 'on_delivery' : 'on_creation',
+    ...(reserves
       ? {
           // the server-validated lines the delivery will deduct (never re-read from the browser-written order)
           orderLines: inv.lineInfo.map((l) => ({
@@ -162,11 +168,12 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     ...(onApproval
       ? {
           decision: 'pending',
-          // the server-validated lines the acceptance will deduct (never re-read from the browser-written order)
-          approvalLines: inv.lineInfo.map((l) => ({
+          // the server-validated lines the acceptance will deduct (never re-read from the browser-written order);
+          // on_acceptance deducts orderLines (above, the wheel gift included) instead
+          ...(onAcceptance ? {} : { approvalLines: inv.lineInfo.map((l) => ({
             index: l.index, productId: l.productId, variantId: l.variantId ?? null, quantity: l.quantity,
             unitPrice: l.serverUnitPrice, productName: l.productName, variantLabel: l.variantLabel,
-          })),
+          })) }),
           // smart auto-approval: the review marker is part of THIS commit, so a saved order is never "forgotten"
           // (finished by this request or, if it stops, by the cron — src/autoreview.js). Created orders only.
           ...(autoFields && mode === 'created' ? autoFields : {}),
@@ -241,7 +248,7 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
       ...(onApproval ? { approval: { policy: 'telegram', state: 'pending' } } : {}),
       // shown in the admin dashboard / used by the Firestore rules: the status of an on_delivery order is changed
       // ONLY through the Worker (POST /admin/orders/:id/status), so the stock moves exactly once
-      ...(onDelivery ? { inventory: { policy: 'on_delivery', state: ledger.inventory } } : {}),
+      ...(reserves ? { inventory: { policy: invPolicy, state: ledger.inventory } } : {}),
     };
     writes.push({
       update: { name: fs.name(orderPath), fields: encodeFields(order) },
@@ -256,6 +263,8 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     const extra = onApproval
       ? { approval: { policy: 'telegram', state: 'pending' } }
       : onDelivery ? { inventory: { policy: 'on_delivery', state: ledger.inventory } } : {};
+    // (on_acceptance adopted: both markers, like a created one)
+    if (onAcceptance) extra.inventory = { policy: invPolicy, state: ledger.inventory };
     writes.push({
       update: { name: fs.name(orderPath), fields: encodeFields({ workerCheck, ...extra }) },
       updateMask: { fieldPaths: ['workerCheck', ...Object.keys(extra)] },
@@ -270,7 +279,7 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
       currentDocument: { updateTime: w.updateTime },
     });
   }
-  if (onDelivery) writes.push(...reservationWrites(fs, reservation.reservations, reservationDocs, +1).writes);
+  if (reserves) writes.push(...reservationWrites(fs, reservation.reservations, reservationDocs, +1).writes);
   if (gift) {
     // the prize is used by THIS order only: 'issued' -> 'reserved' in the same commit (a second order with the same
     // prize, or an order racing with it, fails the precondition, re-reads and finds it no longer 'issued')

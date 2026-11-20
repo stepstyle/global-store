@@ -59,10 +59,31 @@ npx wrangler deploy --config wrangler.production.local.toml
 | Turnstile حقيقي: ظهور الودجت بعد الدخول، رمز واحد لكل إرسال | مفتاح Turnstile تجريبي (يمكن استخدام مفاتيح Cloudflare الاختبارية `1x000…` أولًا ثم الحقيقية) | التحقق على Staging Worker |
 | بعد النشر: طلب حقيقي صغير واحد بالدفع عند الاستلام من حساب المالك، ثم إلغاؤه من اللوحة | — | كما في RELEASE-PLAN.md البند 5.3 |
 
-## 5. تعارضات سياسات تحتاج قرارك (لم أغيّر شيئًا)
+## 5. القبول عبر Telegram أو تلقائيًا (`STOCK_POLICY=on_acceptance`) — جاهز محليًا، غير مفعّل
 
-- **Telegram والقبول:** الإنتاج اليوم `APPROVAL_MODE=off` (Telegram للإشعار فقط)، و`STOCK_POLICY=on_delivery` (حجز عند الطلب وخصم عند التسليم من اللوحة). وضع «القبول عبر Telegram» موجود ومختبر في بيئة الاختبار لكنه **ممنوع في الإنتاج بالكود** ولا يجتمع مع `on_delivery` (الذي يحتاجه الدولاب). لا يوجد «قبول تلقائي» في الكود.
-- **الدولاب يحتاج `STOCK_POLICY=on_delivery`** (متحقق في الإنتاج الحالي).
+**ما تغيّر:** أُضيفت سياسة مخزون جديدة `on_acceptance` تجمع بين القبول (فرع `feat/telegram-order-approval`، موجود كاملًا في هذا الفرع) والقبول التلقائي (3 commits من `feat/auto-approval` نُقلت بـ cherry-pick) والدولاب:
+
+| المرحلة | أثر المخزون |
+|---|---|
+| إنشاء الطلب | **حجز** الكمية (كما في `on_delivery`)؛ آخر قطعة لا تُباع مرتين |
+| قبول من Telegram أو تلقائي | **خصم مرة واحدة** وفكّ الحجز، الحالة `processing` |
+| رفض من Telegram، أو إلغاء من اللوحة قبل القبول | فكّ الحجز فقط |
+| إلغاء بعد القبول وقبل التسليم | **إرجاع مرة واحدة** (`deducted` → `restocked`) |
+| تسليم | لا خصم إضافي؛ يُسجَّل وقت التسليم فقط (لخصم الطلب الثاني والدولاب) |
+| إرجاع بعد التسليم | فقط بـ «تأكيد الإرجاع» كما هو اليوم |
+
+اللوحة لا تستطيع نقل طلب «بانتظار القبول» إلى أي حالة غير الإلغاء (رسالة `APPROVAL_PENDING`). القواعد (`workerManaged`) تحمي هذه الطلبات من الكتابة المباشرة كما تحمي طلبات `on_delivery`.
+
+**الإنتاج الحالي لم يتغيّر:** القالب ما زال `STOCK_POLICY=on_delivery` و`APPROVAL_MODE=off`. قفل الإنتاج في `config.js` يقبل الآن تركيبتين فقط: `on_delivery + off` أو `on_acceptance + telegram`، وأي تركيبة أخرى تمنع تشغيل الـ Worker.
+
+**للتفعيل لاحقًا (يحتاج موافقتك، لا يُنفَّذ الآن):**
+1. نشر القواعد المحدَّثة أولًا (`workerManaged` تشمل `on_acceptance`)؛ بدونها تستطيع اللوحة كتابة الحالة مباشرة.
+2. في `wrangler.production.local.toml`: `STOCK_POLICY=on_acceptance`، `APPROVAL_MODE=telegram`، `TELEGRAM_ADMIN_USER_IDS`، وأسرار `TELEGRAM_WEBHOOK_SECRET` و`AUTO_APPROVAL_HASH_SECRET` عبر `wrangler secret put`؛ ثم ضبط webhook البوت الحقيقي (`setWebhook` مع `secret_token`).
+3. القبول التلقائي يبقى مغلقًا حتى يُفتح القفل في الخادم (`AUTO_APPROVAL_MODE`) **و**المفتاح في اللوحة (`config/autoApproval.enabled`) — راجع `workers/order-worker/AUTO_APPROVAL.md`.
+4. الطلبات القديمة (`on_delivery`) تكمل بقواعدها القديمة؛ لا ترحيل للبيانات.
+5. التراجع: إعادة `STOCK_POLICY=on_delivery` و`APPROVAL_MODE=off` ثم `wrangler deploy`؛ الطلبات المنشأة بـ `on_acceptance` تبقى تُدار بسياستها المسجّلة في سجل الطلب.
+
+**لم يُختبر:** بوت Telegram حقيقي (المحاكاة المحلية لا تثبت التكامل الحقيقي؛ اختبار `approval-live` يحتاج بوتًا تجريبيًا وموافقتك)، ولا Google/Turnstile الحقيقيان.
 
 ## 6. التراجع
 

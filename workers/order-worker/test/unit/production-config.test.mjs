@@ -94,7 +94,13 @@ test('config.js: a production Worker that would deduct stock before delivery (po
   })) {
     assert.equal(loadConfig({ ...env, ...override }).ok, false, name);
   }
-  assert.ok(loadConfig({ ...env, STOCK_POLICY: 'on_creation' }).errors.includes('production requires STOCK_POLICY=on_delivery'));
+  const PROD_POLICY = 'production requires STOCK_POLICY=on_delivery with APPROVAL_MODE=off, or STOCK_POLICY=on_acceptance with APPROVAL_MODE=telegram';
+  assert.ok(loadConfig({ ...env, STOCK_POLICY: 'on_creation' }).errors.includes(PROD_POLICY));
+  // the ONE other accepted combination: reserve at creation, deduct once on ACCEPTANCE (Telegram / automatic)
+  const acc = { STOCK_POLICY: 'on_acceptance', APPROVAL_MODE: 'telegram', TELEGRAM_WEBHOOK_SECRET: 'f'.repeat(40), TELEGRAM_ADMIN_USER_IDS: '123456789' };
+  assert.equal(loadConfig({ ...env, ...acc }).ok, true, 'on_acceptance + telegram');
+  assert.equal(loadConfig({ ...env, ...acc, APPROVAL_MODE: 'off' }).ok, false, 'on_acceptance without Telegram approval');
+  assert.equal(loadConfig({ ...env, ...acc, STOCK_MODE: 'log' }).ok, false, 'on_acceptance with stock not applied');
   // staging / local runs keep every mode (the legacy policies are still tested there)
   delete globalThis.__DEPLOY_TARGET__;
   assert.equal(loadConfig({ ENVIRONMENT: 'local', FIREBASE_PROJECT_ID: 'demo-x', STOCK_POLICY: 'on_delivery', STOCK_MODE: 'log' }).errors.includes('STOCK_POLICY=on_delivery requires STOCK_MODE=apply'), true);

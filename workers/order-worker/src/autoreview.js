@@ -86,7 +86,7 @@ export async function countRecentSamePhone(fs, phoneHash, orderId, windowHours, 
       if (L.orderId === orderId) continue;
       const created = L.createdAt instanceof Date ? L.createdAt.getTime() : NaN;
       if (!(created >= since)) continue;
-      const decision = L.decision || (L.stockPolicy === 'on_approval' ? 'pending' : 'accepted');
+      const decision = L.decision || (['on_approval', 'on_acceptance'].includes(L.stockPolicy) ? 'pending' : 'accepted');
       if (decision === 'pending' || decision === 'accepted') n++;
     }
     return docs.length >= 50 ? Math.max(n, 1) : n;
@@ -119,7 +119,7 @@ export async function runAutoReview(fs, cfg, orderId, { recovery = false, now = 
       // already decided: by THIS review before a stop (recovery: never decide again), or by an admin
       outcome = L.decision === 'accepted' && L.decidedBy?.source === 'auto' ? 'auto_accepted' : 'superseded';
       reasons = [];
-    } else if (!O || L.stockPolicy !== 'on_approval') {
+    } else if (!O || !['on_approval', 'on_acceptance'].includes(L.stockPolicy)) {
       outcome = 'manual_review';
       reasons = [{ code: 'NOT_NEW' }];
     } else if (!settings.ok) {
@@ -128,7 +128,8 @@ export async function runAutoReview(fs, cfg, orderId, { recovery = false, now = 
       reasons = [{ code: 'SETTINGS_UNAVAILABLE' }];
     } else {
       // stock PRE-check from the CURRENT product documents (the final check is inside decideOrder's commit)
-      const lines = (Array.isArray(L.approvalLines) ? L.approvalLines : []).map((l) => ({ index: l.index, productId: l.productId, variantId: l.variantId || null, quantity: l.quantity }));
+      // on_acceptance: the lines the acceptance will deduct are orderLines (the wheel gift included)
+      const lines = (Array.isArray(L.approvalLines) ? L.approvalLines : Array.isArray(L.orderLines) ? L.orderLines : []).map((l) => ({ index: l.index, productId: l.productId, variantId: l.variantId || null, quantity: l.quantity }));
       const ids = [...new Set(lines.map((l) => l.productId))];
       let stockWarnings = [{ code: 'STOCK_NOT_DEDUCTED' }];
       try {

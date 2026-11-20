@@ -27,6 +27,7 @@ import { decodeFields, encodeFields, isConflict } from './firestore.js';
 import { planInventory, planRestock } from './inventory.js';
 import { reservationWrites } from './reservations.js';
 import { wheelStatusWrites } from './wheel.js';
+import { decideOrder } from './approval.js';
 import { log } from './http.js';
 
 export const ORDER_STATUSES = Object.freeze(['new', 'processing', 'shipped', 'delivered', 'cancelled']);
@@ -74,6 +75,20 @@ const NO_EFFECT = (inv) => ({ nextInv: inv, ledgerFields: {}, writes: [], outcom
  */
 async function planStockEffect(fs, L, from, to, { confirmReturn = false, at, by, orderId }) {
   const inv = L.inventory || 'none';
+  // STOCK_POLICY=on_acceptance: the stock was DEDUCTED when the order was accepted (src/approval.js)
+  if (L.stockPolicy === 'on_acceptance' && from !== 'delivered') {
+    // delivered: nothing more to deduct — only the delivery time is recorded (second-order discount, wheel)
+    if (to === 'delivered') return { nextInv: inv, ledgerFields: { deliveredAt: at, deliveredBy: by }, writes: [], outcome: {} };
+    // cancelled after acceptance, before delivery: what was deducted goes back ONCE ('deducted' -> 'restocked')
+    if (to === 'cancelled' && inv === 'deducted') {
+      const applied = (Array.isArray(L.stockDeductions) ? L.stockDeductions : []).filter((d) => d.applied === true);
+      const ids = [...new Set(applied.map((d) => d.productId))];
+      const docs = ids.length ? await fs.batchGet(ids.map((id) => `products/${id}`)) : [];
+      const rs = planRestock(applied, new Map(ids.map((id, i) => [id, docs[i]])));
+      return { nextInv: 'restocked', ledgerFields: { stockRestored: rs.restored, restockWarnings: rs.warnings, decision: 'cancelled', cancelledAt: at, cancelledBy: by }, writes: productWrites(fs, rs.writes), outcome: { restored: rs.restored, warnings: rs.warnings } };
+    }
+    return NO_EFFECT(inv);
+  }
   if (from === 'delivered') {
     // a return: the delivered goods are put back ONLY when the admin explicitly confirms they came back
     if (confirmReturn !== true) return { refusal: refuse(409, 'RETURN_CONFIRMATION_REQUIRED') };
@@ -158,10 +173,19 @@ export async function changeOrderStatus(fs, cfg, { orderId, status, confirmRetur
     const [orderDoc, ledgerDoc] = await fs.batchGet([`orders/${orderId}`, `orderLedger/${orderId}`]);
     if (!orderDoc.exists) return refuse(404, 'NOT_FOUND');
     const L = ledgerDoc.exists ? decodeFields(ledgerDoc.fields) : null;
-    if (!L || L.stockPolicy !== 'on_delivery') return refuse(409, 'LEGACY_ORDER');
+    if (!L || !['on_delivery', 'on_acceptance'].includes(L.stockPolicy)) return refuse(409, 'LEGACY_ORDER');
     const O = decodeFields(orderDoc.fields);
     const from = String(O.status || 'new');
     if (from === status) return { status: 200, body: { ok: true, orderId, status, result: 'unchanged', inventory: L.inventory || 'none' } };
+    // on_acceptance, not decided yet: only Telegram / automatic ACCEPTANCE moves it forward (that is where the stock is
+    // deducted). Cancelling it from the dashboard = rejecting it (reservation released) — the same commit path.
+    if (L.stockPolicy === 'on_acceptance' && (L.decision || 'pending') === 'pending') {
+      if (status !== 'cancelled') return refuse(409, 'APPROVAL_PENDING', { from, to: status });
+      const d = await decideOrder(fs, cfg, { orderId, action: 'reject', actor: { source: 'admin', userId: String(actor?.uid || '') } });
+      if (d.result === 'rejected') return { status: 200, body: { ok: true, orderId, status: 'cancelled', result: 'changed', inventory: 'released' } };
+      if (d.result === 'busy') return refuse(503, 'BUSY');
+      continue; // decided meanwhile (accepted by Telegram / automatically): re-read and apply the cancellation rules
+    }
     if (from === 'cancelled' || (from === 'delivered' && status !== 'cancelled')) return refuse(409, 'TRANSITION_NOT_ALLOWED', { from, to: status });
 
     const at = new Date();
@@ -173,7 +197,7 @@ export async function changeOrderStatus(fs, cfg, { orderId, status, confirmRetur
     const wheelW = await wheelStatusWrites(fs, L, orderId, from, status, at);
     const writes = [
       ledgerUpdate(fs, orderId, ledgerDoc, { ...eff.ledgerFields, inventory: eff.nextInv, statusHistory: history }),
-      orderUpdate(fs, orderId, orderDoc, { status, seenByAdmin: true, inventory: { policy: 'on_delivery', state: eff.nextInv } }),
+      orderUpdate(fs, orderId, orderDoc, { status, seenByAdmin: true, inventory: { policy: L.stockPolicy, state: eff.nextInv }, ...(L.stockPolicy === 'on_acceptance' && status === 'cancelled' && from !== 'delivered' ? { approval: { policy: 'telegram', state: 'cancelled', decidedAt: L.decidedAt ?? null, decidedBy: L.decidedBy ?? null, cancelledAt: at, cancelledBy: by } } : {}) }),
       ...eff.writes,
       ...wheelW,
     ];

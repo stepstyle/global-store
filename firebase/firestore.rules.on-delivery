@@ -61,7 +61,8 @@ service cloud.firestore {
 
     // Worker-managed order (STOCK_POLICY=on_delivery): its status / stock effects belong to the Worker only
     function workerManaged() {
-      return resource.data.get('inventory', {}).get('policy', '') == 'on_delivery';
+      // on_delivery (deducted on delivery) or on_acceptance (deducted when accepted from Telegram / automatically)
+      return resource.data.get('inventory', {}).get('policy', '') in ['on_delivery', 'on_acceptance'];
     }
     function stillReserved() {
       return resource.data.get('inventory', {}).get('state', '') == 'reserved';

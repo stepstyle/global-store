@@ -40,7 +40,7 @@ import LazyImage from '../components/LazyImage';
 import { isFirebaseInitialized, setFirebaseConfig, removeFirebaseConfig } from '../services/firebase';
 import { uploadToCloudinary } from '../services/cloudinary';
 import { IS_LIVE, BACKEND_ENABLED } from '../config/deployEnv';
-import { isWorkerManaged, inventoryState, INVENTORY_LABEL_AR, canCancel, deleteBlockedReason, changeStatusViaWorker, problemLineAr, type StatusFailure } from '../services/adminOrders';
+import { isWorkerManaged, inventoryState, inventoryLabelAr, canCancel, deleteBlockedReason, changeStatusViaWorker, problemLineAr, type StatusFailure } from '../services/adminOrders';
 import { planCsvImport, csvImportMessageAr, checkCsvRow, type CsvCandidate, type CsvRejection } from '../services/csvImport';
 import { CATEGORIES } from '../constants';
 import { WHEEL_ENABLED } from '../services/wheel';
@@ -532,7 +532,7 @@ const AdminDashboard: React.FC = () => {
             status: newStatus,
             updatedAt: new Date().toISOString(),
             seenByAdmin: true,
-            ...(newInventory ? { inventory: { policy: 'on_delivery', state: newInventory } } : {}),
+            ...(newInventory ? { inventory: { policy: (prev.order as any).inventory?.policy || 'on_delivery', state: newInventory } } : {}),
           },
         };
       });
@@ -1652,7 +1652,7 @@ const AdminDashboard: React.FC = () => {
                 )}
                 {inventoryState(selectedOrder) && (
                   <span data-testid="order-inventory-state" className="text-xs font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
-                    المخزون: {INVENTORY_LABEL_AR[inventoryState(selectedOrder)!]}
+                    المخزون: {inventoryLabelAr(selectedOrder)}
                   </span>
                 )}
                 

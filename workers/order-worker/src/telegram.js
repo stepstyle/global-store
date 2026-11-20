@@ -166,7 +166,7 @@ export async function handleTelegramWebhook(request, cfg, fs) {
   if (op === 'can' || op === 'bck') {
     const [ord, led] = await fs.batchGet([`orders/${orderId}`, `orderLedger/${orderId}`]).catch(() => [{ exists: false }, { exists: false }]);
     const L = led.exists ? decodeFields(led.fields) : null;
-    if (!L || L.stockPolicy !== 'on_approval') {
+    if (!L || !['on_approval', 'on_acceptance'].includes(L.stockPolicy)) {
       // same answers as a decision: an existing order without an approval ledger is a legacy order
       await answer(L || ord.exists ? ANSWER.legacy : ANSWER.not_found, true);
       return json({ ok: true });
@@ -194,7 +194,7 @@ export async function handleTelegramWebhook(request, cfg, fs) {
     if (o.exists && l.exists) {
       const order = decodeFields(o.fields);
       const ledger = decodeFields(l.fields);
-      if (ledger.stockPolicy === 'on_approval') {
+      if (['on_approval', 'on_acceptance'].includes(ledger.stockPolicy)) {
         await telegramCall(cfg, 'editMessageText', { chat_id: chatId, message_id: messageId, text: approvalText(order, ledger, cfg), reply_markup: keyboardFor(ledger.decision || 'pending', orderId) });
       }
     }

@@ -29,7 +29,7 @@ export function initialNotifications(cfg) {
  * buttons and may not even know the order exists. After notifyMaxAttempts it keeps being retried, slowly
  * (notifyExhaustedRetryMs), until it is sent or the order is decided (e.g. from another message / later).
  */
-const persistentChannel = (L, ch) => ch === 'telegram' && L?.stockPolicy === 'on_approval' && (L?.decision || 'pending') === 'pending';
+const persistentChannel = (L, ch) => ch === 'telegram' && ['on_approval', 'on_acceptance'].includes(L?.stockPolicy) && (L?.decision || 'pending') === 'pending';
 const failedAtMs = (st) => (st?.failedAt instanceof Date ? st.failedAt.getTime() : 0);
 
 function eligible(st, cfg, now, persistent = false) {
@@ -164,7 +164,7 @@ export async function processNotifications(fs, cfg, orderId) {
       // Telegram-approval orders: the Arabic message from the ledger's SERVER prices + the buttons for the order's
       // CURRENT decision (a late retry after a decision carries no stale buttons). The e-mail stays informational.
       // on_delivery orders: the same Arabic message from server data, WITHOUT any button (followed up in the dashboard)
-      const approval = L.stockPolicy === 'on_approval';
+      const approval = ['on_approval', 'on_acceptance'].includes(L.stockPolicy);
       const arabic = approval || L.stockPolicy === 'on_delivery';
       const text = arabic && ch === 'telegram' ? approvalText(order, L, cfg) : buildMessage(order, L, cfg);
       result = ch === 'telegram'

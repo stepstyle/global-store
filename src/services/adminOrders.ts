@@ -14,7 +14,9 @@ export type AdminStatus = 'new' | 'processing' | 'shipped' | 'delivered' | 'canc
 type AnyOrder = { status?: unknown; inventory?: { policy?: unknown; state?: unknown } | null } | null | undefined;
 
 /** true = the order's status (and stock) is managed by the Worker */
-export const isWorkerManaged = (o: AnyOrder): boolean => o?.inventory?.policy === 'on_delivery';
+// on_delivery (stock deducted on delivery) or on_acceptance (deducted when accepted from Telegram / automatically):
+// either way every status change goes through the Worker (stock + prize wheel in one commit)
+export const isWorkerManaged = (o: AnyOrder): boolean => o?.inventory?.policy === 'on_delivery' || o?.inventory?.policy === 'on_acceptance';
 export const inventoryState = (o: AnyOrder): InventoryState | null => {
   const s = isWorkerManaged(o) ? String(o?.inventory?.state || '') : '';
   return (['reserved', 'none', 'released', 'deducted', 'restocked'] as const).find((x) => x === s) ?? null;
@@ -26,6 +28,18 @@ export const INVENTORY_LABEL_AR: Record<InventoryState, string> = {
   released: 'أُلغي الحجز (لم يُخصم شيء)',
   deducted: 'خُصمت الكمية من المخزون عند التسليم',
   restocked: 'أُعيدت الكمية إلى المخزون (إرجاع)',
+};
+
+/** the stock line for THIS order (an on_acceptance order is deducted when it is ACCEPTED, not on delivery) */
+export const inventoryLabelAr = (o: AnyOrder): string => {
+  const st = inventoryState(o);
+  if (!st) return '';
+  if (o?.inventory?.policy === 'on_acceptance') {
+    if (st === 'reserved') return 'الكمية محجوزة — تُخصم عند قبول الطلب (Telegram أو تلقائيًا)';
+    if (st === 'deducted') return 'خُصمت الكمية من المخزون عند قبول الطلب';
+    if (st === 'restocked') return 'أُعيدت الكمية إلى المخزون (إلغاء بعد القبول أو إرجاع)';
+  }
+  return INVENTORY_LABEL_AR[st];
 };
 
 /** a delivered Worker order can be cancelled only as a RETURN (stock put back after an explicit confirmation) */
@@ -74,6 +88,7 @@ const MESSAGES_AR: Record<string, string> = {
   RETURN_CONFIRMATION_REQUIRED: 'إلغاء طلب مُسلَّم يحتاج تأكيد استرجاع المنتجات فعليًا.',
   TRANSITION_NOT_ALLOWED: 'لا يمكن نقل الطلب إلى هذه الحالة من حالته الحالية.',
   LEGACY_ORDER: 'هذا طلب من النظام السابق — يُدار بالطريقة القديمة.',
+  APPROVAL_PENDING: 'هذا الطلب بانتظار القبول (من Telegram أو تلقائيًا) — يُخصم المخزون عند القبول. يمكنك إلغاؤه (رفضه) من هنا.',
   NOT_FOUND: 'الطلب غير موجود.',
   NOT_ADMIN: 'حسابك ليس مسؤولًا مفعّلًا — لم يتغير شيء.',
   AUTH_REQUIRED: 'انتهت جلسة الدخول. سجّل الدخول من جديد ثم أعد المحاولة.',

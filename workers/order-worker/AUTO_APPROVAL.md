@@ -9,6 +9,11 @@
   - `config/autoApproval` rules in `firebase/rules-test/firestore.rules.final`;
   - the dashboard switch in `src/components/AutoApprovalSwitch.tsx`;
   - B01–B15 tests in `test/auto-approval.test.mjs` (emulator).
+- **Branch `dev/review-2026-11` (stock + prize wheel):** an automatic acceptance takes the same path as the Telegram
+  "accept" button (`decideOrder('accept')`, `actor.source = 'auto'`). With `STOCK_POLICY=on_acceptance`, the order is
+  reserved at creation, deducted once on acceptance, and returned once on a later cancel. The wheel hooks run on
+  acceptance, cancel and delivery. Tests: `test/acceptance-policy.test.mjs` P01–P12 (P09 is the automatic acceptance).
+  `on_approval` (no reservation) keeps working as before.
 
 ## Settings
 

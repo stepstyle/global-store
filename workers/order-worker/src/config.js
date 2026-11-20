@@ -165,10 +165,14 @@ export function loadConfig(env = {}) {
     // deducted only when the admin marks the order delivered (src/fulfilment.js). A production Worker without it
     // (unset, typo, old on_creation) refuses to run instead of silently deducting stock at creation. Telegram only
     // notifies: the approval-button flow is not allowed in production.
-    if (str(env.STOCK_POLICY) !== 'on_delivery') errors.push('production requires STOCK_POLICY=on_delivery');
+    // owner's decision (Telegram / automatic ACCEPTANCE, stock deducted on acceptance) adds ONE more allowed
+    // combination: STOCK_POLICY=on_acceptance WITH APPROVAL_MODE=telegram. Anything else refuses to run.
+    const prodPolicy = str(env.STOCK_POLICY);
+    const prodApproval = str(env.APPROVAL_MODE) || 'off';
+    const prodOk = (prodPolicy === 'on_delivery' && prodApproval === 'off') || (prodPolicy === 'on_acceptance' && prodApproval === 'telegram');
+    if (!prodOk) errors.push('production requires STOCK_POLICY=on_delivery with APPROVAL_MODE=off, or STOCK_POLICY=on_acceptance with APPROVAL_MODE=telegram');
     // the prize wheel is NOT approved (legal + financial terms of the campaign): production refuses to start with it on
     if (!['', 'off'].includes(str(env.WHEEL_MODE))) errors.push('production requires WHEEL_MODE=off (the wheel campaign is not approved)');
-    if (!['', 'off'].includes(str(env.APPROVAL_MODE))) errors.push('production requires APPROVAL_MODE=off (Telegram notifies only)');
     // the staging access gate (src/http.js) has no meaning in production: a production Worker that carries the
     // variable is refused outright instead of silently ignoring it
     if (str(env.STAGING_ACCESS_TOKEN)) errors.push('production must not set STAGING_ACCESS_TOKEN (staging-only gate)');
@@ -214,12 +218,19 @@ export function loadConfig(env = {}) {
   // a RANDOM value (e.g. `openssl rand -base64 48`) set with `wrangler secret put` — never in wrangler.toml or the repo.
   // Length + variety check refuses placeholders like 'xxxx…' or '1234…' (the value itself is never logged).
   if (wheelMode === 'test' && (wheelPhoneSecret.length < 32 || new Set(wheelPhoneSecret).size < 12)) errors.push('WHEEL_MODE=test requires a random WHEEL_PHONE_SECRET (at least 32 characters, not a placeholder)');
-  if (wheelMode === 'test' && str(env.STOCK_POLICY) !== 'on_delivery') errors.push('WHEEL_MODE=test requires STOCK_POLICY=on_delivery (prizes go through the reservation)');
-  const stockPolicy = oneOf(env.STOCK_POLICY, ['on_creation', 'on_delivery'], 'on_creation');
-  if (!stockPolicy) errors.push('STOCK_POLICY must be on_creation|on_delivery');
+  if (wheelMode === 'test' && !['on_delivery', 'on_acceptance'].includes(str(env.STOCK_POLICY))) errors.push('WHEEL_MODE=test requires STOCK_POLICY=on_delivery or on_acceptance (prizes go through the reservation)');
+  // on_acceptance: RESERVED at creation (like on_delivery), DEDUCTED once when the order is accepted (Telegram button or
+  // automatic acceptance, src/approval.js), returned once on a cancellation after acceptance; every later status goes
+  // through the Worker (src/fulfilment.js) so the prize wheel follows the order. Requires APPROVAL_MODE=telegram.
+  const stockPolicy = oneOf(env.STOCK_POLICY, ['on_creation', 'on_delivery', 'on_acceptance'], 'on_creation');
+  if (!stockPolicy) errors.push('STOCK_POLICY must be on_creation|on_delivery|on_acceptance');
+  if (stockPolicy === 'on_acceptance') {
+    if (stockMode !== 'apply') errors.push('STOCK_POLICY=on_acceptance requires STOCK_MODE=apply');
+    if (approvalMode !== 'telegram') errors.push('STOCK_POLICY=on_acceptance requires APPROVAL_MODE=telegram');
+  }
   if (stockPolicy === 'on_delivery') {
     if (stockMode !== 'apply') errors.push('STOCK_POLICY=on_delivery requires STOCK_MODE=apply');
-    if (approvalMode === 'telegram') errors.push('STOCK_POLICY=on_delivery cannot be combined with APPROVAL_MODE=telegram');
+    if (approvalMode === 'telegram') errors.push('STOCK_POLICY=on_delivery cannot be combined with APPROVAL_MODE=telegram (use STOCK_POLICY=on_acceptance)');
   }
   // who may place an order: 'off' (default, unchanged: guests allowed, a token is optional) | 'google' (every new order
   // needs a VERIFIED Firebase ID token signed in with Google — checked here, on the server, before Turnstile and before
