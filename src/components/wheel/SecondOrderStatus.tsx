@@ -9,6 +9,15 @@ import PrizeCountdown from './PrizeCountdown';
 const fmtWhen = (iso: string | null | undefined, isAR: boolean) =>
   iso ? new Date(iso).toLocaleString(isAR ? 'ar-JO' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
+/** why a second-order prize ended (shown in the account's prize list) */
+export function secondOrderEndReason(reason: string | null | undefined, isAR: boolean): string {
+  if (reason === 'no_first_order') return isAR ? 'انتهت: لم يُنشأ الطلب الأول خلال 5 أيام من الفوز.' : 'Ended: no first order was placed within 5 days of the win.';
+  if (reason === 'first_order_not_delivered') return isAR ? 'انتهت: لم يُسلَّم طلبك الأول خلال 7 أيام من إنشائه (طلبك نفسه لم يتأثر).' : 'Ended: your first order was not delivered within 7 days of being placed (the order itself is not affected).';
+  if (reason === 'first_order_cancelled') return isAR ? 'انتهت: أُلغي الطلب الأول بعد انتهاء مهلة إنشاء الطلب.' : 'Ended: the first order was cancelled after the time to place one had passed.';
+  if (reason === 'not_second_order') return isAR ? 'انتهت: حسابك تجاوز طلبه الثاني.' : 'Ended: your account is past its second order.';
+  return '';
+}
+
 export function secondOrderStage(s: Pick<WheelSpin, 'status' | 'firstOrderId' | 'firstOrderBy'>, accountState: string | null): 'create-first-order' | 'first-order-open' | 'active' | null {
   if (s.status === 'issued') return 'active';
   if (s.status !== 'waiting') return null;
@@ -31,7 +40,15 @@ export default function SecondOrderStatus({ spin, accountState, isAR, onExpire, 
         </>
       )}
       {stage === 'first-order-open' && (
-        <p>{L(`② طلبك الأول قيد التنفيذ: الجائزة محفوظة حتى تسليمه، ثم تبدأ ${days} أيام لاستخدامها على طلبك الثاني. إذا أُلغي الطلب الأول يُعاد تقييم الاستحقاق.`, `② Your first order is in progress: the prize is kept until it is delivered, then you have ${days} days to use it on your second order. If the first order is cancelled, eligibility is re-checked.`)}</p>
+        <>
+          <p>{L(`② طلبك الأول قيد التنفيذ: الجائزة محفوظة حتى تسليمه، ثم تبدأ ${days} أيام لاستخدامها على طلبك الثاني. إذا أُلغي الطلب الأول يُعاد تقييم الاستحقاق.`, `② Your first order is in progress: the prize is kept until it is delivered, then you have ${days} days to use it on your second order. If the first order is cancelled, eligibility is re-checked.`)}</p>
+          {spin.deliveryBy && (
+            <>
+              <p className="mt-1" data-testid={`${testId}-delivery-by`}>{L(`يجب أن يُسلَّم طلبك الأول قبل ${fmtWhen(spin.deliveryBy, true)} (7 أيام من إنشائه)، وإلا تنتهي الجائزة. طلبك نفسه لا يتأثر.`, `Your first order must be delivered before ${fmtWhen(spin.deliveryBy, false)} (7 days after it was placed), or the prize ends. Your order itself is not affected.`)}</p>
+              <PrizeCountdown expiresAt={spin.deliveryBy} isAR={isAR} onExpire={onExpire} label={L('الوقت المتبقي لتسليم طلبك الأول: ', 'Time left for your first order to be delivered: ')} urgentMs={24 * 3_600_000} testId={`${testId}-delivery-countdown`} />
+            </>
+          )}
+        </>
       )}
       {stage === 'active' && (
         <>

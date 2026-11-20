@@ -281,6 +281,8 @@ export function loadConfig(env = {}) {
     wheelPrizeHoldMinutes: Math.max(5, Math.min(1440, num(env.WHEEL_PRIZE_HOLD_MINUTES, 60))),
     // owner's exception: a 'second order' discount is usable this long after the account's FIRST delivery (5 days)
     wheelSecondOrderHours: Math.max(1, Math.min(2160, num(env.WHEEL_SECOND_ORDER_HOURS, 120))),
+    // ...and its FIRST order (created in time) must be delivered within this many hours of its creation (7 days)
+    wheelFirstDeliveryHours: Math.max(1, Math.min(2160, num(env.WHEEL_FIRST_DELIVERY_HOURS, 168))),
     currency,
     email: {
       apiKey: str(env.SENDGRID_API_KEY),

@@ -4,8 +4,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { fmtRemaining, remainingMs } from '../../services/wheel';
 
-const DAY = 86_400_000;
-
 export default function PrizeCountdown({ expiresAt, isAR, onExpire, testId = 'prize-countdown', className = '', urgentMs = 5 * 60_000, label }: {
   expiresAt: string | null; isAR: boolean; onExpire?: () => void; testId?: string; className?: string; urgentMs?: number; label?: string;
 }) {
@@ -29,7 +27,18 @@ export default function PrizeCountdown({ expiresAt, isAR, onExpire, testId = 'pr
     <span className={`inline-flex items-center gap-1 font-black tabular-nums ${urgent ? 'text-red-700' : 'text-ink-800'} ${className}`} role="timer" aria-live="off" data-testid={testId} data-remaining-ms={left}>
       <span aria-hidden="true">⏳</span>
       {label ?? (isAR ? `الوقت المتبقي لاستخدام الجائزة: ` : 'Time left to use the prize: ')}
-      {left >= DAY ? <span>{isAR ? `${Math.floor(left / DAY)} يوم و ` : `${Math.floor(left / DAY)}d `}<span dir="ltr">{fmtRemaining(left % DAY)}</span></span> : <span dir="ltr">{fmtRemaining(left)}</span>}
+      {(() => {
+        // round UP to the second FIRST, then split into days (never "6 days 24:00:00")
+        const secs = Math.ceil(left / 1000);
+        const days = Math.floor(secs / 86_400);
+        const r = secs % 86_400;
+        const p = (n: number) => String(n).padStart(2, '0');
+        // with days, always hh:mm:ss (never "7 days 00:00", which reads like minutes)
+        const hms = `${p(Math.floor(r / 3600))}:${p(Math.floor((r % 3600) / 60))}:${p(r % 60)}`;
+        return days > 0
+          ? <span>{isAR ? `${days} يوم و ` : `${days}d `}<span dir="ltr">{hms}</span></span>
+          : <span dir="ltr">{fmtRemaining(left)}</span>;
+      })()}
     </span>
   );
 }

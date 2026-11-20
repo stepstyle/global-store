@@ -23,6 +23,8 @@ export type WheelSpin = {
   waitingUntil?: string | null; activatedAt?: string | null;
   // second-order prize: create the first order before this (5 days from the win); the first order it waits for
   firstOrderBy?: string | null; firstOrderId?: string | null;
+  // ...the first order must be DELIVERED before this (its creation + 7 days); why an ended prize ended
+  deliveryBy?: string | null; expiredReason?: string | null;
 };
 export type WheelPublic = { campaign: string; slots: WheelSlot[]; minOrderJod: number | null; prizeHoldMinutes: number; terms: string };
 export type WheelState = { campaign: string; minOrderJod: number | null; terms: string; prizeHoldMinutes: number; chancesLeft: number; spins: WheelSpin[]; slots: WheelSlot[]; previousDelivered: boolean | null;
@@ -76,6 +78,7 @@ export const spinOf = (s: any): WheelSpin | null =>
         description: typeof s.description === 'string' ? s.description : '', expiresAt: typeof s.expiresAt === 'string' ? s.expiresAt : null,
         waitingUntil: typeof s.waitingUntil === 'string' ? s.waitingUntil : null, activatedAt: typeof s.activatedAt === 'string' ? s.activatedAt : null,
         firstOrderBy: typeof s.firstOrderBy === 'string' ? s.firstOrderBy : null, firstOrderId: typeof s.firstOrderId === 'string' ? s.firstOrderId : null,
+        deliveryBy: typeof s.deliveryBy === 'string' ? s.deliveryBy : null, expiredReason: typeof s.expiredReason === 'string' ? s.expiredReason : null,
       }
     : null;
 

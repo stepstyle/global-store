@@ -19,7 +19,7 @@ import {
 } from '../../services/wheel';
 import WheelDial from './WheelDial';
 import PrizeCountdown from './PrizeCountdown';
-import SecondOrderStatus from './SecondOrderStatus';
+import SecondOrderStatus, { secondOrderEndReason } from './SecondOrderStatus';
 
 const { Link } = ReactRouterDOM as any;
 const SPIN_MS = 4600;
@@ -258,6 +258,7 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
                       <span className="text-[11px] font-bold text-ink-600">{(isAR ? STATUS_AR : STATUS_EN)[prizeExpired(s) ? 'expired' : s.status] || s.status}</span>
                     </div>
                     <p className="mt-0.5 text-xs text-ink-600">{prizeText(s, isAR)}{s.orderId ? L(` — الطلب ${s.orderId}`, ` — order ${s.orderId}`) : ''}</p>
+                    {isSecondOrder(s) && s.status === 'expired' && secondOrderEndReason(s.expiredReason, isAR) && <p className="mt-1 text-xs font-bold text-red-700" data-testid="wheel-row-ended" data-reason={s.expiredReason || ''}>{secondOrderEndReason(s.expiredReason, isAR)}</p>}
                     {isSecondOrder(s) && !prizeExpired(s) && <SecondOrderStatus spin={s} accountState={st?.secondOrder ?? null} isAR={isAR} onExpire={onExpire} days={secondH / 24} testId="wheel-row-second" />}
                     {!isSecondOrder(s) && s.status === 'issued' && !prizeExpired(s) && s.expiresAt && <p className="mt-0.5 text-xs"><PrizeCountdown expiresAt={s.expiresAt} isAR={isAR} onExpire={onExpire} testId="wheel-row-countdown" /></p>}
                   </li>

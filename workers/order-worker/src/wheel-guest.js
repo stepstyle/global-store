@@ -262,7 +262,7 @@ export async function releaseExpiredGuestHolds(fs, cfg, { now = Date.now(), page
   for (let page = 0; page < maxPages; page++) {
     const docs = await fs.runQuery({
       from: [{ collectionId: 'wheelGuestSpins' }],
-      where: { fieldFilter: { field: { fieldPath: 'holdExpiry' }, op: 'LESS_THAN', value: { timestampValue: nowTs } } },
+      where: { fieldFilter: { field: { fieldPath: 'holdExpiry' }, op: 'LESS_THAN_OR_EQUAL', value: { timestampValue: nowTs } } },
       orderBy: [{ field: { fieldPath: 'holdExpiry' }, direction: 'ASCENDING' }, { field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
       ...(cursor ? { startAt: { values: cursor, before: false } } : {}),
       limit: pageSize,
