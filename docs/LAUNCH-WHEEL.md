@@ -20,6 +20,8 @@
 2. **Vercel** ← المشروع `global-store-oz2a` ← Deployments: انسخ رقم النشر الحالي على dairsharaf.com (المتوقع `dpl_DNAuUwBjjLg3N968pHAvKq5pJqrk`).
 3. **Firebase** ← Firestore ← Rules: القواعد الحالية (المتوقع ruleset `760798d0`).
 
+> **نقطة الرجوع المسجّلة (2026-11-21):** النشر النشط `2ea16078-9330-4d4d-a447-3981d79b1d23` (100%). النسخة `f70f504b` (إضافة الأسرار) مرفوعة **غير منشورة**؛ الأسرار تنتقل تلقائيًا إلى نسخة `wrangler deploy` الجديدة.
+
 ## الخطوة 1 — توليد سرّين (على جهازك)
 
 افتح PowerShell وشغّل السطر مرتين. احفظ الناتجين في مكان آمن ولا ترسلهما لأحد (ولا لي):
@@ -41,6 +43,10 @@ Workers & Pages ← `anta-order-v2` ← Settings ← Variables and Secrets ← A
 | Secret | `WHEEL_PHONE_SECRET` | الناتج الثاني |
 
 إضافة سر تنشئ نسخة جديدة من الـ Worker **بنفس السلوك الحالي** (الكود الحالي لا يستخدمهما). لا تضف أي شيء آخر من اللوحة؛ باقي الإعدادات تأتي من الملف في الخطوة 4.
+
+## الخطوة 2ب — تدوير سر مكشوف (قبل الإطلاق)
+
+إن ظهر أي من السرّين خارج جهازك: ولّد قيمة جديدة (الخطوة 1) ← Cloudflare ← Variables and Secrets ← السر ← Edit ← القيمة الجديدة ← Save (**لا Deploy**). إن لم تعرف أيهما انكشف: دوّر الاثنين. قبل الإطلاق لا يستخدمهما أي شيء، فالتدوير بلا أثر. استخدم القيمة الجديدة لسر Telegram في الخطوة 5.
 
 ## الخطوة 3 — Vercel: متغير واحد
 
@@ -74,6 +80,7 @@ node ../release-rollback-2026-11-19/fb-rules-deploy.mjs firestore.rules.launch
 #   (TELEGRAM_ADMIN_USER_IDS موجود بالفعل)
 cd workers/order-worker
 npx wrangler deploy --config wrangler.production.local.toml
+# تحقق: GET https://<worker-host>/ يجب أن يعطي "version":"v2.2.0-acceptance-wheel" (القديم v2.1.0-on-delivery)
 ```
 
 إن نقص أي إعداد أو سر، **يرفض الـ Worker التشغيل** ويطبع السبب (لا يعمل بإعدادات ناقصة).
