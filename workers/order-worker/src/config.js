@@ -16,7 +16,7 @@
 import { GOOGLE_SECURETOKEN_JWKS_URL } from './auth.js';
 
 export const PROD_PROJECT_ID = 'antastore1-82b50';
-export const WORKER_VERSION = 'v2.1.0-on-delivery';
+export const WORKER_VERSION = 'v2.2.0-acceptance-wheel';
 export const STAGING_PROJECT_RE = /^[a-z][a-z0-9-]{2,22}-staging$/;
 export const SINK_HOST_RE = /^anta-notify-sink-staging\.[a-z0-9-]+\.workers\.dev$/;
 export const TURNSTILE_TEST_SECRETS = [
