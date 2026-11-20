@@ -539,6 +539,9 @@ export function messageFor(r: CheckoutResult): UiMessage | null {
       if (r.code === 'SIGN_IN_REQUIRED' || r.code === 'GOOGLE_SIGN_IN_REQUIRED') {
         return { tone: 'warning', showOrderId: false, actions: ['fix_form'], titleAr: 'يلزم تسجيل الدخول بحساب Google', titleEn: 'Google sign-in is required', bodyAr: 'لم يُرسل الطلب ولم يُنشأ أي طلب. سلّتك وبياناتك محفوظة. اضغط «تأكيد الطلب» مرة أخرى واختر حساب Google.', bodyEn: 'The order was not sent and no order was created. Your cart and details are kept. Press "Confirm order" again and choose a Google account.' };
       }
+      if (r.code === 'WHEEL_NOT_SECOND_ORDER') {
+        return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'الخصم لطلبك الثاني الفعلي فقط', titleEn: 'Only for your actual second order', bodyAr: 'لديك طلب آخر غير ملغى بعد طلبك الأول، فهذا الطلب ليس طلبك الثاني. لم يُنشأ أي طلب. أكّد مرة أخرى وسيُرسل دون الخصم.', bodyEn: 'You have another order (not cancelled) after your first one, so this is not your second order. No order was created. Confirm again and it is sent without the discount.' };
+      }
       if (r.code === 'WHEEL_NEEDS_PREVIOUS_ORDER') {
         return { tone: 'error', showOrderId: false, actions: ['fix_form'], titleAr: 'الخصم مخصص للطلب الثاني', titleEn: 'This discount is for a second order', bodyAr: 'يُستخدم هذا الخصم بعد استلام طلب سابق من حسابك. أزل الجائزة من هذا الطلب ثم أكّد. لم يُنشأ أي طلب، وجائزتك محفوظة.', bodyEn: 'This discount can be used after an earlier order of your account was delivered. Remove the prize from this order and confirm. No order was created and your prize is kept.' };
       }

@@ -368,18 +368,36 @@ export function buildWheelScenarios(ctx) {
       await openPopupFromFab(t);
       await spinAndWait(t);
       assert.match(await waitResult(t), /طلبك الثاني/);
+      // owner's exception: KEPT until the first delivery (no 60-minute countdown), explained in the wheel
+      assert.ok(await t.evaluate(`!!document.querySelector('[data-testid=wheel-second-waiting]')`), 'kept, waiting for the first delivery');
+      assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=wheel-countdown]')`), false, 'no 60-minute countdown');
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-won]').innerText`), /لا ينتهي بعد ساعة[\s\S]*5 أيام/);
+      assert.equal((await spinDoc(uid, 1)).status, 'waiting');
+      await shot(t, 'wu05-second-waiting');
       await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
       await openCheckoutWith(t, CART_15, email);
-      await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'needs_previous_order'`, 20_000, 'second-order explained');
+      await t.waitFor(`!!document.querySelector('[data-testid=checkout-wheel-waiting]')`, 20_000, 'second-order kept, explained in checkout');
+      assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=checkout-wheel-gift]')`), false, 'not applied to the first order');
       await fillToPayment(t, '0795100005');
       await clickConfirm(t);
       assert.equal(await outcome(t), 'success');
       const o1 = await t.evaluate(`location.hash.split('/').pop()`);
       assert.equal((await get(`orderLedger/${o1}`)).serverPricing.total, 18, 'first order: no discount');
       await deliverInDashboard(t, o1);
+      // the FIRST delivery starts the 5 days (from the delivery, not the spin) — the customer follows it in the account
+      const act = await spinDoc(uid, 1);
+      assert.equal(act.status, 'issued');
+      assert.equal(act.expiresAt.getTime() - (await get(`orderLedger/${o1}`)).deliveredAt.getTime(), 120 * 3_600_000);
       await signIn(t, email, pw);
+      await t.evaluate(`location.hash = '#/wheel'; true`);
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-row-ends]') && !!document.querySelector('[data-testid=wheel-row-countdown]')`, 25_000, 'end date + time left in the account');
+      const left = Number(await t.evaluate(`document.querySelector('[data-testid=wheel-row-countdown]').dataset.remainingMs`));
+      assert.ok(left > 119 * 3_600_000 && left <= 120 * 3_600_000, `about 5 days left (${left})`);
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-row-countdown]').textContent`), /4 يوم و 2\d:\d\d:\d\d|5 يوم و 00:00:\d\d/);
+      await shot(t, 'wu05-account-prize');
       await openCheckoutWith(t, CART_15, email);
       await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'applies'`, 20_000, 'second-order discount applies');
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=checkout-wheel-ends]').innerText`), /صالح حتى[\s\S]*5 أيام من تسليم طلبك الأول/);
       await fillToPayment(t, '0795100005');
       await shot(t, 'wu05-second-order');
       await clickConfirm(t);

@@ -46,7 +46,8 @@ import LazyImage from '../components/LazyImage';
 import { BACKEND_ENABLED } from '../config/deployEnv';
 import {
   WHEEL_ENABLED, WHEEL_SPIN_ID_RE, chosenPrize, choosePrize, fetchWheelState, prizeEffect, prizeText, usablePrize,
-  claimGuestResult, fetchGuestResult, guestAsSpin, prizeExpired, DEFAULT_HOLD_MINUTES, type WheelSpin, type WheelState,
+  claimGuestResult, fetchGuestResult, guestAsSpin, prizeExpired, DEFAULT_HOLD_MINUTES, isSecondOrder, prizeWaiting, SECOND_ORDER_HOURS,
+  type WheelSpin, type WheelState,
 } from '../services/wheel';
 import PrizeCountdown from '../components/wheel/PrizeCountdown';
 import { googleMessage, saveCheckoutResume, takeCheckoutResume, type GoogleOutcome } from '../services/googleGate';
@@ -264,6 +265,14 @@ const Checkout: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wheelState, guestPrize, wheelPrize, wheelRemoved, prizeClock]);
   const holdMin = wheelState?.prizeHoldMinutes ?? DEFAULT_HOLD_MINUTES;
+  // a second-order discount kept for this account until its first delivery (shown, never applied to this order)
+  const waitingPrize = useMemo(() => {
+    if (!WHEEL_ENABLED || wheelPrize) return null;
+    const list = wheelState ? wheelState.spins : guestPrize ? [guestPrize] : [];
+    return list.filter((s) => prizeWaiting(s)).pop() ?? null;
+  }, [wheelState, guestPrize, wheelPrize]);
+  const secondDays = (wheelState?.secondOrderHours ?? SECOND_ORDER_HOURS) / 24;
+  const fmtWhen = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString(isAR ? 'ar-JO' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
   const prizeIsGuest = !!wheelPrize && !wheelPrize.spinId;
   const wheelAttachRef = useRef<string | null>(null); // the spin id sent with the order (only when the prize applies)
   // Google sign-in at "confirm order" (owner's rule)
@@ -351,6 +360,7 @@ const Checkout: React.FC = () => {
     if (c.kind === 'claimed' && c.result?.status === 'issued') { choosePrize({ spinId: c.spinId, label: c.result.label }); setWheelPick(c.spinId); }
     if (c.kind === 'account_has_spin') setWheelNotice(tr('لحسابك نتيجة دولاب سابقة، فبقيت هي المعتمدة ولم تُضف نتيجة اللفة التي قمت بها قبل تسجيل الدخول.', 'Your account already has a wheel result: it stays, and the spin made before signing in is not added.'));
     else if (c.kind === 'expired') setWheelNotice(tr('انتهت صلاحية جائزة الدولاب (60 دقيقة من لحظة اللفة) قبل تسجيل الدخول وتأكيد الطلب، فلم تعد صالحة للاستعمال. تُحسب لفّتك الترحيبية لهذا الحساب.', 'The wheel prize window (60 minutes from the spin) ended before you signed in and confirmed, so it can no longer be used. It counts as this account\'s welcome spin.'));
+    else if (c.kind === 'not_second_order') setWheelNotice(tr('ربحت خصم «الطلب الثاني»، لكن حسابك تجاوز طلبه الثاني، فلا يمكن استخدامه. تُحسب لفّتك الترحيبية لهذا الحساب.', 'You won the "second order" discount, but your account is already past its second order, so it cannot be used. It counts as this account\'s welcome spin.'));
     else if (c.kind === 'claimed_by_other') setWheelNotice(tr('نتيجة الدولاب في هذا المتصفح مرتبطة بحساب آخر، فلا تُطبَّق على هذا الحساب.', 'The wheel result in this browser belongs to another account, so it does not apply here.'));
     else if (c.kind === 'unavailable') setWheelNotice(tr('تعذّر ربط جائزة الدولاب بحسابك الآن، فلن تُطبَّق على هذا الطلب. يمكنك إكمال الطلب بدونها أو إعادة المحاولة لاحقًا؛ تبقى محفوظة في هذا المتصفح.', 'The wheel prize could not be linked to your account right now, so it is not applied to this order. You can order without it or try later; it stays saved in this browser.'));
     const r = await fetchWheelState(t, url, workerDeps);
@@ -1624,13 +1634,17 @@ const Checkout: React.FC = () => {
                       </span>
                     )}
                     {prizeFx.state === 'needs_previous_order' && (
-                      <span className="text-ink-800">{tr('هذا الخصم للطلب الثاني: يصبح متاحًا بعد استلام طلبك الأول، ولن يُطبَّق على هذا الطلب.', 'This discount is for your second order: available after your first order is delivered; it is not applied to this order.')}</span>
+                      <span className="text-ink-800" data-testid="checkout-wheel-second-note">{wheelState?.secondOrder === 'past'
+                        ? tr('هذا الخصم لطلبك الثاني الفعلي فقط، ولديك طلب آخر غير ملغى، فلن يُطبَّق على هذا الطلب.', 'This discount is only for your actual second order, and you have another order that is not cancelled, so it does not apply here.')
+                        : tr('هذا الخصم للطلب الثاني: يصبح متاحًا بعد استلام طلبك الأول، ولن يُطبَّق على هذا الطلب.', 'This discount is for your second order: available after your first order is delivered; it is not applied to this order.')}</span>
                     )}
                   </p>
                   {wheelPrize.expiresAt && (
                     <p className="mt-1.5 text-xs">
-                      <PrizeCountdown expiresAt={wheelPrize.expiresAt} isAR={isAR} onExpire={onPrizeExpire} testId="checkout-wheel-countdown" />
-                      <span className="block text-[11px] font-bold text-ink-600">{tr(`صالحة ${holdMin} دقيقة من لحظة اللفة: أكّد الطلب قبل انتهائها لتبقى مرتبطة به.`, `Valid ${holdMin} minutes from the spin: confirm the order before it ends to keep it.`)}</span>
+                      <PrizeCountdown expiresAt={wheelPrize.expiresAt} isAR={isAR} onExpire={onPrizeExpire} testId="checkout-wheel-countdown" urgentMs={isSecondOrder(wheelPrize) ? 12 * 3_600_000 : 5 * 60_000} />
+                      <span className="block text-[11px] font-bold text-ink-600" data-testid="checkout-wheel-ends">{isSecondOrder(wheelPrize)
+                        ? tr(`خصم الطلب الثاني صالح حتى ${fmtWhen(wheelPrize.expiresAt)} (${secondDays} أيام من تسليم طلبك الأول).`, `Second-order discount valid until ${fmtWhen(wheelPrize.expiresAt)} (${secondDays} days from your first delivery).`)
+                        : tr(`صالحة ${holdMin} دقيقة من لحظة اللفة: أكّد الطلب قبل انتهائها لتبقى مرتبطة به.`, `Valid ${holdMin} minutes from the spin: confirm the order before it ends to keep it.`)}</span>
                     </p>
                   )}
                 </div>
@@ -1638,7 +1652,15 @@ const Checkout: React.FC = () => {
               {WHEEL_ENABLED && !wheelPrize && expiredPrize && (
                 <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm" role="status" data-testid="checkout-wheel-expired" data-prize-id={expiredPrize.prizeId}>
                   <p className="font-black text-red-800">🎡 {tr(`انتهت صلاحية جائزة الدولاب: ${expiredPrize.label}`, `The wheel prize has expired: ${expiredPrize.label}`)}</p>
-                  <p className="mt-1 text-xs font-bold leading-relaxed text-red-800">{tr(`كانت صالحة ${holdMin} دقيقة من لحظة اللفة ولم تُستخدم في طلب مؤكَّد خلالها، فلم تعد صالحة للاستعمال ولن تُطبَّق. يمكنك إتمام الطلب بدونها.`, `It was valid for ${holdMin} minutes from the spin and was not used in a confirmed order in time, so it no longer applies. You can still place the order without it.`)}</p>
+                  <p className="mt-1 text-xs font-bold leading-relaxed text-red-800">{isSecondOrder(expiredPrize)
+                    ? tr(`انتهت مدة الأيام الخمسة بعد تسليم طلبك الأول دون استخدامها على طلبك الثاني، فلم تعد صالحة ولن تُطبَّق. يمكنك إتمام الطلب بدونها.`, `The ${secondDays} days after your first delivery passed without using it, so it no longer applies. You can still place the order without it.`)
+                    : tr(`كانت صالحة ${holdMin} دقيقة من لحظة اللفة ولم تُستخدم في طلب مؤكَّد خلالها، فلم تعد صالحة للاستعمال ولن تُطبَّق. يمكنك إتمام الطلب بدونها.`, `It was valid for ${holdMin} minutes from the spin and was not used in a confirmed order in time, so it no longer applies. You can still place the order without it.`)}</p>
+                </div>
+              )}
+              {WHEEL_ENABLED && !wheelPrize && !expiredPrize && waitingPrize && (
+                <div className="mb-4 rounded-2xl border border-gold-200 bg-gold-50 p-3 text-sm" role="status" data-testid="checkout-wheel-waiting" data-prize-id={waitingPrize.prizeId}>
+                  <p className="font-black text-ink-950">🎡 {tr(`محفوظ لك: ${waitingPrize.label}`, `Kept for you: ${waitingPrize.label}`)}</p>
+                  <p className="mt-1 text-xs font-bold leading-relaxed text-ink-800">{tr(`لا يُطبَّق على هذا الطلب. تبدأ مدته (${secondDays} أيام) عند تسليم طلبك الأول، ثم يُستخدم على طلبك الثاني الفعلي بمنتجات ${waitingPrize.minOrderJod ?? 15} د.أ فأكثر. تابعه من «جوائزك» في صفحة الدولاب.`, `Not applied to this order. Its ${secondDays} days start when your first order is delivered; then use it on your actual second order with products of ${waitingPrize.minOrderJod ?? 15} JOD or more. Follow it under "Your prizes" on the wheel page.`)}</p>
                 </div>
               )}
 

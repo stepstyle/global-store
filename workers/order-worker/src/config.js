@@ -279,6 +279,8 @@ export function loadConfig(env = {}) {
     wheelGuestPerIpDay: Math.max(0, Math.min(1000, num(env.WHEEL_GUEST_PER_IP_DAY, 10))),
     // a won, unused prize is valid this long from the spin (owner's rule: 60 minutes); see src/wheel.js prizeHoldMs
     wheelPrizeHoldMinutes: Math.max(5, Math.min(1440, num(env.WHEEL_PRIZE_HOLD_MINUTES, 60))),
+    // owner's exception: a 'second order' discount is usable this long after the account's FIRST delivery (5 days)
+    wheelSecondOrderHours: Math.max(1, Math.min(2160, num(env.WHEEL_SECOND_ORDER_HOURS, 120))),
     currency,
     email: {
       apiKey: str(env.SENDGRID_API_KEY),

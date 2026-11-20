@@ -26,7 +26,7 @@
 
 import { encodeFields, decodeFields, isConflict } from './firestore.js';
 import { log } from './http.js';
-import { NO_PRIZE, SPIN_ATTEMPTS, campaignOpen, drawPrize, entitlement, prizeHoldMs, secureRand, validCampaign } from './wheel.js';
+import { NO_PRIZE, SPIN_ATTEMPTS, campaignOpen, drawPrize, entitlement, prizeHoldMs, secureRand, validCampaign, isSecondOrderPrize, secondOrderState, secondOrderTerms, secondOrderWindowMs } from './wheel.js';
 
 const DAY_MS = 86_400_000;
 export const TICKET_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -86,7 +86,11 @@ export async function guestSpin(fs, cfg, ticket, ip, { now = () => Date.now(), r
     const drawnId = drawPrize(campaign, remaining, rand, at);
     const slot = campaign.prizes.find((p) => p.id === drawnId) || null;
     const prize = slot && slot.type !== 'none' ? slot : null;
-    const expiresAt = prize ? at + prizeHoldMs(cfg) : null;
+    // second-order prize (owner's exception): no 60-minute use window — its 5 days start at the account's first
+    // delivery (after the claim). Unclaimed, the ticket keeps it at most that long (anonymous holds stay bounded).
+    const second = isSecondOrderPrize(prize);
+    const expiresAt = prize && !second ? at + prizeHoldMs(cfg) : null;
+    const holdUntil = prize ? (second ? at + secondOrderWindowMs(cfg) : expiresAt) : null;
     const g = {
       campaignId: cid, prizeId: slot ? slot.id : NO_PRIZE, label: slot ? slot.label : 'حظ أوفر',
       productId: prize?.productId ?? null, variantId: prize?.variantId ?? null,
@@ -95,7 +99,7 @@ export async function guestSpin(fs, cfg, ticket, ip, { now = () => Date.now(), r
       ...(prize ? { valueJod: prize.valueJod, minOrderJod: prize.minOrderJod, appliesTo: prize.appliesTo, description: prize.description } : {}),
       status: prize ? 'held' : NO_PRIZE,
       // holdExpiry exists ONLY while a won unit is held for an unclaimed ticket (the cron query reads exactly those)
-      ...(prize ? { expiresAt: new Date(expiresAt), holdExpiry: new Date(expiresAt) } : {}),
+      ...(prize ? { expiresAt: expiresAt ? new Date(expiresAt) : null, holdExpiry: new Date(holdUntil) } : {}),
       createdAt: new Date(at),
     };
     const writes = [
@@ -194,15 +198,36 @@ export async function claimGuest(fs, cfg, uid, ticket, { now = () => Date.now(),
       if (!isConflict(r)) return { status: 503, body: { ok: false, code: 'UNAVAILABLE' } };
       continue;
     }
+    // second-order prize: its window depends on the ACCOUNT now (waiting for a first delivery / 120 h after it / never)
+    let second = null;
+    if (held && g.appliesTo === 'next_order') {
+      const sst = await secondOrderState(fs, uid);
+      second = (campaign && secondOrderTerms(cfg, campaign, sst, at)) || 'never';
+    }
+    if (second === 'never') {
+      // this account's actual second order is behind it: the prize cannot be used. It still is the welcome spin.
+      const fresh = { campaignId: cid, uid, n: 1, prizeId: g.prizeId, label: g.label, prizeType: g.prizeType, valueJod: g.valueJod, minOrderJod: g.minOrderJod, appliesTo: g.appliesTo, ...(email ? { email: String(email).slice(0, 200) } : {}), status: 'expired', expiresAt: null, expiredAt: new Date(at), expiredReason: 'not_second_order', fromGuest: true, createdAt: g.createdAt instanceof Date ? g.createdAt : new Date(at), claimedAt: new Date(at) };
+      const r = await fs.commit([
+        close('expired', { claimedBy: uid, claimedSpin: spinId(cid, uid, 1) }), poolBack(fs, g),
+        { update: { name: fs.name(sPath), fields: encodeFields(fresh) }, currentDocument: { exists: false } },
+        entDoc.exists
+          ? { update: { name: fs.name(entPath), fields: encodeFields({ used: 1 }) }, updateMask: { fieldPaths: ['used'] }, currentDocument: { updateTime: entDoc.updateTime } }
+          : { update: { name: fs.name(entPath), fields: encodeFields({ campaignId: cid, uid, granted: 1, used: 1 }) }, currentDocument: { exists: false } },
+      ]);
+      if (r.ok) return { status: 409, body: { ok: false, code: 'WHEEL_NOT_SECOND_ORDER' } };
+      if (!isConflict(r)) return { status: 503, body: { ok: false, code: 'UNAVAILABLE' } };
+      continue;
+    }
     const issued = held;
     const spin = {
       campaignId: cid, uid, n: 1, prizeId: g.prizeId, label: g.label, productId: g.productId ?? null, variantId: g.variantId ?? null,
       prizeType: g.prizeType || 'none',
       ...(issued ? { valueJod: g.valueJod, minOrderJod: g.minOrderJod, appliesTo: g.appliesTo, description: g.description || '' } : {}),
       ...(email ? { email: String(email).slice(0, 200) } : {}),
-      status: issued ? 'issued' : NO_PRIZE,
-      // validity counts from the SPIN (shown to the customer then), not from the claim
-      ...(issued && g.expiresAt instanceof Date ? { expiresAt: g.expiresAt, issuedExpiry: g.expiresAt } : {}),
+      status: issued ? (second ? second.status : 'issued') : NO_PRIZE,
+      // validity counts from the SPIN (shown to the customer then), not from the claim — except the second-order prize
+      ...(second ? { expiresAt: second.expiresAt, issuedExpiry: second.issuedExpiry, ...(second.waitingUntil ? { waitingUntil: second.waitingUntil } : {}), ...(second.activatedAt ? { activatedAt: second.activatedAt, firstOrderId: second.firstOrderId } : {}) }
+        : issued && g.expiresAt instanceof Date ? { expiresAt: g.expiresAt, issuedExpiry: g.expiresAt } : {}),
       fromGuest: true, createdAt: g.createdAt instanceof Date ? g.createdAt : new Date(at), claimedAt: new Date(at),
     };
     const writes = [
@@ -215,7 +240,7 @@ export async function claimGuest(fs, cfg, uid, ticket, { now = () => Date.now(),
     const r = await fs.commit(writes);
     if (r.ok) {
       log('wheel.guest_claimed', { campaignId: cid, prize: g.prizeId });
-      return { status: 200, body: { ok: true, repeated: false, spinId: spinId(cid, uid, 1), result: { ...publicGuest({ ...g, status: spin.status, holdExpiry: null }) } } };
+      return { status: 200, body: { ok: true, repeated: false, spinId: spinId(cid, uid, 1), result: { ...publicGuest({ ...g, status: spin.status, holdExpiry: null, expiresAt: spin.expiresAt ?? null }) } } };
     }
     if (!isConflict(r)) return { status: 503, body: { ok: false, code: 'UNAVAILABLE' } };
   }

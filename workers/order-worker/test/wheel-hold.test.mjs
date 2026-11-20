@@ -218,7 +218,8 @@ test('H08 races: orders + crons + spins at the expiry moment; several different 
   const five = Array.from({ length: 5 }, () => cartOrder(CAROL, 'p-5', { discount: 1 }));
   const rr = await Promise.all(five.map((o) => place(CAROL, o, c.spinId)));
   assert.equal(rr.filter((r) => r.status === 200).length, 1, rr.map((r) => `${r.status}:${r.body?.code}`).join(','));
-  assert.ok(rr.filter((r) => r.status !== 200).every((r) => r.body.code === 'WHEEL_PRIZE_USED'));
+  // every other one refused: the prize is taken, or (same delivery number) its open-prize slot is — either refusal is right
+  assert.ok(rr.filter((r) => r.status !== 200).every((r) => ['WHEEL_PRIZE_USED', 'WHEEL_PHONE_LIMIT'].includes(r.body.code)), rr.map((r) => `${r.status}:${r.body?.code}`).join(','));
   assert.equal(await count('orders'), 1);
 });
 

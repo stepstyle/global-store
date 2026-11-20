@@ -11,7 +11,7 @@ import { computeServerPricing, comparePricing, enforcePriceProblems } from './pr
 import { initialNotifications, processNotifications } from './notify.js';
 import { WORKER_VERSION } from './config.js';
 import { log } from './http.js';
-import { loadGiftForOrder, openCampaign, phoneKey, prizeAdjustment, GENERIC_GIFT_PRODUCT } from './wheel.js';
+import { loadGiftForOrder, openCampaign, phoneKey, prizeAdjustment, secondOrderWindowMs, GENERIC_GIFT_PRODUCT } from './wheel.js';
 import { TRACKING_KEY_HASH_RE, normalizeTrackingKey, hashTrackingKey, sameHex, projectSummary } from './tracking.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -176,6 +176,8 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
           discountJod: pricing.wheelDiscount ?? 0, shippingWaivedJod: pricing.shippingWaived ?? 0,
           qualifyingSubtotal, paidSubtotal, chanceEligible: qualifyingSubtotal >= campaign.minOrderJod,
           giftOnCancel: campaign.giftOnCancel, freeFirstChance: campaign.freeFirstChance, phoneKey: phoneGift?.key ?? null,
+          // second-order prizes: their window after the account's first delivery (src/wheel.js), carried for fulfilment.js
+          secondOrderHours: secondOrderWindowMs(cfg) / 3_600_000,
         } }
       : {}),
     notifications: initialNotifications(cfg),

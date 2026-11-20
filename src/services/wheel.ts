@@ -19,9 +19,13 @@ export type WheelSlot = { id: string; type: PrizeType; label: string; descriptio
 export type WheelSpin = {
   spinId: string; n: number; prizeId: string; label: string; status: string; orderId: string | null;
   type: PrizeType; valueJod: number; minOrderJod: number | null; appliesTo: 'this_order' | 'next_order'; description: string; expiresAt: string | null;
+  // second-order prize: kept until (campaign end) while waiting for the first delivery; when its 5 days started
+  waitingUntil?: string | null; activatedAt?: string | null;
 };
 export type WheelPublic = { campaign: string; slots: WheelSlot[]; minOrderJod: number | null; prizeHoldMinutes: number; terms: string };
-export type WheelState = { campaign: string; minOrderJod: number | null; terms: string; prizeHoldMinutes: number; chancesLeft: number; spins: WheelSpin[]; slots: WheelSlot[]; previousDelivered: boolean | null };
+export type WheelState = { campaign: string; minOrderJod: number | null; terms: string; prizeHoldMinutes: number; chancesLeft: number; spins: WheelSpin[]; slots: WheelSlot[]; previousDelivered: boolean | null;
+  // where the account stands for a second-order prize (Worker's reading): none | pending | one_delivered | past
+  secondOrder: string | null; secondOrderHours: number };
 export type WheelResult<T> = { kind: 'ok'; value: T } | { kind: 'sign_in_required' } | { kind: 'not_verified' } | { kind: 'closed'; code: string } | { kind: 'unavailable' };
 
 const TYPES: PrizeType[] = ['gift', 'discount', 'free_delivery', 'none'];
@@ -68,6 +72,7 @@ export const spinOf = (s: any): WheelSpin | null =>
         spinId: s.spinId, n: Number(s.n) || 0, prizeId: String(s.prizeId || ''), label: s.label, status: String(s.status || ''), orderId: s.orderId ?? null,
         type: s.status === 'none' ? 'none' : typeOf(s.type), valueJod: n0(s.valueJod), minOrderJod: nOrNull(s.minOrderJod), appliesTo: appliesOf(s.appliesTo),
         description: typeof s.description === 'string' ? s.description : '', expiresAt: typeof s.expiresAt === 'string' ? s.expiresAt : null,
+        waitingUntil: typeof s.waitingUntil === 'string' ? s.waitingUntil : null, activatedAt: typeof s.activatedAt === 'string' ? s.activatedAt : null,
       }
     : null;
 
@@ -84,6 +89,7 @@ export const fetchWheelState = (idToken: string | null, workerUrl: string, deps:
     terms: typeof b.terms === 'string' ? b.terms : '', prizeHoldMinutes: nOrNull(b.prizeHoldMinutes) || DEFAULT_HOLD_MINUTES, chancesLeft: Math.max(0, Number(b.chancesLeft) || 0),
     spins: (Array.isArray(b.spins) ? b.spins : []).map(spinOf).filter(Boolean) as WheelSpin[],
     slots: slotsOf(b.slots), previousDelivered: typeof b.previousDelivered === 'boolean' ? b.previousDelivered : null,
+    secondOrder: typeof b.secondOrder === 'string' ? b.secondOrder : null, secondOrderHours: nOrNull(b.secondOrderHours) || SECOND_ORDER_HOURS,
   }));
 
 export const spinWheel = (idToken: string | null, workerUrl: string, deps: SubmitDeps) =>
@@ -139,7 +145,10 @@ export const guestOf = (g: any): GuestResult | null =>
     : null;
 
 /** a guest result shown like an account prize ('held' = won, waiting for the sign-in at checkout); never sent with an order */
-export const guestAsSpin = (g: GuestResult): WheelSpin => ({
+export const guestAsSpin = (g: GuestResult): WheelSpin => (isSecondOrder(g) && g.status === 'held'
+  // a second-order prize is KEPT (never the 60 minutes): its 5 days start at the first delivery, after signing in
+  ? { spinId: '', n: 0, prizeId: g.prizeId, label: g.label, status: 'waiting', orderId: null, type: g.type, valueJod: g.valueJod, minOrderJod: g.minOrderJod, appliesTo: g.appliesTo, description: g.description, expiresAt: null, waitingUntil: g.holdUntil }
+  : {
   spinId: '', n: 0, prizeId: g.prizeId, label: g.label, status: g.status === 'held' ? 'issued' : g.status, orderId: null,
   type: g.type, valueJod: g.valueJod, minOrderJod: g.minOrderJod, appliesTo: g.appliesTo, description: g.description,
   // the hold ends before the validity: past it the prize may be gone, so the shorter date is the one shown
@@ -180,20 +189,23 @@ export async function spinAsGuest(workerUrl: string, deps: SubmitDeps): Promise<
   return { kind: 'unavailable' };
 }
 
-/** the stored result of this browser's ticket (null = no ticket / unknown ticket, which is then forgotten) */
+/** the stored result of this browser's ticket (null = no ticket / nothing stored for it) */
 export async function fetchGuestResult(workerUrl: string, deps: SubmitDeps): Promise<GuestResult | null | 'unavailable'> {
   const ticket = guestTicket();
   if (!ticket) return null;
   const r = await post('/wheel/guest/state', { ticket }, null, workerUrl, deps);
   if (!r) return 'unavailable';
-  if (r.status === 404 || r.status === 400) { clearGuestTicket(); return null; }
+  // unknown ticket: nothing stored YET (a spin with it may still be on its way — a page reload during the spin would
+  // otherwise wipe the ticket of a result that is being saved) or any more. The ticket is KEPT: harmless (the next spin
+  // with it creates its result; the claim at checkout forgets an unknown ticket).
+  if (r.status === 404 || r.status === 400) return null;
   return r.status === 200 && r.body?.ok ? guestOf(r.body.result) : 'unavailable';
 }
 
 export type ClaimOutcome =
   | { kind: 'none' } // no ticket in this browser
   | { kind: 'claimed'; spinId: string; result: GuestResult | null }
-  | { kind: 'account_has_spin' } | { kind: 'expired' } | { kind: 'claimed_by_other' }
+  | { kind: 'account_has_spin' } | { kind: 'expired' } | { kind: 'claimed_by_other' } | { kind: 'not_second_order' }
   | { kind: 'sign_in_required' } | { kind: 'unavailable' };
 
 /**
@@ -213,12 +225,19 @@ export async function claimGuestResult(idToken: string | null, workerUrl: string
   else if (code === 'WHEEL_ACCOUNT_HAS_SPIN') out = { kind: 'account_has_spin' };
   else if (code === 'WHEEL_GUEST_EXPIRED') out = { kind: 'expired' };
   else if (code === 'WHEEL_GUEST_CLAIMED') out = { kind: 'claimed_by_other' };
+  else if (code === 'WHEEL_NOT_SECOND_ORDER') out = { kind: 'not_second_order' };
   // unknown ticket (another campaign, data reset): nothing to link — forgotten without a message
   else if (code === 'WHEEL_GUEST_NOT_FOUND' || code === 'WHEEL_TICKET_INVALID') out = { kind: 'none' };
   if (!out) return { kind: 'unavailable' };
   clearGuestTicket();
   return out;
 }
+
+// ------------------------------------------------------------------ the owner's exception: 4 JOD off the SECOND order
+export const SECOND_ORDER_HOURS = 120;
+export const isSecondOrder = (p: Pick<WheelSpin, 'type' | 'appliesTo'>) => p.type === 'discount' && p.appliesTo === 'next_order';
+/** a second-order prize kept for this account until its first delivery (not usable yet, never "expired" by the clock) */
+export const prizeWaiting = (s: Pick<WheelSpin, 'status' | 'type' | 'appliesTo'>) => s.status === 'waiting' && isSecondOrder(s);
 
 // ------------------------------------------------------------------ the 60-minute window (owner's rule)
 /** default shown when the Worker did not say (WHEEL_PRIZE_HOLD_MINUTES) */

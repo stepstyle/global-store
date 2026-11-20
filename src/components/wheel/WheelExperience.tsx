@@ -14,7 +14,7 @@ import type { SubmitDeps } from '../../services/orderSubmit';
 import { BACKEND_ENABLED } from '../../config/deployEnv';
 import {
   fetchWheelPublic, fetchWheelState, spinWheel, choosePrize, prizeText, targetRotation, usablePrize,
-  spinAsGuest, fetchGuestResult, claimGuestResult, guestAsSpin, prizeExpired, DEFAULT_HOLD_MINUTES,
+  spinAsGuest, fetchGuestResult, claimGuestResult, guestAsSpin, prizeExpired, DEFAULT_HOLD_MINUTES, isSecondOrder, prizeWaiting, SECOND_ORDER_HOURS,
   type WheelSlot, type WheelSpin, type WheelState,
 } from '../../services/wheel';
 import WheelDial from './WheelDial';
@@ -23,8 +23,8 @@ import PrizeCountdown from './PrizeCountdown';
 const { Link } = ReactRouterDOM as any;
 const SPIN_MS = 4600;
 
-const STATUS_AR: Record<string, string> = { issued: 'أولية — تُثبَّت عند تأكيد طلب مؤهَّل', reserved: 'بانتظار تأكيد الطلب', consumed: 'مستحقة ومستخدمة', expired: 'منتهية أو ملغاة', none: 'حظ أوفر' };
-const STATUS_EN: Record<string, string> = { issued: 'Provisional — confirmed with a qualifying order', reserved: 'Waiting for the order to be confirmed', consumed: 'Earned and used', expired: 'Expired or cancelled', none: 'Better luck' };
+const STATUS_AR: Record<string, string> = { waiting: 'محفوظة — تبدأ الأيام الخمسة عند تسليم طلبك الأول', issued: 'أولية — تُثبَّت عند تأكيد طلب مؤهَّل', reserved: 'بانتظار تأكيد الطلب', consumed: 'مستحقة ومستخدمة', expired: 'منتهية أو ملغاة', none: 'حظ أوفر' };
+const STATUS_EN: Record<string, string> = { waiting: 'Kept — the 5 days start when your first order is delivered', issued: 'Provisional — confirmed with a qualifying order', reserved: 'Waiting for the order to be confirmed', consumed: 'Earned and used', expired: 'Expired or cancelled', none: 'Better luck' };
 
 function Confetti() {
   const bits = useMemo(() => Array.from({ length: 26 }, (_, i) => ({ left: (i * 37) % 100, delay: (i % 9) * 0.07, hue: i % 3 })), []);
@@ -178,8 +178,12 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
     }
   };
 
-  const won = result && usablePrize(result);
+  // a second-order prize waiting for the first delivery is WON (kept), just not usable yet
+  const won = result && (usablePrize(result) || prizeWaiting(result));
   const expired = !!result && prizeExpired(result);
+  const second = !!result && isSecondOrder(result);
+  const secondH = st?.secondOrderHours ?? SECOND_ORDER_HOURS;
+  const fmtWhen = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString(isAR ? 'ar-JO' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
   const isGuestResult = !!result && !result.spinId;
   const myPrizes = (st?.spins || []).filter((s) => s.type !== 'none').slice().reverse();
   const used = guestSpun && !signedIn;
@@ -213,7 +217,7 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
             {result && expired && (
               <div className="rounded-2xl border border-red-200 bg-red-50 p-4" data-testid="wheel-expired" data-prize-id={result.prizeId}>
                 <p className="font-heading text-base font-black text-red-800">{L(`انتهت صلاحية الجائزة: ${result.label}`, `The prize has expired: ${result.label}`)}</p>
-                <p className="mt-1 text-xs font-bold leading-relaxed text-red-800">{L(`كانت صالحة ${holdMin} دقيقة من لحظة اللفة ولم تُستخدم في طلب مؤكَّد خلالها، فلم تعد صالحة للاستعمال.`, `It was valid for ${holdMin} minutes from the spin and was not used in a confirmed order in time, so it can no longer be used.`)}</p>
+                <p className="mt-1 text-xs font-bold leading-relaxed text-red-800">{second ? L(`انتهت مدة الأيام الخمسة بعد تسليم طلبك الأول دون استخدامها على طلبك الثاني، فلم تعد صالحة.`, 'The 5 days after your first delivery passed without using it on your second order, so it is no longer valid.') : L(`كانت صالحة ${holdMin} دقيقة من لحظة اللفة ولم تُستخدم في طلب مؤكَّد خلالها، فلم تعد صالحة للاستعمال.`, `It was valid for ${holdMin} minutes from the spin and was not used in a confirmed order in time, so it can no longer be used.`)}</p>
               </div>
             )}
             {result && !expired && (won ? (
@@ -224,9 +228,14 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
                   {isGuestResult
                     ? L('النتيجة محفوظة في أنظمتنا لهذا المتصفح. أكمل تسوّقك؛ عند «تأكيد الطلب» تسجّل الدخول بـ Google فتُربط الجائزة بحسابك وتُطبَّق إذا حقق الطلب شروطها.', 'Your result is saved by our system for this browser. Keep shopping; at "Confirm order" you sign in with Google, the prize is linked to your account and applied if the order meets its conditions.')
                     : L('هذه نتيجة أولية: تُثبَّت الجائزة فقط عند تأكيد طلب يحقق شروطها، ولا تُصرف للطلبات الملغاة.', 'This is a provisional result: the prize is confirmed only with an order that meets its conditions, and never for cancelled orders.')}
-                  {L(` صالحة ${holdMin} دقيقة من لحظة اللفة: أكّد طلبًا مؤهَّلًا قبل انتهائها لتبقى مرتبطة به.`, ` Valid for ${holdMin} minutes from the spin: confirm a qualifying order before it ends to keep it.`)}
+                  {second
+                    ? (result.status === 'waiting'
+                      ? L(` خصم الطلب الثاني محفوظ لك ولا ينتهي بعد ساعة: تبدأ مدته (${secondH / 24} أيام) عند تسليم طلبك الأول، ويُستخدم على طلبك الثاني الفعلي بمنتجات ${result.minOrderJod ?? 15} د.أ فأكثر. تابعه من «جوائزك» في حسابك.`, ` Your second-order discount is kept (it does not end after an hour): its ${secondH / 24} days start when your first order is delivered, for your actual second order with products of ${result.minOrderJod ?? 15} JOD or more. Follow it under "Your prizes" in your account.`)
+                      : L(` يُستخدم على طلبك الثاني الفعلي بمنتجات ${result.minOrderJod ?? 15} د.أ فأكثر، وينتهي في ${fmtWhen(result.expiresAt)}.`, ` For your actual second order with products of ${result.minOrderJod ?? 15} JOD or more; ends ${fmtWhen(result.expiresAt)}.`))
+                    : L(` صالحة ${holdMin} دقيقة من لحظة اللفة: أكّد طلبًا مؤهَّلًا قبل انتهائها لتبقى مرتبطة به.`, ` Valid for ${holdMin} minutes from the spin: confirm a qualifying order before it ends to keep it.`)}
                 </p>
-                {result.expiresAt && <p className="mt-2 text-sm"><PrizeCountdown expiresAt={result.expiresAt} isAR={isAR} onExpire={onExpire} testId="wheel-countdown" /></p>}
+                {second && result.status === 'waiting' && <p className="mt-2 text-xs font-black text-ink-800" data-testid="wheel-second-waiting">⏸ {L('بانتظار تسليم طلبك الأول', 'Waiting for your first order to be delivered')}</p>}
+                {result.expiresAt && <p className="mt-2 text-sm"><PrizeCountdown expiresAt={result.expiresAt} isAR={isAR} onExpire={onExpire} testId="wheel-countdown" urgentMs={second ? 12 * 3_600_000 : 5 * 60_000} /></p>}
                 <div className="mt-3 flex flex-wrap gap-2">
                   {variant === 'popup' && <button type="button" onClick={onClose} className="rounded-xl bg-ink-900 px-4 py-2 text-sm font-black text-paper-50" data-testid="wheel-continue">{L('أكمل التسوق', 'Continue shopping')}</button>}
                   <Link to="/cart" onClick={onClose} className="rounded-xl border border-ink-200 bg-white px-4 py-2 text-sm font-black text-ink-900">{L('اذهب إلى السلة', 'Go to cart')}</Link>
@@ -248,7 +257,8 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
                       <span className="text-[11px] font-bold text-ink-600">{(isAR ? STATUS_AR : STATUS_EN)[prizeExpired(s) ? 'expired' : s.status] || s.status}</span>
                     </div>
                     <p className="mt-0.5 text-xs text-ink-600">{prizeText(s, isAR)}{s.orderId ? L(` — الطلب ${s.orderId}`, ` — order ${s.orderId}`) : ''}</p>
-                    {s.status === 'issued' && !prizeExpired(s) && s.expiresAt && <p className="mt-0.5 text-xs"><PrizeCountdown expiresAt={s.expiresAt} isAR={isAR} onExpire={onExpire} testId="wheel-row-countdown" /></p>}
+                    {isSecondOrder(s) && s.status === 'issued' && s.expiresAt && !prizeExpired(s) && <p className="mt-0.5 text-xs font-bold text-ink-700" data-testid="wheel-row-ends">{L(`تنتهي في ${fmtWhen(s.expiresAt)}`, `Ends ${fmtWhen(s.expiresAt)}`)}</p>}
+                    {s.status === 'issued' && !prizeExpired(s) && s.expiresAt && <p className="mt-0.5 text-xs"><PrizeCountdown expiresAt={s.expiresAt} isAR={isAR} onExpire={onExpire} testId="wheel-row-countdown" urgentMs={isSecondOrder(s) ? 12 * 3_600_000 : 5 * 60_000} /></p>}
                   </li>
                 ))}
               </ul>
@@ -260,6 +270,7 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
             <ul className="mt-2 list-disc space-y-1 ps-5">
               <li>{L('النتيجة تُحدَّد وتُحفظ في أنظمتنا؛ تحديث الصفحة أو إعادة فتح الدولاب لا يمنح لفة جديدة.', 'The result is decided and stored by our system; refreshing or reopening the wheel does not give a new spin.')}</li>
               <li>{L('عند تأكيد الطلب تُربط النتيجة بحساب Google الخاص بك. لكل حساب نتيجة ترحيبية واحدة؛ إن كان لحسابك نتيجة سابقة تبقى هي المعتمدة.', 'At checkout the result is linked to your Google account. Each account has one welcome result; if your account already has one, that one stays.')}</li>
+              <li>{L(`استثناء: خصم «الطلب الثاني» لا يخضع لمدة ${holdMin} دقيقة؛ يُحفظ حتى تسليم طلبك الأول، ثم يكون صالحًا ${secondH / 24} أيام على طلبك الثاني الفعلي (منتجات 15 د.أ فأكثر)، مرة واحدة.`, `Exception: the "second order" discount is not limited to ${holdMin} minutes; it is kept until your first order is delivered, then valid ${secondH / 24} days on your actual second order (products of 15 JOD or more), once.`)}</li>
               <li>{L(`الجائزة صالحة ${holdMin} دقيقة من لحظة اللفة. إذا أكّدت طلبًا مؤهَّلًا خلالها ترتبط به وتتبع حالته (التسليم أو الإلغاء)، وإلا تنتهي ويعود حجزها إلى الحملة تلقائيًا.`, `The prize is valid for ${holdMin} minutes from the spin. Confirm a qualifying order in that time and it follows the order (delivery or cancellation); otherwise it ends and goes back to the campaign automatically.`)}</li>
               <li>{L('لكل جائزة حد أدنى لقيمة المنتجات (قبل الخصم ودون التوصيل) وصلاحية تظهر عند الفوز.', 'Each prize has a minimum products total (before the prize, delivery excluded) and a validity shown when you win.')}</li>
               <li>{L('جائزة واحدة كحد أقصى لكل طلب، ولا تُجمع الجوائز.', 'At most one prize per order; prizes cannot be combined.')}</li>
