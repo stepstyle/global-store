@@ -30,7 +30,7 @@ export function shippingFor({ citySlug, ammanAreaId }, shippingMethodId) {
 /**
  * @param lines [{ index, quantity, serverUnitPrice: number|null }]
  */
-export function computeServerPricing(lines, addressMeta, shippingMethodId) {
+export function computeServerPricing(lines, addressMeta, shippingMethodId, wheel = null) {
   const warnings = [];
   let subtotal = 0;
   let totalQty = 0;
@@ -46,20 +46,27 @@ export function computeServerPricing(lines, addressMeta, shippingMethodId) {
     subtotal += l.serverUnitPrice * l.quantity;
   }
 
-  const discount = totalQty > VOLUME_DISCOUNT_MIN_ITEMS_EXCLUSIVE ? subtotal * VOLUME_DISCOUNT_RATE : 0;
+  const volumeDiscount = totalQty > VOLUME_DISCOUNT_MIN_ITEMS_EXCLUSIVE ? subtotal * VOLUME_DISCOUNT_RATE : 0;
   const ship = shippingFor(addressMeta, shippingMethodId);
   warnings.push(...ship.warnings);
   if (ship.shipping === null) complete = false;
 
-  const total = Math.max(0, subtotal - discount + (ship.shipping ?? 0));
+  // prize wheel (src/wheel.js prizeAdjustment): ONE prize per order, never more than what is left to pay
+  const wheelDiscount = wheel?.discountJod > 0 ? Math.min(round3(wheel.discountJod), Math.max(0, round3(subtotal - volumeDiscount))) : 0;
+  const shippingWaived = wheel?.shippingCapJod > 0 && ship.shipping !== null ? Math.min(round3(wheel.shippingCapJod), ship.shipping) : 0;
+  const discount = volumeDiscount + wheelDiscount;
+  const shipping = ship.shipping === null ? null : ship.shipping - shippingWaived;
+
+  const total = Math.max(0, subtotal - discount + (shipping ?? 0));
   return {
     subtotal: round3(subtotal),
     discount: round3(discount),
-    shipping: ship.shipping === null ? null : round3(ship.shipping),
+    shipping: shipping === null ? null : round3(shipping),
     total: round3(total),
     totalQty,
     complete,
     warnings,
+    ...(wheel ? { volumeDiscount: round3(volumeDiscount), wheelDiscount: round3(wheelDiscount), shippingWaived: round3(shippingWaived) } : {}),
   };
 }
 

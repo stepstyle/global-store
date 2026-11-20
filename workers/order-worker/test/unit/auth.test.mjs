@@ -48,7 +48,14 @@ async function rejects(promise, code, reason) {
 // ------------------------------------------------------------------ valid
 test('valid token -> uid from sub (+ email flags)', async () => {
   const r = await verify(await signer.sign(claims()));
-  assert.deepEqual(r, { uid: 'alice-uid', email: 'alice@example.com', emailVerified: true });
+  assert.deepEqual(r, { uid: 'alice-uid', email: 'alice@example.com', emailVerified: true, signInProvider: '' });
+});
+
+test('sign-in provider comes from the SIGNED token (firebase.sign_in_provider)', async () => {
+  const g = await verify(await signer.sign({ ...claims(), firebase: { sign_in_provider: 'google.com' } }));
+  assert.equal(g.signInProvider, 'google.com');
+  const p = await verify(await signer.sign({ ...claims(), firebase: { sign_in_provider: 'password' } }));
+  assert.equal(p.signInProvider, 'password');
 });
 
 test('keys are cached (max-age): 3 verifications -> 1 key fetch', async () => {

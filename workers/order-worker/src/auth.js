@@ -151,5 +151,11 @@ export async function verifyFirebaseIdToken(token, o) {
   // expiry after the signature: an "expired" answer (refresh and retry) is only given for a GENUINE token
   if (payload.exp <= now) throw new AuthError('AUTH_EXPIRED', 'exp');
 
-  return { uid: payload.sub, email: typeof payload.email === 'string' ? payload.email : '', emailVerified: payload.email_verified === true };
+  return {
+    uid: payload.sub,
+    email: typeof payload.email === 'string' ? payload.email : '',
+    emailVerified: payload.email_verified === true,
+    // how THIS session was signed in ('google.com', 'password', 'anonymous', …) — part of the signed token
+    signInProvider: typeof payload.firebase?.sign_in_provider === 'string' ? payload.firebase.sign_in_provider : '',
+  };
 }

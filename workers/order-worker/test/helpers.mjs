@@ -46,6 +46,8 @@ export async function startMockServices(port = 0) {
     jwks: { keys: [] },
     jwksFail: false,
     jwksFetches: 0,
+    turnstileSingleUse: false,
+    turnstileSeen: new Set(),
   };
   const hung = new Set();
   const late = new Set();
@@ -134,6 +136,13 @@ export async function startMockServices(port = 0) {
       if (req.method === 'POST' && req.url === '/turnstile/siteverify') {
         const p = new URLSearchParams(body);
         state.calls.push({ channel: 'turnstile', ok: true });
+        // opt-in: like Cloudflare, a token is accepted ONCE (a second siteverify of it -> timeout-or-duplicate)
+        if (state.turnstileSingleUse) {
+          const tok = String(p.get('response') || '');
+          const fresh = /^pass-/.test(tok) && !state.turnstileSeen.has(tok);
+          state.turnstileSeen.add(tok);
+          return send(200, fresh ? { success: true } : { success: false, 'error-codes': ['timeout-or-duplicate'] });
+        }
         return send(200, { success: p.get('response') === 'pass-token' });
       }
       state.unexpected.push({ method: req.method, url: req.url });
@@ -159,6 +168,8 @@ export async function startMockServices(port = 0) {
       state.hang = { telegram: 0, email: 0 };
       state.late = { telegram: 0, email: 0 };
       state.lateMs = 1_500;
+      state.turnstileSingleUse = false;
+      state.turnstileSeen.clear();
       for (const r of hung) r.destroy();
       hung.clear();
       for (const x of late) clearTimeout(x);

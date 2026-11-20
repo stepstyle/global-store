@@ -37,44 +37,136 @@ export async function phoneKey(secret, campaignId, phone) {
 }
 export const SPIN_ATTEMPTS = 5;
 const ID_RE = /^[a-z0-9-]{1,40}$/;
+export const PRIZE_TYPES = Object.freeze(['gift', 'discount', 'free_delivery', 'none']);
+export const MAX_SLOTS = 24;
+/** a gift without a catalogue product (the store picks it at packing): its order line carries this product id */
+export const GENERIC_GIFT_PRODUCT = 'wheel-gift';
+// threshold the owner set for the "big" prizes (watch, 4 / 5 JOD discounts) — used only for WARNINGS, never applied
+export const BIG_PRIZE_SUGGESTED_MIN_JOD = 15;
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const int = (v) => (Number.isInteger(v) && v >= 0 ? v : null);
 const ms = (v) => (v instanceof Date ? v.getTime() : typeof v === 'string' ? Date.parse(v) : NaN);
+const optMs = (v) => (v === undefined || v === null || v === '' ? null : ms(v));
+const round3 = (n) => Math.round(n * 1000) / 1000;
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 
-/** Normalised campaign or null (any invalid part makes the whole campaign unusable — never a partial guess). */
-export function validCampaign(raw) {
-  if (!raw || typeof raw !== 'object') return null;
+/**
+ * Full check of a campaign: { campaign, errors, warnings }. `campaign` is null as soon as there is ONE error (never a
+ * partial guess). Warnings never block: they tell the owner about settings that may lose money or contradict a rule.
+ *
+ * A slot ("prize") is one segment of the wheel, shown in array order:
+ *   type 'gift'          a present; productId = a catalogue product (reserved with the order, deducted on delivery)
+ *                        or none (a "gift worth valueJod" the store picks when packing; pool quantity only)
+ *   type 'discount'      valueJod off the order's products (never below 0); appliesTo 'this_order' | 'next_order'
+ *                        ('next_order': only on an order of an account that already has a DELIVERED order)
+ *   type 'free_delivery' the delivery fee is waived up to valueJod
+ *   type 'none'          "حظ أوفر": a visible segment that wins nothing (its own weight)
+ * minOrderJod (per slot, default the campaign's) is measured on the PRODUCTS' prices before the wheel prize, without
+ * delivery. weight = relative chance (server-side draw). quantity = units for the whole campaign (pool).
+ */
+export function checkCampaign(raw) {
+  const errors = [];
+  const warnings = [];
+  const fail = (m) => { errors.push(m); };
+  if (!raw || typeof raw !== 'object') return { campaign: null, errors: ['الحملة غير موجودة'], warnings };
   const minOrderJod = num(raw.minOrderJod);
   const budgetJod = num(raw.budgetJod);
-  const noPrizeWeight = int(raw.noPrizeWeight);
+  const noPrizeWeight = raw.noPrizeWeight === undefined ? 0 : int(raw.noPrizeWeight);
   const startsAt = ms(raw.startsAt);
   const endsAt = ms(raw.endsAt);
-  if (minOrderJod === null || minOrderJod < 0 || budgetJod === null || budgetJod < 0 || noPrizeWeight === null) return null;
-  if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt) || endsAt <= startsAt) return null;
-  if (!['return', 'expire'].includes(raw.giftOnCancel)) return null;
-  if (!Array.isArray(raw.prizes) || raw.prizes.length > 20) return null;
-  const prizes = [];
-  let worstCaseCost = 0;
-  for (const p of raw.prizes) {
-    const ok = p && ID_RE.test(String(p.id || '')) && p.id !== NO_PRIZE && typeof p.label === 'string' && p.label.trim()
-      && /^[A-Za-z0-9_-]{1,120}$/.test(String(p.productId || '')) && int(p.weight) !== null && int(p.quantity) !== null
-      && num(p.unitCostJod) !== null && p.unitCostJod >= 0;
-    if (!ok) return null;
-    worstCaseCost += p.quantity * p.unitCostJod;
-    prizes.push({ id: p.id, label: p.label.trim().slice(0, 80), productId: p.productId, variantId: p.variantId ? String(p.variantId) : null, weight: p.weight, quantity: p.quantity, unitCostJod: p.unitCostJod });
-  }
-  if (new Set(prizes.map((p) => p.id)).size !== prizes.length) return null;
-  // the budget can never be exceeded: every prize quantity at its cost must fit in it
-  if (worstCaseCost > budgetJod + 1e-9) return null;
+  if (minOrderJod === null || minOrderJod < 0) fail('الحد الأدنى العام للطلب غير صالح');
+  if (budgetJod === null || budgetJod < 0) fail('ميزانية الحملة غير صالحة');
+  if (noPrizeWeight === null) fail('وزن «بدون جائزة» غير صالح');
+  if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt) || endsAt <= startsAt) fail('تاريخ البداية والنهاية غير صالحين');
+  if (!['return', 'expire'].includes(raw.giftOnCancel)) fail('سياسة الجائزة عند الإلغاء غير صالحة');
+  if (!Array.isArray(raw.prizes) || raw.prizes.length > MAX_SLOTS) fail(`عدد الخانات يجب ألا يتجاوز ${MAX_SLOTS}`);
   // freeFirstChance (default TRUE = the welcome spin of every new account; false only with the owner's approval)
-  // openGiftsPerPhone: gifts reserved-but-not-yet-delivered at the same time for one delivery number (default 1).
-  //   Delivery or cancellation frees the slot, so a real customer keeps winning on later delivered orders.
+  // openGiftsPerPhone: prizes attached to not-yet-delivered orders at the same time for one delivery number (default 1).
   // prizeValidDays: an unclaimed prize expires (default 30); the cron returns it to the pool ONLY while unclaimed.
   const openGiftsPerPhone = raw.openGiftsPerPhone === undefined ? 1 : int(raw.openGiftsPerPhone);
   const prizeValidDays = raw.prizeValidDays === undefined ? 30 : int(raw.prizeValidDays);
-  if (openGiftsPerPhone === null || openGiftsPerPhone < 1 || prizeValidDays === null || prizeValidDays < 1 || prizeValidDays > 365) return null;
-  return { freeFirstChance: raw.freeFirstChance !== false, openGiftsPerPhone, prizeValidDays, active: raw.active === true, minOrderJod, budgetJod, noPrizeWeight, startsAt, endsAt, giftOnCancel: raw.giftOnCancel, prizes, terms: typeof raw.terms === 'string' ? raw.terms.slice(0, 2000) : '' };
+  if (openGiftsPerPhone === null || openGiftsPerPhone < 1) fail('حد الجوائز المفتوحة لكل رقم هاتف غير صالح');
+  if (prizeValidDays === null || prizeValidDays < 1 || prizeValidDays > 365) fail('مدة صلاحية الجائزة يجب أن تكون بين 1 و365 يومًا');
+  const prizes = [];
+  let worstCaseCost = 0;
+  for (const [i, p] of (Array.isArray(raw.prizes) ? raw.prizes : []).entries()) {
+    const at = `الخانة ${i + 1}`;
+    if (!p || typeof p !== 'object') { fail(`${at}: بيانات غير صالحة`); continue; }
+    const type = p.type === undefined ? 'gift' : p.type;
+    if (!PRIZE_TYPES.includes(type)) { fail(`${at}: نوع غير معروف`); continue; }
+    if (!ID_RE.test(String(p.id || '')) || p.id === NO_PRIZE) { fail(`${at}: المعرّف يجب أن يكون أحرفًا إنجليزية صغيرة وأرقامًا وشرطات`); continue; }
+    const label = typeof p.label === 'string' ? p.label.trim() : '';
+    if (!label || label.length > 40) { fail(`${at}: الاسم مطلوب (40 حرفًا كحد أقصى)`); continue; }
+    const weight = int(p.weight);
+    if (weight === null || weight > 1_000_000) { fail(`${at}: الوزن الاحتمالي يجب أن يكون عددًا صحيحًا ≥ 0`); continue; }
+    const color = p.color === undefined || p.color === null || p.color === '' ? null : String(p.color);
+    if (color !== null && !HEX_COLOR.test(color)) { fail(`${at}: اللون يجب أن يكون بصيغة #RRGGBB`); continue; }
+    const icon = typeof p.icon === 'string' ? p.icon.trim().slice(0, 8) : '';
+    const description = typeof p.description === 'string' ? p.description.trim().slice(0, 200) : '';
+    const imageUrl = typeof p.imageUrl === 'string' && /^https:\/\/[^\s"'<>]{1,300}$/.test(p.imageUrl.trim()) ? p.imageUrl.trim() : '';
+    const active = p.active !== false;
+    const pStarts = optMs(p.startsAt);
+    const pEnds = optMs(p.endsAt);
+    if ((pStarts !== null && !Number.isFinite(pStarts)) || (pEnds !== null && !Number.isFinite(pEnds)) || (pStarts !== null && pEnds !== null && pEnds <= pStarts)) { fail(`${at}: تاريخ الخانة غير صالح`); continue; }
+    const display = { id: p.id, type, label, description, icon, color, imageUrl, weight, active, startsAt: pStarts, endsAt: pEnds };
+    if (type === 'none') { prizes.push({ ...display, quantity: null, unitCostJod: 0, valueJod: 0, minOrderJod: 0, appliesTo: 'this_order', productId: null, variantId: null, validDays: null }); continue; }
+    const quantity = int(p.quantity);
+    if (quantity === null) { fail(`${at}: الكمية المتاحة يجب أن تكون عددًا صحيحًا ≥ 0`); continue; }
+    const valueJod = p.valueJod === undefined || p.valueJod === null ? null : num(p.valueJod);
+    if (valueJod !== null && (valueJod < 0 || valueJod > 1000)) { fail(`${at}: القيمة غير صالحة`); continue; }
+    if ((type === 'discount' || type === 'free_delivery') && !(valueJod > 0)) { fail(`${at}: قيمة الخصم / سقف التوصيل مطلوبة وأكبر من صفر`); continue; }
+    const pMin = p.minOrderJod === undefined || p.minOrderJod === null ? minOrderJod : num(p.minOrderJod);
+    if (pMin === null || pMin < 0) { fail(`${at}: الحد الأدنى للطلب غير صالح`); continue; }
+    const appliesTo = p.appliesTo === undefined ? 'this_order' : p.appliesTo;
+    if (!['this_order', 'next_order'].includes(appliesTo)) { fail(`${at}: مجال التطبيق غير صالح`); continue; }
+    if (appliesTo === 'next_order' && type !== 'discount') { fail(`${at}: «الطلب الثاني» متاح لجوائز الخصم فقط`); continue; }
+    const productId = type === 'gift' && p.productId ? String(p.productId) : null;
+    if (productId !== null && (!/^[A-Za-z0-9_-]{1,120}$/.test(productId) || productId === GENERIC_GIFT_PRODUCT)) { fail(`${at}: معرّف المنتج غير صالح`); continue; }
+    const variantId = productId && p.variantId ? String(p.variantId).slice(0, 120) : null;
+    // cost to the store of ONE unit (budget): a discount / waived delivery costs its value; a gift its declared cost
+    const unitCostJod = p.unitCostJod === undefined || p.unitCostJod === null ? (type === 'gift' ? valueJod : valueJod) : num(p.unitCostJod);
+    if (unitCostJod === null || unitCostJod < 0) { fail(`${at}: تكلفة الوحدة مطلوبة (للهدية: تكلفتها على المكتبة)`); continue; }
+    const validDays = p.validDays === undefined || p.validDays === null ? null : int(p.validDays);
+    if (validDays !== null && (validDays < 1 || validDays > 365)) { fail(`${at}: صلاحية الجائزة بين 1 و365 يومًا`); continue; }
+    if (type === 'discount' && pMin !== null && valueJod >= pMin) fail(`${at}: الخصم (${valueJod} د.أ) يجب أن يكون أقل من الحد الأدنى للطلب (${pMin} د.أ)`);
+    worstCaseCost += quantity * unitCostJod;
+    prizes.push({ ...display, quantity, unitCostJod, valueJod: valueJod ?? 0, minOrderJod: pMin, appliesTo, productId, variantId, validDays });
+    // ---- warnings (never block) ----
+    const value = type === 'gift' ? (valueJod ?? unitCostJod) : valueJod;
+    if (value >= 4 && pMin < BIG_PRIZE_SUGGESTED_MIN_JOD) warnings.push(`${at} «${label}»: قيمتها ${value} د.أ وحدّها الأدنى ${pMin} د.أ فقط — قد تسبب خسارة؛ يُقترح ${BIG_PRIZE_SUGGESTED_MIN_JOD} د.أ`);
+    if (type === 'free_delivery' && valueJod > 3) warnings.push(`${at} «${label}»: سقف التوصيل المجاني ${valueJod} د.أ أعلى من أغلى توصيل حالي (3 د.أ)`);
+    if (pMin > 0 && value / pMin > 0.4) warnings.push(`${at} «${label}»: قيمة الجائزة ${Math.round((value / pMin) * 100)}% من الحد الأدنى للطلب`);
+    if (quantity === 0 && active && weight > 0) warnings.push(`${at} «${label}»: الكمية 0 — لن تظهر على الدولاب`);
+    if (pEnds !== null && Number.isFinite(endsAt) && pEnds > endsAt) warnings.push(`${at} «${label}»: تاريخ انتهائها بعد نهاية الحملة`);
+    if (appliesTo === 'next_order' && pMin < BIG_PRIZE_SUGGESTED_MIN_JOD) warnings.push(`${at} «${label}»: خصم الطلب الثاني بحد أدنى أقل من ${BIG_PRIZE_SUGGESTED_MIN_JOD} د.أ`);
+  }
+  if (new Set(prizes.map((p) => p.id)).size !== prizes.length) fail('معرّفات الخانات مكررة');
+  // the budget can never be exceeded: every prize quantity at its cost must fit in it
+  if (budgetJod !== null && worstCaseCost > budgetJod + 1e-9) fail(`مجموع تكلفة كل الجوائز (${round3(worstCaseCost)} د.أ) يتجاوز الميزانية (${budgetJod} د.أ)`);
+  const noneSlots = prizes.filter((p) => p.type === 'none');
+  if (raw.active === true && noneSlots.length < 3 && prizes.length) warnings.push(`عدد خانات «حظ أوفر» ${noneSlots.length} (المتفق عليه 3)`);
+  const totalWeight = prizes.reduce((s, p) => s + (p.active ? p.weight : 0), 0) + (noPrizeWeight || 0);
+  if (raw.active === true && totalWeight <= 0) fail('لا توجد أي خانة بوزن احتمالي أكبر من صفر');
+  if (totalWeight > 0) {
+    const costPerSpin = prizes.reduce((s, p) => s + (p.active && p.type !== 'none' ? p.weight * p.unitCostJod : 0), 0) / totalWeight;
+    warnings.push(`متوسط التكلفة المتوقعة لكل لفة ≈ ${round3(costPerSpin)} د.أ (قبل نفاد الكميات)`);
+    for (const p of prizes) {
+      const share = p.active ? p.weight / totalWeight : 0;
+      if (p.type !== 'none' && p.unitCostJod >= 4 && share > 0.05) warnings.push(`«${p.label}»: احتمالها ${Math.round(share * 1000) / 10}% مرتفع لجائزة تكلفتها ${p.unitCostJod} د.أ`);
+    }
+  }
+  if (errors.length) return { campaign: null, errors, warnings };
+  return {
+    campaign: { freeFirstChance: raw.freeFirstChance !== false, openGiftsPerPhone, prizeValidDays, active: raw.active === true, minOrderJod, budgetJod, noPrizeWeight, startsAt, endsAt, giftOnCancel: raw.giftOnCancel, prizes, terms: typeof raw.terms === 'string' ? raw.terms.slice(0, 2000) : '' },
+    errors,
+    warnings,
+  };
+}
+
+/** Normalised campaign or null (any invalid part makes the whole campaign unusable — never a partial guess). */
+export function validCampaign(raw) {
+  return checkCampaign(raw).campaign;
 }
 
 export function campaignOpen(c, now) {
@@ -85,15 +177,36 @@ export function campaignOpen(c, now) {
   return { ok: true };
 }
 
-/** Weighted draw among prizes that still have stock in the pool, plus "no prize". `rand(n)` -> integer in [0, n). */
-export function drawPrize(campaign, remainingById, rand) {
-  const options = campaign.prizes.filter((p) => p.weight > 0 && (remainingById.get(p.id) ?? 0) > 0).map((p) => ({ id: p.id, w: p.weight }));
+/** a slot can be drawn now: active, inside its own dates, weight > 0 and (prizes) still in the pool */
+export function slotDrawable(p, remainingById, now) {
+  if (!p.active || p.weight <= 0) return false;
+  if (p.startsAt !== null && now < p.startsAt) return false;
+  if (p.endsAt !== null && now >= p.endsAt) return false;
+  return p.type === 'none' || (remainingById.get(p.id) ?? 0) > 0;
+}
+
+/**
+ * Weighted draw among the slots that can be drawn now (see slotDrawable), plus the legacy "no prize" weight.
+ * Returns the slot id ("none" slots return THEIR id, so the wheel stops on the segment actually drawn), or NO_PRIZE.
+ * `rand(n)` -> integer in [0, n).
+ */
+export function drawPrize(campaign, remainingById, rand, now = Date.now()) {
+  const options = campaign.prizes.filter((p) => slotDrawable(p, remainingById, now)).map((p) => ({ id: p.id, w: p.weight }));
   if (campaign.noPrizeWeight > 0) options.push({ id: NO_PRIZE, w: campaign.noPrizeWeight });
   const total = options.reduce((s, o) => s + o.w, 0);
   if (total <= 0) return NO_PRIZE;
   let r = rand(total);
   for (const o of options) { if (r < o.w) return o.id; r -= o.w; }
   return NO_PRIZE;
+}
+
+/** what a visitor sees on the wheel: ONLY segments that can be drawn now (never a prize that cannot be won) */
+export function displaySlots(campaign, remainingById, now = Date.now()) {
+  if (!campaign) return [];
+  return campaign.prizes.filter((p) => slotDrawable(p, remainingById, now)).map((p) => ({
+    id: p.id, type: p.type, label: p.label, description: p.description, icon: p.icon, color: p.color, imageUrl: p.imageUrl,
+    valueJod: p.valueJod, minOrderJod: p.minOrderJod, appliesTo: p.appliesTo,
+  }));
 }
 
 /** Unbiased integer in [0, n) from the platform CSPRNG. */
@@ -107,7 +220,17 @@ export function secureRand(n) {
 }
 
 const spinPath = (cid, uid, n) => `wheelSpins/${cid}_${uid}_${n}`;
-const publicSpin = (s) => (s ? { spinId: `${s.campaignId}_${s.uid}_${s.n}`, n: s.n, prizeId: s.prizeId, label: s.label, status: s.status, orderId: s.orderId || null } : null);
+/** the prize terms stored WITH the result (fixed at spin time: a later edit by the admin never changes a won prize) */
+export const spinTerms = (s) => ({
+  type: s.prizeType || (s.status === NO_PRIZE ? 'none' : 'gift'),
+  valueJod: typeof s.valueJod === 'number' ? s.valueJod : 0,
+  minOrderJod: typeof s.minOrderJod === 'number' ? s.minOrderJod : null,
+  appliesTo: s.appliesTo === 'next_order' ? 'next_order' : 'this_order',
+});
+const publicSpin = (s) => (s ? {
+  spinId: `${s.campaignId}_${s.uid}_${s.n}`, n: s.n, prizeId: s.prizeId, label: s.label, status: s.status, orderId: s.orderId || null,
+  ...spinTerms(s), description: s.description || '', expiresAt: s.expiresAt instanceof Date ? s.expiresAt.toISOString() : null,
+} : null);
 
 /** A missing document = the welcome chance (`base` 1), or none when the campaign has freeFirstChance=false. */
 export function entitlement(doc, base = 1) {
@@ -118,6 +241,41 @@ export function entitlement(doc, base = 1) {
 async function readCampaign(fs, cfg) {
   const doc = await fs.get(`wheelCampaigns/${cfg.wheelCampaignId}`);
   return { doc, campaign: doc.exists ? validCampaign(decodeFields(doc.fields)) : null };
+}
+
+async function poolRemaining(fs, cid, campaign) {
+  const prizes = (campaign?.prizes || []).filter((p) => p.type !== 'none');
+  const docs = prizes.length ? await fs.batchGet(prizes.map((p) => `wheelPool/${cid}_${p.id}`)) : [];
+  return new Map(prizes.map((p, i) => [p.id, docs[i].exists ? Number(decodeFields(docs[i].fields).remaining) || 0 : 0]));
+}
+
+/**
+ * Has this VERIFIED account an order that was really DELIVERED (not just created, not cancelled)? Read by the Worker
+ * from Firestore — never a value sent by the browser. Used by the "discount on the second order" prize.
+ */
+export async function hasDeliveredOrder(fs, uid) {
+  if (!uid) return false;
+  const docs = await fs.runQuery({
+    from: [{ collectionId: 'orders' }],
+    where: { compositeFilter: { op: 'AND', filters: [
+      { fieldFilter: { field: { fieldPath: 'userId' }, op: 'EQUAL', value: { stringValue: uid } } },
+      { fieldFilter: { field: { fieldPath: 'status' }, op: 'EQUAL', value: { stringValue: 'delivered' } } },
+    ] } },
+    limit: 1,
+  });
+  return docs.length > 0;
+}
+
+/** GET /wheel/public — no account needed: the segments a visitor sees (never weights, quantities or costs). */
+export async function wheelPublic(fs, cfg, { now = Date.now() } = {}) {
+  if (cfg.wheelMode === 'off') return { status: 404, body: { ok: false, code: 'WHEEL_OFF' } };
+  const { campaign } = await readCampaign(fs, cfg);
+  const open = campaignOpen(campaign, now);
+  const slots = open.ok ? displaySlots(campaign, await poolRemaining(fs, cfg.wheelCampaignId, campaign), now) : [];
+  return {
+    status: 200,
+    body: { ok: true, campaign: open.ok ? 'open' : open.code, slots, minOrderJod: campaign?.minOrderJod ?? null, prizeValidDays: campaign?.prizeValidDays ?? null, terms: campaign?.terms ?? '' },
+  };
 }
 
 /** GET /wheel/state — what this account has: chances, stored results (labels + status), campaign open or not. */
@@ -132,18 +290,21 @@ export async function wheelState(fs, cfg, uid, { now = Date.now() } = {}) {
     const d = await fs.get(spinPath(cfg.wheelCampaignId, uid, n));
     if (d.exists) spins.push(publicSpin(decodeFields(d.fields)));
   }
+  const slots = open.ok ? displaySlots(campaign, await poolRemaining(fs, cfg.wheelCampaignId, campaign), now) : [];
   return {
     status: 200,
     body: {
       ok: true, mode: cfg.wheelMode, campaign: open.ok ? 'open' : open.code,
       minOrderJod: campaign?.minOrderJod ?? null, terms: campaign?.terms ?? '',
-      chancesLeft: open.ok ? Math.max(0, e.granted - e.used) : 0, spins,
+      chancesLeft: open.ok ? Math.max(0, e.granted - e.used) : 0, spins, slots,
+      // for the "second order" discount: shown as "usable now" or "after your first delivered order"
+      previousDelivered: spins.some((s) => s.appliesTo === 'next_order' && s.status === 'issued') ? await hasDeliveredOrder(fs, uid) : null,
     },
   };
 }
 
 /** POST /wheel/spin — one draw per chance, stored; a repeated call returns the stored result. */
-export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = secureRand } = {}) {
+export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = secureRand, email = '' } = {}) {
   if (cfg.wheelMode === 'off') return { status: 404, body: { ok: false, code: 'WHEEL_OFF' } };
   const cid = cfg.wheelCampaignId;
   for (let attempt = 0; attempt < SPIN_ATTEMPTS; attempt++) {
@@ -151,7 +312,8 @@ export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = s
     const open = campaignOpen(campaign, now());
     if (!open.ok) return { status: 409, body: { ok: false, code: open.code } };
     const entPath = `wheelEntitlements/${cid}_${uid}`;
-    const poolPaths = campaign.prizes.map((p) => `wheelPool/${cid}_${p.id}`);
+    const pooled = campaign.prizes.filter((p) => p.type !== 'none');
+    const poolPaths = pooled.map((p) => `wheelPool/${cid}_${p.id}`);
     const [entDoc, ...poolDocs] = await fs.batchGet([entPath, ...poolPaths]);
     const e = entitlement(entDoc, campaign.freeFirstChance ? 1 : 0);
     if (e.used >= e.granted) {
@@ -159,19 +321,28 @@ export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = s
       const last = e.used > 0 ? await fs.get(spinPath(cid, uid, e.used)) : { exists: false };
       return { status: 200, body: { ok: true, repeated: true, chancesLeft: 0, result: last.exists ? publicSpin(decodeFields(last.fields)) : null } };
     }
-    const remaining = new Map(campaign.prizes.map((p, i) => [p.id, poolDocs[i].exists ? Number(decodeFields(poolDocs[i].fields).remaining) || 0 : 0]));
-    const prizeId = drawPrize(campaign, remaining, rand);
-    const prize = campaign.prizes.find((p) => p.id === prizeId) || null;
+    const remaining = new Map(pooled.map((p, i) => [p.id, poolDocs[i].exists ? Number(decodeFields(poolDocs[i].fields).remaining) || 0 : 0]));
+    const at = now();
+    const drawnId = drawPrize(campaign, remaining, rand, at);
+    const slot = campaign.prizes.find((p) => p.id === drawnId) || null;
+    // a "none" slot ("حظ أوفر") is a real segment of the wheel but wins nothing
+    const prize = slot && slot.type !== 'none' ? slot : null;
     const n = e.used + 1;
+    const validMs = (prize?.validDays ?? campaign.prizeValidDays) * DAY_MS;
     const spin = {
-      campaignId: cid, uid, n, prizeId,
-      label: prize ? prize.label : 'حظ أوفر',
+      campaignId: cid, uid, n, prizeId: slot ? slot.id : NO_PRIZE,
+      label: slot ? slot.label : 'حظ أوفر',
       productId: prize?.productId ?? null, variantId: prize?.variantId ?? null,
+      // the prize terms, FIXED now (spinTerms): what the customer was shown is what is applied later
+      prizeType: prize ? prize.type : 'none',
+      ...(prize ? { valueJod: prize.valueJod, minOrderJod: prize.minOrderJod, appliesTo: prize.appliesTo, description: prize.description } : {}),
+      // the verified account's e-mail, for the admin's prize log only (this collection is never readable by browsers)
+      ...(email ? { email: String(email).slice(0, 200) } : {}),
       status: prize ? 'issued' : NO_PRIZE,
       // issuedExpiry exists ONLY while the prize is unclaimed ('issued'): the cron's query (expireUnclaimedPrizes) reads
       // exactly the expired unclaimed prizes, oldest first, and nothing else
-      ...(prize ? { expiresAt: new Date(now() + campaign.prizeValidDays * DAY_MS), issuedExpiry: new Date(now() + campaign.prizeValidDays * DAY_MS) } : {}),
-      createdAt: new Date(now()),
+      ...(prize ? { expiresAt: new Date(at + validMs), issuedExpiry: new Date(at + validMs) } : {}),
+      createdAt: new Date(at),
     };
     const writes = [
       entDoc.exists
@@ -182,12 +353,12 @@ export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = s
       { verify: fs.name(`wheelCampaigns/${cid}`), currentDocument: { updateTime: campaignDoc.updateTime } },
     ];
     if (prize) {
-      const i = campaign.prizes.indexOf(prize);
+      const i = pooled.indexOf(prize);
       writes.push({ update: { name: fs.name(poolPaths[i]), fields: encodeFields({ remaining: remaining.get(prize.id) - 1 }) }, updateMask: { fieldPaths: ['remaining'] }, currentDocument: { updateTime: poolDocs[i].updateTime } });
     }
     const r = await fs.commit(writes);
     if (r.ok) {
-      log('wheel.spin', { campaignId: cid, n, prize: prize ? prize.id : NO_PRIZE });
+      log('wheel.spin', { campaignId: cid, n, prize: slot ? slot.id : NO_PRIZE });
       return { status: 200, body: { ok: true, repeated: false, chancesLeft: e.granted - n, result: publicSpin(spin) } };
     }
     if (!isConflict(r)) return { status: 503, body: { ok: false, code: 'UNAVAILABLE' } };
@@ -211,11 +382,39 @@ export async function loadGiftForOrder(fs, cfg, { spinId, uid, now = Date.now() 
   const s = decodeFields(spinDoc.fields);
   if (s.uid !== uid || s.campaignId !== cfg.wheelCampaignId) return { ok: false, code: 'WHEEL_PRIZE_INVALID' };
   if (s.status === 'expired' || (s.status === 'issued' && s.expiresAt instanceof Date && s.expiresAt.getTime() <= now)) return { ok: false, code: 'WHEEL_PRIZE_EXPIRED' };
-  if (s.status !== 'issued') return { ok: false, code: 'WHEEL_PRIZE_USED' };
+  // reserved by an order: the caller checks whether it is THIS order (a duplicate send that lost the race -> replay)
+  if (s.status !== 'issued') return { ok: false, code: 'WHEEL_PRIZE_USED', reservedFor: typeof s.orderId === 'string' ? s.orderId : null };
   const campaign = campaignDoc.exists ? validCampaign(decodeFields(campaignDoc.fields)) : null;
   const open = campaignOpen(campaign, now);
   if (!open.ok) return { ok: false, code: open.code };
-  return { ok: true, gift: { spinId, spinDoc, productId: s.productId, variantId: s.variantId ?? null, label: s.label, prizeId: s.prizeId }, campaign };
+  const terms = spinTerms(s);
+  if (terms.type === 'none') return { ok: false, code: 'WHEEL_PRIZE_INVALID' };
+  // the "second order" discount: only on an order of an account that ALREADY has a delivered order (Firestore, read
+  // by the Worker). The order being placed is never counted: it does not exist yet.
+  if (terms.appliesTo === 'next_order' && !(await hasDeliveredOrder(fs, uid))) return { ok: false, code: 'WHEEL_NEEDS_PREVIOUS_ORDER', minOrderJod: terms.minOrderJod };
+  return {
+    ok: true,
+    gift: {
+      spinId, spinDoc, prizeId: s.prizeId, label: s.label, ...terms,
+      // minOrderJod of results stored before per-prize minimums existed: the campaign's
+      minOrderJod: terms.minOrderJod ?? campaign.minOrderJod,
+      productId: terms.type === 'gift' ? (s.productId || null) : null, variantId: terms.type === 'gift' ? (s.variantId ?? null) : null,
+    },
+    campaign,
+  };
+}
+
+/**
+ * What a prize does to THIS order's prices (server side; the browser must send the same numbers, else 422 PRICE_CHANGED).
+ *   discount       -> discountJod = valueJod, never more than the products still cost after the volume discount
+ *   free_delivery  -> shippingWaivedJod = the delivery fee, up to valueJod
+ *   gift           -> nothing (a free extra line)
+ */
+export function prizeAdjustment(gift) {
+  if (!gift) return null;
+  if (gift.type === 'discount') return { discountJod: gift.valueJod };
+  if (gift.type === 'free_delivery') return { shippingCapJod: gift.valueJod };
+  return null;
 }
 
 /** The open campaign (for "does this order earn a new chance on delivery?"), or null. */

@@ -221,6 +221,11 @@ export function loadConfig(env = {}) {
     if (stockMode !== 'apply') errors.push('STOCK_POLICY=on_delivery requires STOCK_MODE=apply');
     if (approvalMode === 'telegram') errors.push('STOCK_POLICY=on_delivery cannot be combined with APPROVAL_MODE=telegram');
   }
+  // who may place an order: 'off' (default, unchanged: guests allowed, a token is optional) | 'google' (every new order
+  // needs a VERIFIED Firebase ID token signed in with Google — checked here, on the server, before Turnstile and before
+  // anything is read or written). Turn it on only AFTER the site that signs customers in at checkout is live.
+  const orderSignIn = oneOf(env.ORDER_SIGN_IN, ['off', 'google'], 'off');
+  if (!orderSignIn) errors.push('ORDER_SIGN_IN must be off|google');
   const currency = str(env.CURRENCY) || 'JOD';
   if (!/^[A-Z]{3}$/.test(currency)) errors.push('CURRENCY must be an ISO 4217 code (e.g. JOD)');
 
@@ -265,6 +270,7 @@ export function loadConfig(env = {}) {
     telegram: { token: str(env.TELEGRAM_BOT_TOKEN), chatId: str(env.TELEGRAM_CHAT_ID), webhookSecret, adminUserIds: new Set(adminUserIds) },
     approvalMode,
     stockPolicy,
+    orderSignIn,
     wheelMode,
     wheelCampaignId,
     wheelPhoneSecret,

@@ -11,7 +11,7 @@ import { computeServerPricing, comparePricing, enforcePriceProblems } from './pr
 import { initialNotifications, processNotifications } from './notify.js';
 import { WORKER_VERSION } from './config.js';
 import { log } from './http.js';
-import { loadGiftForOrder, openCampaign, phoneKey } from './wheel.js';
+import { loadGiftForOrder, openCampaign, phoneKey, prizeAdjustment, GENERIC_GIFT_PRODUCT } from './wheel.js';
 import { TRACKING_KEY_HASH_RE, normalizeTrackingKey, hashTrackingKey, sameHex, projectSummary } from './tracking.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -22,8 +22,9 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
   const lines = v.items.map((it, index) => ({ index, productId: it.productId, variantId: it.variantId, quantity: it.quantity }));
   // WHEEL_MODE=test: a prize won on the wheel travels as ONE extra line (index 1000, price 0) — reserved with the
   // order, deducted on delivery, released on cancellation, exactly like a paid line. It is never priced.
+  // The prize (any type) is ONE per order. Only a gift that is a catalogue product becomes a stock line.
   const gift = wheel?.gift || null;
-  const giftLine = gift ? { index: GIFT_LINE_INDEX, productId: gift.productId, variantId: gift.variantId || null, quantity: 1 } : null;
+  const giftLine = gift && gift.type === 'gift' && gift.productId ? { index: GIFT_LINE_INDEX, productId: gift.productId, variantId: gift.variantId || null, quantity: 1 } : null;
   const productIds = [...new Set([...lines, ...(giftLine ? [giftLine] : [])].map((l) => l.productId))];
   const productDocs = await fs.batchGet(productIds.map((id) => `products/${id}`));
   const products = new Map(productIds.map((id, i) => [id, productDocs[i]]));
@@ -40,7 +41,8 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     for (const d of inv.deductions) { d.applied = false; d.skippedReason = d.skippedReason || (onApproval ? 'AWAITING_APPROVAL' : 'AWAITING_DELIVERY'); }
     inv.writes.length = 0;
   }
-  const pricing = computeServerPricing(inv.lineInfo, v.addressMeta, v.shippingMethodId);
+  // a discount / free-delivery prize changes the SERVER's numbers; the browser must send the same ones (enforce)
+  const pricing = computeServerPricing(inv.lineInfo, v.addressMeta, v.shippingMethodId, prizeAdjustment(gift));
   const mismatchFields = comparePricing(pricing, v.clientPricing);
   const priceMismatch = mismatchFields.length > 0;
 
@@ -68,13 +70,16 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
   // on_delivery: reserve against stock - (already reserved). Refused BEFORE any write when a line needs more than is
   // available — two orders racing for the last piece: the reservation documents carry their read version as a
   // precondition, so only one commit succeeds; the other re-reads (createOrder retry) and is refused here.
-  // WHEEL: the minimum is measured on what the customer PAYS for the products (subtotal - discount; never shipping,
-  // never the gift). An order below it may not carry a prize, and does not earn a new chance.
-  const paidSubtotal = Math.round((Number(pricing.subtotal) - Number(pricing.discount || 0)) * 1000) / 1000;
+  // WHEEL: the minimum is measured on the PRODUCTS' prices (server prices, before the wheel prize, without delivery)
+  // — the owner's rule. Each prize has its own minimum (fixed when it was won); an order below it may not carry the
+  // prize (nothing is written, the prize stays available), and an order below the campaign minimum earns no new chance.
+  const qualifyingSubtotal = Math.round(Number(pricing.subtotal) * 1000) / 1000;
+  const paidSubtotal = Math.round((Number(pricing.subtotal) - Number(pricing.volumeDiscount ?? pricing.discount ?? 0)) * 1000) / 1000;
   const campaign = wheel?.campaign || null;
-  if (gift && !(campaign && paidSubtotal >= campaign.minOrderJod)) {
+  const prizeMin = gift ? (gift.minOrderJod ?? campaign?.minOrderJod ?? null) : null;
+  if (gift && !(campaign && prizeMin !== null && qualifyingSubtotal >= prizeMin)) {
     log('order.wheel_refused', { orderId: v.id, code: 'WHEEL_MIN_ORDER' });
-    return { ok: false, conflict: false, wheelRefused: { code: 'WHEEL_MIN_ORDER', minOrderJod: campaign?.minOrderJod ?? null } };
+    return { ok: false, conflict: false, wheelRefused: { code: 'WHEEL_MIN_ORDER', minOrderJod: prizeMin } };
   }
   if (gift && !onDelivery) return { ok: false, conflict: false, wheelRefused: { code: 'WHEEL_OFF' } };
   let reservation = null;
@@ -147,7 +152,7 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
           orderLines: inv.lineInfo.map((l) => ({
             index: l.index, productId: l.productId, variantId: l.variantId ?? null, quantity: l.quantity,
             unitPrice: l.serverUnitPrice, productName: l.productName, variantLabel: l.variantLabel,
-          })).concat(giftLine ? [{ ...giftLine, unitPrice: 0, productName: gift.label, variantLabel: gift.variantId ? giftVariant(products.get(gift.productId), gift.variantId).label || null : null, gift: true }] : []),
+          })).concat(giftLine ? [{ ...giftLine, unitPrice: 0, productName: gift.label, variantLabel: giftLine.variantId ? giftVariant(products.get(giftLine.productId), giftLine.variantId).label || null : null, gift: true }] : []),
           reservations: reservation.reservations,
           reservationWarnings: reservation.warnings,
           inventory: reservation.reservations.length ? 'reserved' : 'none',
@@ -165,7 +170,13 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
       : {}),
     // WHEEL (test): which prize this order carries and whether its delivery earns a new chance (src/wheel.js)
     ...(campaign && verifiedUid
-      ? { wheel: { campaignId: wheel.campaignId, uid: verifiedUid, spinId: gift?.spinId ?? null, prizeId: gift?.prizeId ?? null, paidSubtotal, chanceEligible: paidSubtotal >= campaign.minOrderJod, giftOnCancel: campaign.giftOnCancel, freeFirstChance: campaign.freeFirstChance, phoneKey: phoneGift?.key ?? null } }
+      ? { wheel: {
+          campaignId: wheel.campaignId, uid: verifiedUid, spinId: gift?.spinId ?? null, prizeId: gift?.prizeId ?? null,
+          prizeType: gift?.type ?? null, prizeLabel: gift?.label ?? null, prizeMinOrderJod: prizeMin,
+          discountJod: pricing.wheelDiscount ?? 0, shippingWaivedJod: pricing.shippingWaived ?? 0,
+          qualifyingSubtotal, paidSubtotal, chanceEligible: qualifyingSubtotal >= campaign.minOrderJod,
+          giftOnCancel: campaign.giftOnCancel, freeFirstChance: campaign.freeFirstChance, phoneKey: phoneGift?.key ?? null,
+        } }
       : {}),
     notifications: initialNotifications(cfg),
     notifyPending: true,
@@ -199,8 +210,10 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
         quantity: it.quantity,
         image: it.image,
         selectedVariant: it.selectedVariant,
-      })).concat(gift ? [{ productId: gift.productId, name: `🎁 هدية العجلة: ${gift.label}`, price: 0, quantity: 1, gift: true, ...(gift.variantId ? { selectedVariant: giftVariant(products.get(gift.productId), gift.variantId) } : {}) }] : []),
-      ...(gift ? { wheelGift: { label: gift.label, productId: gift.productId, variantId: gift.variantId || null } } : {}),
+      })).concat(gift && gift.type === 'gift' ? [{ productId: giftLine ? giftLine.productId : GENERIC_GIFT_PRODUCT, name: `🎁 هدية العجلة: ${gift.label}`, price: 0, quantity: 1, gift: true, ...(giftLine?.variantId ? { selectedVariant: giftVariant(products.get(giftLine.productId), giftLine.variantId) } : {}) }] : []),
+      ...(gift && gift.type === 'gift' ? { wheelGift: { label: gift.label, productId: giftLine ? giftLine.productId : null, variantId: giftLine?.variantId || null, ...(gift.valueJod ? { valueJod: gift.valueJod } : {}) } } : {}),
+      // every prize (shown in the dashboard + notifications): what it is and what it changed in THIS order's prices
+      ...(gift ? { wheelPrize: { type: gift.type, label: gift.label, valueJod: gift.valueJod || 0, appliesTo: gift.appliesTo, discountJod: pricing.wheelDiscount ?? 0, shippingWaivedJod: pricing.shippingWaived ?? 0 } } : {}),
       subtotal: v.clientPricing.subtotal ?? 0,
       discountAmount: v.clientPricing.discountAmount ?? 0,
       shippingCost: v.clientPricing.shippingCost ?? 0,
@@ -296,6 +309,9 @@ function verifiedOwner(ledgerDoc, orderDoc) {
 
 export const CREATE_ATTEMPTS = 6;
 
+/** has this order number been committed since we last looked? (one read, only on the refusal path) */
+const savedMeanwhile = async (fs, id) => (await fs.get(`orderLedger/${id}`)).exists;
+
 /**
  * Handles POST /create-order. Returns { status, body }.
  */
@@ -387,7 +403,11 @@ export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {
       if (wheelSpinId !== null) {
         if (mode !== 'created') return { status: 409, body: { ok: false, code: 'WHEEL_PRIZE_INVALID' } };
         const g = await loadGiftForOrder(fs, cfg, { spinId: wheelSpinId, uid: verifiedUid });
-        if (!g.ok) return { status: g.code === 'WHEEL_SIGN_IN_REQUIRED' ? 401 : 422, body: { ok: false, code: g.code } };
+        // the prize is already reserved by THIS order number: a simultaneous identical send committed between our
+        // ledger read and this read — read again, the ledger now answers (replay: same 200, never a false refusal)
+        if (!g.ok && g.code === 'WHEEL_PRIZE_USED' && g.reservedFor === id) continue;
+        if (!g.ok && (await savedMeanwhile(fs, id))) continue;
+        if (!g.ok) return { status: g.code === 'WHEEL_SIGN_IN_REQUIRED' ? 401 : 422, body: { ok: false, code: g.code, ...(g.minOrderJod !== undefined ? { minOrderJod: g.minOrderJod } : {}) } };
         wheel = { campaignId: cfg.wheelCampaignId, gift: g.gift, campaign: g.campaign };
       } else if (verifiedUid && mode === 'created') {
         const c = await openCampaign(fs, cfg);
@@ -414,6 +434,9 @@ export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {
     // on_delivery: not enough stock left after the other open orders' reservations. Nothing was written (422, like
     // PRICE_CHANGED: the storefront shows "out of stock" and keeps the cart). Only line indexes and the quantity still
     // available are returned.
+    // a refusal caused by OUR OWN twin: an identical send of this order number committed while this one was reading
+    // (its reservation / prize / phone slot is what we saw). Read again -> the ledger answers with the normal replay.
+    if ((r.wheelRefused || r.outOfStock) && (await savedMeanwhile(fs, id))) continue;
     if (r.wheelRefused) return { status: 422, body: { ok: false, ...r.wheelRefused } };
     if (r.outOfStock) {
       return { status: 422, body: { ok: false, code: 'OUT_OF_STOCK', lines: r.outOfStock.map((s) => ({ index: s.index, available: s.available })) } };

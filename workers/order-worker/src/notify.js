@@ -67,6 +67,9 @@ export function buildMessage(order, ledger, cfg) {
       ? `${i + 1}) 🎁 GIFT (wheel) — FREE, do not charge: ${it.name || it.productId} x${it.quantity}`
       : `${i + 1}) ${it.name || it.productId} x${it.quantity} - ${fmt(it.price)}`)),
     ...(items.some((it) => it.gift === true) ? ['🎁 This order includes a wheel gift: pack it with the order (not included in the total).'] : []),
+    // a discount / free-delivery prize: already taken off the total below (server-checked), nothing extra to pack
+    ...(order.wheelPrize?.type === 'discount' ? [`🎡 Wheel prize: ${order.wheelPrize.label} — ${fmt(Number(order.wheelPrize.discountJod) || 0)} already deducted from the total`] : []),
+    ...(order.wheelPrize?.type === 'free_delivery' ? [`🎡 Wheel prize: ${order.wheelPrize.label} — delivery ${fmt(Number(order.wheelPrize.shippingWaivedJod) || 0)} waived (already in the total)`] : []),
     '',
     `Total (customer saw): ${fmt(order.total)}`,
     `Total (server check): ${fmt(sp.total)}`,

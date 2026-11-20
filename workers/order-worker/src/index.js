@@ -26,7 +26,8 @@ import { requireAdmin } from './admin.js';
 import { changeOrderStatus, syncDirectStatusChanges } from './fulfilment.js';
 import { claimOrder } from './claims.js';
 import { recomputeProductRating } from './ratings.js';
-import { wheelState, spinWheel, expireUnclaimedPrizes } from './wheel.js';
+import { wheelState, wheelPublic, spinWheel, expireUnclaimedPrizes } from './wheel.js';
+import { adminWheelGet, adminWheelSave, adminWheelSpins } from './wheel-admin.js';
 
 const STATUS_PATH = /^\/orders\/([^/]+)\/status$/;
 const ADMIN_STATUS_PATH = /^\/admin\/orders\/([^/]+)\/status$/;
@@ -55,7 +56,7 @@ async function signedInUid(request, cfg) {
     const token = bearerToken(request.headers.get('authorization'));
     if (token === undefined) return { ok: false, code: 'AUTH_REQUIRED' };
     const v = await verifyFirebaseIdToken(token, { projectId: cfg.projectId, jwksUrl: cfg.authJwksUrl });
-    return { ok: true, uid: v.uid, emailVerified: v.emailVerified === true };
+    return { ok: true, uid: v.uid, email: v.email, emailVerified: v.emailVerified === true, signInProvider: v.signInProvider };
   } catch (e) {
     if (e instanceof AuthError) return { ok: false, code: 'AUTH_INVALID' };
     throw e;
@@ -105,13 +106,19 @@ async function handle(request, env, ctx, cfg) {
       const token = bearerToken(request.headers.get('authorization'));
       if (token !== undefined) {
         const v = await verifyFirebaseIdToken(token, { projectId: cfg.projectId, jwksUrl: cfg.authJwksUrl });
-        auth = { uid: v.uid };
+        auth = { uid: v.uid, signInProvider: v.signInProvider };
       }
     } catch (e) {
       if (!(e instanceof AuthError)) throw e;
       log('auth.rejected', { code: e.code, reason: e.reason });
       if (e.code === 'AUTH_UNAVAILABLE') return reply({ ok: false, code: 'AUTH_UNAVAILABLE' }, 503);
       return reply({ ok: false, code: e.code }, 401);
+    }
+    // ORDER_SIGN_IN=google: no order without a VERIFIED Google sign-in (the token's own sign_in_provider) — checked
+    // before Turnstile (the single-use token is not burned) and before anything is read or written
+    if (cfg.orderSignIn === 'google') {
+      if (!auth) return reply({ ok: false, code: 'SIGN_IN_REQUIRED' }, 401);
+      if (auth.signInProvider !== 'google.com') return reply({ ok: false, code: 'GOOGLE_SIGN_IN_REQUIRED' }, 401);
     }
 
     // after the identity check, so a 401 (refresh + resend) never burns a single-use Turnstile token
@@ -207,6 +214,33 @@ async function handle(request, env, ctx, cfg) {
   }
 
   // ---------------- prize wheel (TEST ONLY; WHEEL_MODE=off -> 404 before anything is read) ----------------
+  // what a visitor sees (segments, terms) — no account needed, no weight / quantity / cost ever leaves the Worker
+  if (url.pathname === '/wheel/public') {
+    if (cfg.wheelMode === 'off') return reply({ ok: false, code: 'NOT_FOUND' }, 404);
+    if (request.method !== 'GET') return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    if (!(await allowRequest(env, cfg, 'status', ip))) return reply({ ok: false, code: 'RATE_LIMITED' }, 429);
+    const r = await wheelPublic(fs, cfg);
+    return reply(r.body, r.status);
+  }
+  // admin: campaign settings + prize log (requireAdmin on EVERY call; 404 when the wheel is off)
+  if (url.pathname === '/admin/wheel' || url.pathname === '/admin/wheel/campaign' || url.pathname === '/admin/wheel/spins') {
+    if (cfg.wheelMode === 'off') return reply({ ok: false, code: 'NOT_FOUND' }, 404);
+    const isSave = url.pathname === '/admin/wheel/campaign';
+    if (request.method !== (isSave ? 'POST' : 'GET')) return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    if (!(await allowRequest(env, cfg, 'status', ip))) return reply({ ok: false, code: 'RATE_LIMITED' }, 429);
+    const who = await requireAdmin(request, fs, cfg);
+    if (!who.ok) return reply({ ok: false, code: who.code }, who.status);
+    if (url.pathname === '/admin/wheel') { const r = await adminWheelGet(fs, cfg); return reply(r.body, r.status); }
+    if (!isSave) {
+      const r = await adminWheelSpins(fs, cfg, { limit: url.searchParams.get('limit'), status: url.searchParams.get('status') || '' });
+      return reply(r.body, r.status);
+    }
+    const { body, error } = await readJsonBody(request, 32 * 1024);
+    if (error === 413) return reply({ ok: false, code: 'PAYLOAD_TOO_LARGE' }, 413);
+    if (error || !body || typeof body !== 'object') return reply({ ok: false, code: 'INVALID_JSON' }, 400);
+    const r = await adminWheelSave(fs, cfg, body, who.uid);
+    return reply(r.body, r.status);
+  }
   if (url.pathname === '/wheel/state' || url.pathname === '/wheel/spin') {
     if (cfg.wheelMode === 'off') return reply({ ok: false, code: 'NOT_FOUND' }, 404);
     const isSpin = url.pathname === '/wheel/spin';
@@ -225,7 +259,7 @@ async function handle(request, env, ctx, cfg) {
     }
     // one obstacle to throw-away accounts (NOT proof of a unique person: one person can own several verified e-mails)
     if (!who.emailVerified) return reply({ ok: false, code: 'WHEEL_ACCOUNT_NOT_VERIFIED' }, 403);
-    const r = await spinWheel(fs, cfg, who.uid);
+    const r = await spinWheel(fs, cfg, who.uid, { email: who.email });
     return reply(r.body, r.status);
   }
 
