@@ -26,7 +26,7 @@
 
 import { encodeFields, decodeFields, isConflict } from './firestore.js';
 import { log } from './http.js';
-import { NO_PRIZE, SPIN_ATTEMPTS, campaignOpen, drawPrize, entitlement, prizeHoldMs, secureRand, validCampaign, isSecondOrderPrize, secondOrderState, secondOrderTerms, secondOrderWindowMs } from './wheel.js';
+import { NO_PRIZE, SPIN_ATTEMPTS, campaignOpen, drawPrize, entitlement, prizeHoldMs, secureRand, validCampaign, isSecondOrderPrize, secondOrderState, secondOrderTerms, secondOrderFields, secondOrderWindowMs } from './wheel.js';
 
 const DAY_MS = 86_400_000;
 export const TICKET_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -202,7 +202,9 @@ export async function claimGuest(fs, cfg, uid, ticket, { now = () => Date.now(),
     let second = null;
     if (held && g.appliesTo === 'next_order') {
       const sst = await secondOrderState(fs, uid);
-      second = (campaign && secondOrderTerms(cfg, campaign, sst, at)) || 'never';
+      // the 5 days to create the first order count from the WIN (the guest spin), not from the sign-in
+      const winAt = g.createdAt instanceof Date ? g.createdAt.getTime() : at;
+      second = (campaign && secondOrderTerms(cfg, campaign, sst, at, winAt)) || 'never';
     }
     if (second === 'never') {
       // this account's actual second order is behind it: the prize cannot be used. It still is the welcome spin.
@@ -226,7 +228,7 @@ export async function claimGuest(fs, cfg, uid, ticket, { now = () => Date.now(),
       ...(email ? { email: String(email).slice(0, 200) } : {}),
       status: issued ? (second ? second.status : 'issued') : NO_PRIZE,
       // validity counts from the SPIN (shown to the customer then), not from the claim — except the second-order prize
-      ...(second ? { expiresAt: second.expiresAt, issuedExpiry: second.issuedExpiry, ...(second.waitingUntil ? { waitingUntil: second.waitingUntil } : {}), ...(second.activatedAt ? { activatedAt: second.activatedAt, firstOrderId: second.firstOrderId } : {}) }
+      ...(second ? (({ status: _s, ...rest }) => rest)(secondOrderFields(second))
         : issued && g.expiresAt instanceof Date ? { expiresAt: g.expiresAt, issuedExpiry: g.expiresAt } : {}),
       fromGuest: true, createdAt: g.createdAt instanceof Date ? g.createdAt : new Date(at), claimedAt: new Date(at),
     };

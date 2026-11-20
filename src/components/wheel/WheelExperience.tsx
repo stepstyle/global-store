@@ -19,6 +19,7 @@ import {
 } from '../../services/wheel';
 import WheelDial from './WheelDial';
 import PrizeCountdown from './PrizeCountdown';
+import SecondOrderStatus from './SecondOrderStatus';
 
 const { Link } = ReactRouterDOM as any;
 const SPIN_MS = 4600;
@@ -230,12 +231,12 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
                     : L('هذه نتيجة أولية: تُثبَّت الجائزة فقط عند تأكيد طلب يحقق شروطها، ولا تُصرف للطلبات الملغاة.', 'This is a provisional result: the prize is confirmed only with an order that meets its conditions, and never for cancelled orders.')}
                   {second
                     ? (result.status === 'waiting'
-                      ? L(` خصم الطلب الثاني محفوظ لك ولا ينتهي بعد ساعة: تبدأ مدته (${secondH / 24} أيام) عند تسليم طلبك الأول، ويُستخدم على طلبك الثاني الفعلي بمنتجات ${result.minOrderJod ?? 15} د.أ فأكثر. تابعه من «جوائزك» في حسابك.`, ` Your second-order discount is kept (it does not end after an hour): its ${secondH / 24} days start when your first order is delivered, for your actual second order with products of ${result.minOrderJod ?? 15} JOD or more. Follow it under "Your prizes" in your account.`)
+                      ? L(` خصم الطلب الثاني محفوظ لك ولا ينتهي بعد ساعة: أنشئ طلبك الأول خلال ${secondH / 24} أيام من الفوز، وبعد تسليمه تبدأ ${secondH / 24} أيام لاستخدامه على طلبك الثاني الفعلي بمنتجات ${result.minOrderJod ?? 15} د.أ فأكثر. تابعه من «جوائزك» في حسابك.`, ` Your second-order discount is kept (it does not end after an hour): place your first order within ${secondH / 24} days of the win; once it is delivered you have ${secondH / 24} days to use it on your actual second order with products of ${result.minOrderJod ?? 15} JOD or more. Follow it under "Your prizes" in your account.`)
                       : L(` يُستخدم على طلبك الثاني الفعلي بمنتجات ${result.minOrderJod ?? 15} د.أ فأكثر، وينتهي في ${fmtWhen(result.expiresAt)}.`, ` For your actual second order with products of ${result.minOrderJod ?? 15} JOD or more; ends ${fmtWhen(result.expiresAt)}.`))
                     : L(` صالحة ${holdMin} دقيقة من لحظة اللفة: أكّد طلبًا مؤهَّلًا قبل انتهائها لتبقى مرتبطة به.`, ` Valid for ${holdMin} minutes from the spin: confirm a qualifying order before it ends to keep it.`)}
                 </p>
-                {second && result.status === 'waiting' && <p className="mt-2 text-xs font-black text-ink-800" data-testid="wheel-second-waiting">⏸ {L('بانتظار تسليم طلبك الأول', 'Waiting for your first order to be delivered')}</p>}
-                {result.expiresAt && <p className="mt-2 text-sm"><PrizeCountdown expiresAt={result.expiresAt} isAR={isAR} onExpire={onExpire} testId="wheel-countdown" urgentMs={second ? 12 * 3_600_000 : 5 * 60_000} /></p>}
+                {second && <SecondOrderStatus spin={result} accountState={st?.secondOrder ?? null} isAR={isAR} onExpire={onExpire} days={secondH / 24} testId="wheel-second-status" />}
+                {!second && result.expiresAt && <p className="mt-2 text-sm"><PrizeCountdown expiresAt={result.expiresAt} isAR={isAR} onExpire={onExpire} testId="wheel-countdown" /></p>}
                 <div className="mt-3 flex flex-wrap gap-2">
                   {variant === 'popup' && <button type="button" onClick={onClose} className="rounded-xl bg-ink-900 px-4 py-2 text-sm font-black text-paper-50" data-testid="wheel-continue">{L('أكمل التسوق', 'Continue shopping')}</button>}
                   <Link to="/cart" onClick={onClose} className="rounded-xl border border-ink-200 bg-white px-4 py-2 text-sm font-black text-ink-900">{L('اذهب إلى السلة', 'Go to cart')}</Link>
@@ -257,8 +258,8 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
                       <span className="text-[11px] font-bold text-ink-600">{(isAR ? STATUS_AR : STATUS_EN)[prizeExpired(s) ? 'expired' : s.status] || s.status}</span>
                     </div>
                     <p className="mt-0.5 text-xs text-ink-600">{prizeText(s, isAR)}{s.orderId ? L(` — الطلب ${s.orderId}`, ` — order ${s.orderId}`) : ''}</p>
-                    {isSecondOrder(s) && s.status === 'issued' && s.expiresAt && !prizeExpired(s) && <p className="mt-0.5 text-xs font-bold text-ink-700" data-testid="wheel-row-ends">{L(`تنتهي في ${fmtWhen(s.expiresAt)}`, `Ends ${fmtWhen(s.expiresAt)}`)}</p>}
-                    {s.status === 'issued' && !prizeExpired(s) && s.expiresAt && <p className="mt-0.5 text-xs"><PrizeCountdown expiresAt={s.expiresAt} isAR={isAR} onExpire={onExpire} testId="wheel-row-countdown" urgentMs={isSecondOrder(s) ? 12 * 3_600_000 : 5 * 60_000} /></p>}
+                    {isSecondOrder(s) && !prizeExpired(s) && <SecondOrderStatus spin={s} accountState={st?.secondOrder ?? null} isAR={isAR} onExpire={onExpire} days={secondH / 24} testId="wheel-row-second" />}
+                    {!isSecondOrder(s) && s.status === 'issued' && !prizeExpired(s) && s.expiresAt && <p className="mt-0.5 text-xs"><PrizeCountdown expiresAt={s.expiresAt} isAR={isAR} onExpire={onExpire} testId="wheel-row-countdown" /></p>}
                   </li>
                 ))}
               </ul>

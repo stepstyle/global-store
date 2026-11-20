@@ -37,19 +37,40 @@ export async function phoneKey(secret, campaignId, phone) {
 }
 export const SPIN_ATTEMPTS = 5;
 /**
- * How long a won, not-yet-used prize stays valid: WHEEL_PRIZE_HOLD_MINUTES (owner's rule: 60 minutes from the spin).
- * Past it the prize can no longer be attached to an order and its pool unit goes back (expireUnclaimedPrizes, also run
- * before every spin). A prize attached to an order in time follows that order (delivered / cancelled), not the clock.
- */
-/**
  * Owner's EXCEPTION for "discount on the SECOND order" prizes (appliesTo 'next_order'): never the 60-minute window.
- *   won before the account's first order is delivered -> 'waiting' (kept, not usable) until that FIRST delivery
- *   first delivery -> usable for WHEEL_SECOND_ORDER_HOURS (120 h = 5 days) from the delivery, on the account's ACTUAL
- *   second order only (exactly one non-cancelled order, delivered), products >= its minimum (15 JOD)
- * A waiting prize is kept at most until the campaign ends (it holds a pool unit: never forever).
+ *   1. from the WIN, the account has WHEEL_SECOND_ORDER_HOURS (120 h = 5 days) to CREATE its first order
+ *      ('waiting', firstOrderBy). No first order by then -> expired, its pool unit back (once).
+ *   2. a first order created in time keeps the prize 'waiting' until that order is DELIVERED (linked: firstOrderId).
+ *      That order cancelled / refused -> re-evaluated (another order created in time, or the 5 days still running,
+ *      or expired) — never granted on an order that does not qualify.
+ *   3. the first delivery starts a NEW 120 h to use it, on the account's ACTUAL second order only (exactly one
+ *      non-cancelled order, delivered), products >= its minimum (15 JOD), once. The order count and the use of the
+ *      discount are committed ATOMICALLY with the account's order sequence (wheelAccountOrders/{uid}, below).
  */
 export const secondOrderWindowMs = (cfg) => (Number.isFinite(cfg?.wheelSecondOrderHours) && cfg.wheelSecondOrderHours > 0 ? cfg.wheelSecondOrderHours : 120) * 3_600_000;
 export const isSecondOrderPrize = (p) => !!p && p.type === 'discount' && p.appliesTo === 'next_order';
+
+/**
+ * Per-account ORDER SEQUENCE (Worker only; browsers are denied): bumped in the SAME commit as every order the account
+ * creates and every status change of its orders. An order that uses a second-order discount reads it BEFORE reading
+ * the account's orders and commits only if it is still that version: any other order of the account created / changed
+ * in between makes the commit fail -> re-read -> the discount is refused if this is no longer the actual second order.
+ */
+export const accountSeqPath = (uid) => `wheelAccountOrders/${uid}`;
+/** a bump without a precondition (orders that do not carry a second-order discount: they never wait for each other) */
+export const accountSeqBump = (fs, uid) => ({ update: { name: fs.name(accountSeqPath(uid)), fields: encodeFields({ uid }) }, updateMask: { fieldPaths: ['uid'] }, updateTransforms: [{ fieldPath: 'seq', increment: { integerValue: '1' } }] });
+/** the bump of an order that uses the discount: only on the version read before the account's orders were counted */
+export const accountSeqGuardedBump = (fs, uid, doc) => ({ ...accountSeqBump(fs, uid), currentDocument: doc.exists ? { updateTime: doc.updateTime } : { exists: false } });
+
+const live = (docs, excludeOrderId) => docs.map((d) => ({ id: d.name.split('/').pop(), ...decodeFields(d.fields) })).filter((o) => o.status !== 'cancelled' && o.id !== excludeOrderId);
+async function accountOrders(fs, uid) {
+  return fs.runQuery({
+    from: [{ collectionId: 'orders' }],
+    where: { fieldFilter: { field: { fieldPath: 'userId' }, op: 'EQUAL', value: { stringValue: uid } } },
+    limit: 50,
+  });
+}
+const createdMs = (o) => (o.createdAt instanceof Date ? o.createdAt.getTime() : Number.isFinite(o.createdAtMs) ? o.createdAtMs : Infinity);
 
 /**
  * Where the account stands for a second-order prize, read by the Worker from Firestore (never from the browser).
@@ -58,43 +79,60 @@ export const isSecondOrderPrize = (p) => !!p && p.type === 'discount' && p.appli
  */
 export async function secondOrderState(fs, uid, { excludeOrderId = null } = {}) {
   if (!uid) return { state: 'none' };
-  const docs = await fs.runQuery({
-    from: [{ collectionId: 'orders' }],
-    where: { fieldFilter: { field: { fieldPath: 'userId' }, op: 'EQUAL', value: { stringValue: uid } } },
-    limit: 50,
-  });
-  const live = docs.map((d) => ({ id: d.name.split('/').pop(), ...decodeFields(d.fields) })).filter((o) => o.status !== 'cancelled' && o.id !== excludeOrderId);
-  if (live.length === 0) return { state: 'none' };
-  if (live.length > 1) return { state: 'past', count: live.length };
-  const o = live[0];
+  const orders = live(await accountOrders(fs, uid), excludeOrderId);
+  if (orders.length === 0) return { state: 'none' };
+  if (orders.length > 1) return { state: 'past', count: orders.length };
+  const o = orders[0];
   if (o.status !== 'delivered') return { state: 'pending', orderId: o.id };
   const L = await fs.get(`orderLedger/${o.id}`);
   const at = L.exists ? decodeFields(L.fields).deliveredAt : null;
   return { state: 'one_delivered', orderId: o.id, deliveredAt: at instanceof Date ? at : null };
 }
 
+/** the account's earliest live order created by `byMs` (the first-order deadline), or null */
+export async function firstOrderWithin(fs, uid, byMs, { excludeOrderId = null } = {}) {
+  if (!uid) return null;
+  const ok = live(await accountOrders(fs, uid), excludeOrderId).filter((o) => createdMs(o) <= byMs).sort((a, b) => createdMs(a) - createdMs(b));
+  return ok[0]?.id ?? null;
+}
+
 /**
- * The stored terms of a second-order prize for an account in `st` at `now`:
- *   { status: 'waiting', ... }  until the first delivery (bounded by the campaign end)
- *   { status: 'issued', expiresAt }  first delivery + 120 h, still ahead
- *   null  the account can never use it (its actual second order is behind it, or the 5 days are over)
+ * The stored terms of a second-order prize won at `winAt` by an account in `st`, at `now`:
+ *   waiting  { firstOrderBy } no order yet: create one before winAt + 120 h (the cron expires it after)
+ *   waiting  { firstOrderId } one order exists, not delivered: kept until it is delivered (campaign end at most)
+ *   issued   { expiresAt }    first delivery + 120 h, still ahead
+ *   null                      the account can never use it (actual second order behind it / its 5 days over)
  */
-export function secondOrderTerms(cfg, campaign, st, now) {
-  if (st.state === 'none' || st.state === 'pending') {
-    const until = new Date(campaign.endsAt);
-    return { status: 'waiting', expiresAt: null, issuedExpiry: until, waitingUntil: until };
+export function secondOrderTerms(cfg, campaign, st, now, winAt = now) {
+  const until = new Date(campaign.endsAt);
+  const by = new Date(winAt + secondOrderWindowMs(cfg));
+  if (st.state === 'none') {
+    if (by.getTime() <= now) return null;
+    return { status: 'waiting', expiresAt: null, firstOrderBy: by, issuedExpiry: new Date(Math.min(by.getTime(), until.getTime())), waitingUntil: until };
   }
+  if (st.state === 'pending') return { status: 'waiting', expiresAt: null, firstOrderBy: by, firstOrderId: st.orderId, issuedExpiry: until, waitingUntil: until };
   if (st.state === 'one_delivered' && st.deliveredAt) {
     const end = st.deliveredAt.getTime() + secondOrderWindowMs(cfg);
     if (end > now) return { status: 'issued', expiresAt: new Date(end), issuedExpiry: new Date(end), activatedAt: st.deliveredAt, firstOrderId: st.orderId };
   }
   return null;
 }
+/** the stored fields of those terms (a spin document) */
+export const secondOrderFields = (t) => ({
+  status: t.status, expiresAt: t.expiresAt, issuedExpiry: t.issuedExpiry,
+  ...(t.waitingUntil ? { waitingUntil: t.waitingUntil } : {}), ...(t.firstOrderBy ? { firstOrderBy: t.firstOrderBy } : {}),
+  ...(t.firstOrderId ? { firstOrderId: t.firstOrderId } : {}), ...(t.activatedAt ? { activatedAt: t.activatedAt } : {}),
+});
 /** the campaign as this account can win it: second-order prizes it can never use are not drawn (nor shown) */
 export const campaignFor = (campaign, sst, cfg, now) => (!campaign || !campaign.prizes.some(isSecondOrderPrize) || !sst || secondOrderTerms(cfg, campaign, sst, now)
   ? campaign
   : { ...campaign, prizes: campaign.prizes.map((p) => (isSecondOrderPrize(p) ? { ...p, active: false } : p)) });
 
+/**
+ * How long a won, not-yet-used prize stays valid: WHEEL_PRIZE_HOLD_MINUTES (owner's rule: 60 minutes from the spin).
+ * Past it the prize can no longer be attached to an order and its pool unit goes back (expireUnclaimedPrizes, also run
+ * before every spin). A prize attached to an order in time follows that order (delivered / cancelled), not the clock.
+ */
 export const prizeHoldMs = (cfg) => (Number.isFinite(cfg?.wheelPrizeHoldMinutes) && cfg.wheelPrizeHoldMinutes > 0 ? cfg.wheelPrizeHoldMinutes : 60) * 60_000;
 const ID_RE = /^[a-z0-9-]{1,40}$/;
 export const PRIZE_TYPES = Object.freeze(['gift', 'discount', 'free_delivery', 'none']);
@@ -293,6 +331,8 @@ const publicSpin = (s) => (s ? {
   ...spinTerms(s), description: s.description || '', expiresAt: s.expiresAt instanceof Date ? s.expiresAt.toISOString() : null,
   ...(s.waitingUntil instanceof Date ? { waitingUntil: s.waitingUntil.toISOString() } : {}),
   ...(s.activatedAt instanceof Date ? { activatedAt: s.activatedAt.toISOString() } : {}),
+  ...(s.firstOrderBy instanceof Date ? { firstOrderBy: s.firstOrderBy.toISOString() } : {}),
+  ...(s.status === 'waiting' && s.firstOrderId ? { firstOrderId: s.firstOrderId } : {}),
 } : null);
 
 /** A missing document = the welcome chance (`base` 1), or none when the campaign has freeFirstChance=false. */
@@ -400,10 +440,11 @@ export async function spinWheel(fs, cfg, uid, { now = () => Date.now(), rand = s
     const prize = slot && slot.type !== 'none' ? slot : null;
     const n = e.used + 1;
     const validMs = prizeHoldMs(cfg);
-    // the owner's exception: a second-order prize waits for the first delivery, then 120 h (never the 60 minutes)
-    const second = isSecondOrderPrize(prize) ? secondOrderTerms(cfg, campaign, sst, at) : null;
+    // the owner's exception: a second-order prize: 5 days to create the first order, kept until it is delivered, then
+    // 5 days to use it (never the 60 minutes)
+    const second = isSecondOrderPrize(prize) ? secondOrderTerms(cfg, campaign, sst, at, at) : null;
     const window = second
-      ? { status: second.status, expiresAt: second.expiresAt, issuedExpiry: second.issuedExpiry, ...(second.waitingUntil ? { waitingUntil: second.waitingUntil } : {}), ...(second.activatedAt ? { activatedAt: second.activatedAt, firstOrderId: second.firstOrderId } : {}) }
+      ? secondOrderFields(second)
       : prize ? { status: 'issued', expiresAt: new Date(at + validMs), issuedExpiry: new Date(at + validMs) } : { status: NO_PRIZE };
     const spin = {
       campaignId: cid, uid, n, prizeId: slot ? slot.id : NO_PRIZE,
@@ -514,10 +555,24 @@ export async function openCampaign(fs, cfg, now = Date.now()) {
  *   cancelled before delivery -> the prize goes back to 'issued' (or 'expired', per campaign policy)
  *   returned (delivered -> cancelled) -> the chance earned by this order is taken back (granted - 1)
  */
+async function waitingSpins(fs, uid) {
+  return fs.runQuery({
+    from: [{ collectionId: 'wheelSpins' }],
+    where: { compositeFilter: { op: 'AND', filters: [
+      { fieldFilter: { field: { fieldPath: 'uid' }, op: 'EQUAL', value: { stringValue: uid } } },
+      { fieldFilter: { field: { fieldPath: 'status' }, op: 'EQUAL', value: { stringValue: 'waiting' } } },
+    ] } },
+    limit: 20,
+  });
+}
+
 export async function wheelStatusWrites(fs, L, orderId, from, to, at) {
   const w = L?.wheel;
   if (!w || !w.campaignId) return [];
   const writes = [];
+  // every status change of the account's orders moves its order sequence (a second-order discount being placed at the
+  // same moment re-reads: a delivery / cancellation / return changes which order is the actual second)
+  if (w.uid) writes.push(accountSeqBump(fs, w.uid));
   const spin = w.spinId ? await fs.get(`wheelSpins/${w.spinId}`) : null;
   // the delivery number's open-gift slot is freed exactly once: on delivery, or on cancellation before delivery
   // (this runs inside the status-change commit, which carries the ledger's version: a transition is applied once)
@@ -528,14 +583,10 @@ export async function wheelStatusWrites(fs, L, orderId, from, to, at) {
     // the account's FIRST delivery: its waiting second-order prizes start their 120 hours NOW (same commit as the
     // delivery, each with the version read: a repeated delivery / overlapping run never restarts the clock)
     if (w.uid && from !== 'delivered') {
-      const waiting = await fs.runQuery({
-        from: [{ collectionId: 'wheelSpins' }],
-        where: { compositeFilter: { op: 'AND', filters: [
-          { fieldFilter: { field: { fieldPath: 'uid' }, op: 'EQUAL', value: { stringValue: w.uid } } },
-          { fieldFilter: { field: { fieldPath: 'status' }, op: 'EQUAL', value: { stringValue: 'waiting' } } },
-        ] } },
-        limit: 20,
-      });
+      // only prizes whose first order was CREATED in time (this order created after the 5-day deadline: not a first
+      // order for that prize; the cron expires it)
+      const createdAt = L.createdAt instanceof Date ? L.createdAt.getTime() : Infinity;
+      const waiting = (await waitingSpins(fs, w.uid)).filter((d) => { const ws = decodeFields(d.fields); return !(ws.firstOrderBy instanceof Date) || createdAt <= ws.firstOrderBy.getTime(); });
       if (waiting.length) {
         const before = await secondOrderState(fs, w.uid, { excludeOrderId: orderId });
         const first = before.state === 'none' || before.state === 'pending' || (before.state === 'past' && !(await hasDeliveredOrder(fs, w.uid)));
@@ -543,7 +594,7 @@ export async function wheelStatusWrites(fs, L, orderId, from, to, at) {
           const atMs = at instanceof Date ? at.getTime() : Number(at);
           const end = new Date(atMs + secondOrderWindowMs({ wheelSecondOrderHours: w.secondOrderHours }));
           for (const d of waiting) {
-            writes.push({ update: { name: d.name, fields: encodeFields({ status: 'issued', expiresAt: end, issuedExpiry: end, activatedAt: at, firstOrderId: orderId, waitingUntil: null }) }, updateMask: { fieldPaths: ['status', 'expiresAt', 'issuedExpiry', 'activatedAt', 'firstOrderId', 'waitingUntil'] }, currentDocument: { updateTime: d.updateTime } });
+            writes.push({ update: { name: d.name, fields: encodeFields({ status: 'issued', expiresAt: end, issuedExpiry: end, activatedAt: at, firstOrderId: orderId, waitingUntil: null, firstOrderBy: null }) }, updateMask: { fieldPaths: ['status', 'expiresAt', 'issuedExpiry', 'activatedAt', 'firstOrderId', 'waitingUntil', 'firstOrderBy'] }, currentDocument: { updateTime: d.updateTime } });
           }
         }
       }
@@ -564,6 +615,28 @@ export async function wheelStatusWrites(fs, L, orderId, from, to, at) {
       }
     }
   } else if (to === 'cancelled') {
+    // the account's FIRST order cancelled / refused before delivery: its waiting second-order prizes linked to it are
+    // re-evaluated in THIS commit — another order created in time takes its place, or (no such order) the 5 days to
+    // create one still run, or they are over: expired, unit back. Never granted on an order that does not qualify.
+    if (w.uid && from !== 'delivered') {
+      const atMs = at instanceof Date ? at.getTime() : Number(at);
+      for (const d of await waitingSpins(fs, w.uid)) {
+        const ws = decodeFields(d.fields);
+        if (ws.firstOrderId !== orderId) continue;
+        const byMs = ws.firstOrderBy instanceof Date ? ws.firstOrderBy.getTime() : 0;
+        const other = byMs ? await firstOrderWithin(fs, w.uid, byMs, { excludeOrderId: orderId }) : null;
+        const guard = { currentDocument: { updateTime: d.updateTime } };
+        if (other) {
+          writes.push({ update: { name: d.name, fields: encodeFields({ firstOrderId: other }) }, updateMask: { fieldPaths: ['firstOrderId'] }, ...guard });
+        } else if (byMs > atMs) {
+          const until = ws.waitingUntil instanceof Date ? ws.waitingUntil.getTime() : byMs;
+          writes.push({ update: { name: d.name, fields: encodeFields({ firstOrderId: null, issuedExpiry: new Date(Math.min(byMs, until)) }) }, updateMask: { fieldPaths: ['firstOrderId', 'issuedExpiry'] }, ...guard });
+        } else {
+          writes.push({ update: { name: d.name, fields: encodeFields({ status: 'expired', expiredAt: at, expiredReason: 'first_order_cancelled', issuedExpiry: null, firstOrderId: null }) }, updateMask: { fieldPaths: ['status', 'expiredAt', 'expiredReason', 'issuedExpiry', 'firstOrderId'] }, ...guard });
+          writes.push({ update: { name: fs.name(`wheelPool/${ws.campaignId || w.campaignId}_${ws.prizeId}`), fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: 'remaining', increment: { integerValue: '1' } }], currentDocument: { exists: true } });
+        }
+      }
+    }
     if (from !== 'delivered' && spin?.exists && decodeFields(spin.fields).status === 'reserved') {
       const sp = decodeFields(spin.fields);
       const atMs = at instanceof Date ? at.getTime() : Number(at);
@@ -611,7 +684,17 @@ export async function expireUnclaimedPrizes(fs, cfg, { now = Date.now(), pageSiz
     });
     for (const d of docs) {
       const sp = decodeFields(d.fields);
-      // 'waiting' = a second-order prize still waiting for the first delivery when the campaign ended
+      // a second-order prize whose 5 days to CREATE the first order are over: an order created in time (cancelled
+      // ones never count) keeps it, linked to that order until its delivery — nothing returned, never expired twice
+      if (sp.status === 'waiting' && !sp.firstOrderId && sp.firstOrderBy instanceof Date && sp.uid) {
+        const first = await firstOrderWithin(fs, sp.uid, sp.firstOrderBy.getTime());
+        const until = sp.waitingUntil instanceof Date ? sp.waitingUntil.getTime() : 0;
+        if (first && until > now) {
+          await fs.commit([{ update: { name: d.name, fields: encodeFields({ firstOrderId: first, issuedExpiry: new Date(until) }) }, updateMask: { fieldPaths: ['firstOrderId', 'issuedExpiry'] }, currentDocument: { updateTime: d.updateTime } }]);
+          continue;
+        }
+      }
+      // 'waiting' past its deadline (no first order in 5 days / the campaign ended) or 'issued' past its window
       const valid = (sp.status === 'issued' || sp.status === 'waiting') && sp.prizeId && sp.prizeId !== NO_PRIZE;
       const r = await fs.commit([
         // not 'issued' any more (should not happen): only the stale marker is cleared, nothing is returned

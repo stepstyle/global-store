@@ -6,8 +6,8 @@ import { fmtRemaining, remainingMs } from '../../services/wheel';
 
 const DAY = 86_400_000;
 
-export default function PrizeCountdown({ expiresAt, isAR, onExpire, testId = 'prize-countdown', className = '', urgentMs = 5 * 60_000 }: {
-  expiresAt: string | null; isAR: boolean; onExpire?: () => void; testId?: string; className?: string; urgentMs?: number;
+export default function PrizeCountdown({ expiresAt, isAR, onExpire, testId = 'prize-countdown', className = '', urgentMs = 5 * 60_000, label }: {
+  expiresAt: string | null; isAR: boolean; onExpire?: () => void; testId?: string; className?: string; urgentMs?: number; label?: string;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const fired = useRef(false);
@@ -28,7 +28,7 @@ export default function PrizeCountdown({ expiresAt, isAR, onExpire, testId = 'pr
   return (
     <span className={`inline-flex items-center gap-1 font-black tabular-nums ${urgent ? 'text-red-700' : 'text-ink-800'} ${className}`} role="timer" aria-live="off" data-testid={testId} data-remaining-ms={left}>
       <span aria-hidden="true">⏳</span>
-      {isAR ? `الوقت المتبقي لاستخدام الجائزة: ` : 'Time left to use the prize: '}
+      {label ?? (isAR ? `الوقت المتبقي لاستخدام الجائزة: ` : 'Time left to use the prize: ')}
       {left >= DAY ? <span>{isAR ? `${Math.floor(left / DAY)} يوم و ` : `${Math.floor(left / DAY)}d `}<span dir="ltr">{fmtRemaining(left % DAY)}</span></span> : <span dir="ltr">{fmtRemaining(left)}</span>}
     </span>
   );

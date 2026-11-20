@@ -21,6 +21,8 @@ export type WheelSpin = {
   type: PrizeType; valueJod: number; minOrderJod: number | null; appliesTo: 'this_order' | 'next_order'; description: string; expiresAt: string | null;
   // second-order prize: kept until (campaign end) while waiting for the first delivery; when its 5 days started
   waitingUntil?: string | null; activatedAt?: string | null;
+  // second-order prize: create the first order before this (5 days from the win); the first order it waits for
+  firstOrderBy?: string | null; firstOrderId?: string | null;
 };
 export type WheelPublic = { campaign: string; slots: WheelSlot[]; minOrderJod: number | null; prizeHoldMinutes: number; terms: string };
 export type WheelState = { campaign: string; minOrderJod: number | null; terms: string; prizeHoldMinutes: number; chancesLeft: number; spins: WheelSpin[]; slots: WheelSlot[]; previousDelivered: boolean | null;
@@ -73,6 +75,7 @@ export const spinOf = (s: any): WheelSpin | null =>
         type: s.status === 'none' ? 'none' : typeOf(s.type), valueJod: n0(s.valueJod), minOrderJod: nOrNull(s.minOrderJod), appliesTo: appliesOf(s.appliesTo),
         description: typeof s.description === 'string' ? s.description : '', expiresAt: typeof s.expiresAt === 'string' ? s.expiresAt : null,
         waitingUntil: typeof s.waitingUntil === 'string' ? s.waitingUntil : null, activatedAt: typeof s.activatedAt === 'string' ? s.activatedAt : null,
+        firstOrderBy: typeof s.firstOrderBy === 'string' ? s.firstOrderBy : null, firstOrderId: typeof s.firstOrderId === 'string' ? s.firstOrderId : null,
       }
     : null;
 
@@ -147,7 +150,7 @@ export const guestOf = (g: any): GuestResult | null =>
 /** a guest result shown like an account prize ('held' = won, waiting for the sign-in at checkout); never sent with an order */
 export const guestAsSpin = (g: GuestResult): WheelSpin => (isSecondOrder(g) && g.status === 'held'
   // a second-order prize is KEPT (never the 60 minutes): its 5 days start at the first delivery, after signing in
-  ? { spinId: '', n: 0, prizeId: g.prizeId, label: g.label, status: 'waiting', orderId: null, type: g.type, valueJod: g.valueJod, minOrderJod: g.minOrderJod, appliesTo: g.appliesTo, description: g.description, expiresAt: null, waitingUntil: g.holdUntil }
+  ? { spinId: '', n: 0, prizeId: g.prizeId, label: g.label, status: 'waiting', orderId: null, type: g.type, valueJod: g.valueJod, minOrderJod: g.minOrderJod, appliesTo: g.appliesTo, description: g.description, expiresAt: null, waitingUntil: g.holdUntil, firstOrderBy: g.holdUntil, firstOrderId: null }
   : {
   spinId: '', n: 0, prizeId: g.prizeId, label: g.label, status: g.status === 'held' ? 'issued' : g.status, orderId: null,
   type: g.type, valueJod: g.valueJod, minOrderJod: g.minOrderJod, appliesTo: g.appliesTo, description: g.description,

@@ -369,7 +369,11 @@ export function buildWheelScenarios(ctx) {
       await spinAndWait(t);
       assert.match(await waitResult(t), /طلبك الثاني/);
       // owner's exception: KEPT until the first delivery (no 60-minute countdown), explained in the wheel
-      assert.ok(await t.evaluate(`!!document.querySelector('[data-testid=wheel-second-waiting]')`), 'kept, waiting for the first delivery');
+      // stage ①: 5 days (from the win) to CREATE the first order, with the time left
+      assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-second-status]')?.dataset.state`), 'create-first-order');
+      const firstLeft = Number(await t.evaluate(`document.querySelector('[data-testid=wheel-second-status-countdown]').dataset.remainingMs`));
+      assert.ok(firstLeft > 119 * 3_600_000 && firstLeft <= 120 * 3_600_000, `about 5 days to place the first order (${firstLeft})`);
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-second-status]').textContent`), /أنشئ طلبك الأول قبل[\s\S]*الوقت المتبقي لإنشاء طلبك الأول/);
       assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=wheel-countdown]')`), false, 'no 60-minute countdown');
       assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-won]').innerText`), /لا ينتهي بعد ساعة[\s\S]*5 أيام/);
       assert.equal((await spinDoc(uid, 1)).status, 'waiting');
@@ -377,12 +381,18 @@ export function buildWheelScenarios(ctx) {
       await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
       await openCheckoutWith(t, CART_15, email);
       await t.waitFor(`!!document.querySelector('[data-testid=checkout-wheel-waiting]')`, 20_000, 'second-order kept, explained in checkout');
+      assert.equal(await t.evaluate(`document.querySelector('[data-testid=checkout-second-status]')?.dataset.state`), 'create-first-order');
       assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=checkout-wheel-gift]')`), false, 'not applied to the first order');
       await fillToPayment(t, '0795100005');
       await clickConfirm(t);
       assert.equal(await outcome(t), 'success');
       const o1 = await t.evaluate(`location.hash.split('/').pop()`);
       assert.equal((await get(`orderLedger/${o1}`)).serverPricing.total, 18, 'first order: no discount');
+      // stage ② in the account: the first order exists, not delivered yet -> kept until its delivery
+      await t.evaluate(`location.hash = '#/wheel'; true`);
+      await t.waitFor(`document.querySelector('[data-testid=wheel-row-second]')?.dataset.state === 'first-order-open'`, 25_000, 'kept until the first order is delivered');
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-row-second]').textContent`), /طلبك الأول قيد التنفيذ/);
+      await shot(t, 'wu05-first-order-open');
       await deliverInDashboard(t, o1);
       // the FIRST delivery starts the 5 days (from the delivery, not the spin) — the customer follows it in the account
       const act = await spinDoc(uid, 1);
@@ -390,10 +400,12 @@ export function buildWheelScenarios(ctx) {
       assert.equal(act.expiresAt.getTime() - (await get(`orderLedger/${o1}`)).deliveredAt.getTime(), 120 * 3_600_000);
       await signIn(t, email, pw);
       await t.evaluate(`location.hash = '#/wheel'; true`);
-      await t.waitFor(`!!document.querySelector('[data-testid=wheel-row-ends]') && !!document.querySelector('[data-testid=wheel-row-countdown]')`, 25_000, 'end date + time left in the account');
-      const left = Number(await t.evaluate(`document.querySelector('[data-testid=wheel-row-countdown]').dataset.remainingMs`));
+      // stage ③ in the account: end date + time left
+      await t.waitFor(`document.querySelector('[data-testid=wheel-row-second]')?.dataset.state === 'active' && !!document.querySelector('[data-testid=wheel-row-second-countdown]')`, 25_000, 'end date + time left in the account');
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-row-second]').textContent`), /تم تسليم طلبك الأول[\s\S]*حتى/);
+      const left = Number(await t.evaluate(`document.querySelector('[data-testid=wheel-row-second-countdown]').dataset.remainingMs`));
       assert.ok(left > 119 * 3_600_000 && left <= 120 * 3_600_000, `about 5 days left (${left})`);
-      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-row-countdown]').textContent`), /4 يوم و 2\d:\d\d:\d\d|5 يوم و 00:00:\d\d/);
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-row-second-countdown]').textContent`), /4 يوم و 2\d:\d\d:\d\d|5 يوم و 00:00:\d\d/);
       await shot(t, 'wu05-account-prize');
       await openCheckoutWith(t, CART_15, email);
       await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'applies'`, 20_000, 'second-order discount applies');

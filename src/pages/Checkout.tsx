@@ -50,6 +50,7 @@ import {
   type WheelSpin, type WheelState,
 } from '../services/wheel';
 import PrizeCountdown from '../components/wheel/PrizeCountdown';
+import SecondOrderStatus from '../components/wheel/SecondOrderStatus';
 import { googleMessage, saveCheckoutResume, takeCheckoutResume, type GoogleOutcome } from '../services/googleGate';
 import { currentGoogleUid, finishGoogleRedirect, googlePopup, googleRedirect } from '../services/googleAuth';
 
@@ -1660,7 +1661,8 @@ const Checkout: React.FC = () => {
               {WHEEL_ENABLED && !wheelPrize && !expiredPrize && waitingPrize && (
                 <div className="mb-4 rounded-2xl border border-gold-200 bg-gold-50 p-3 text-sm" role="status" data-testid="checkout-wheel-waiting" data-prize-id={waitingPrize.prizeId}>
                   <p className="font-black text-ink-950">🎡 {tr(`محفوظ لك: ${waitingPrize.label}`, `Kept for you: ${waitingPrize.label}`)}</p>
-                  <p className="mt-1 text-xs font-bold leading-relaxed text-ink-800">{tr(`لا يُطبَّق على هذا الطلب. تبدأ مدته (${secondDays} أيام) عند تسليم طلبك الأول، ثم يُستخدم على طلبك الثاني الفعلي بمنتجات ${waitingPrize.minOrderJod ?? 15} د.أ فأكثر. تابعه من «جوائزك» في صفحة الدولاب.`, `Not applied to this order. Its ${secondDays} days start when your first order is delivered; then use it on your actual second order with products of ${waitingPrize.minOrderJod ?? 15} JOD or more. Follow it under "Your prizes" on the wheel page.`)}</p>
+                  <p className="mt-1 text-xs font-bold leading-relaxed text-ink-800">{tr('لا يُطبَّق على هذا الطلب. تابعه من «جوائزك» في صفحة الدولاب.', 'Not applied to this order. Follow it under "Your prizes" on the wheel page.')}</p>
+                  <SecondOrderStatus spin={waitingPrize} accountState={wheelState?.secondOrder ?? null} isAR={isAR} onExpire={onPrizeExpire} days={secondDays} testId="checkout-second-status" />
                 </div>
               )}
 

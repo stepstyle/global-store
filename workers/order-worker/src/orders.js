@@ -11,13 +11,13 @@ import { computeServerPricing, comparePricing, enforcePriceProblems } from './pr
 import { initialNotifications, processNotifications } from './notify.js';
 import { WORKER_VERSION } from './config.js';
 import { log } from './http.js';
-import { loadGiftForOrder, openCampaign, phoneKey, prizeAdjustment, secondOrderWindowMs, GENERIC_GIFT_PRODUCT } from './wheel.js';
+import { loadGiftForOrder, openCampaign, phoneKey, prizeAdjustment, secondOrderWindowMs, accountSeqPath, accountSeqBump, accountSeqGuardedBump, GENERIC_GIFT_PRODUCT } from './wheel.js';
 import { TRACKING_KEY_HASH_RE, normalizeTrackingKey, hashTrackingKey, sameHex, projectSummary } from './tracking.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const STATUS_ALLOWLIST = new Set(['new', 'processing', 'shipped', 'delivered', 'cancelled']);
 
-async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields, userIdWarning, verifiedUid = null, trackingKeyHash = null, wheel = null }) {
+async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields, userIdWarning, verifiedUid = null, trackingKeyHash = null, wheel = null, accountSeq = null }) {
   const v = input;
   const lines = v.items.map((it, index) => ({ index, productId: it.productId, variantId: it.variantId, quantity: it.quantity }));
   // WHEEL_MODE=test: a prize won on the wheel travels as ONE extra line (index 1000, price 0) — reserved with the
@@ -281,6 +281,10 @@ async function buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strip
     });
   }
 
+  // every new order of a verified account moves its order sequence; the one using a second-order discount only from
+  // the version it read (a concurrent order of the same account -> conflict -> re-read -> refused if now third)
+  if (accountSeq && mode === 'created') writes.push(accountSeq.guarded ? accountSeqGuardedBump(fs, accountSeq.uid, accountSeq.doc) : accountSeqBump(fs, accountSeq.uid));
+
   const r = await fs.commit(writes);
   if (r.ok) {
     log('order.committed', { orderId: id, mode, warnings: warnings.map((w) => w.code), deductions: inv.deductions.length });
@@ -401,6 +405,9 @@ export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {
 
     // WHEEL (test only): the prize is re-read on every attempt (its version is the commit's precondition)
     let wheel = null;
+    // the account's order sequence, read BEFORE anything counts its orders (loadGiftForOrder): see accountSeqPath
+    let accountSeq = null;
+    if (cfg.wheelMode !== 'off' && verifiedUid && mode === 'created') accountSeq = { uid: verifiedUid, doc: await fs.get(accountSeqPath(verifiedUid)), guarded: false };
     if (cfg.wheelMode !== 'off') {
       if (wheelSpinId !== null) {
         if (mode !== 'created') return { status: 409, body: { ok: false, code: 'WHEEL_PRIZE_INVALID' } };
@@ -411,6 +418,9 @@ export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {
         if (!g.ok && (await savedMeanwhile(fs, id))) continue;
         if (!g.ok) return { status: g.code === 'WHEEL_SIGN_IN_REQUIRED' ? 401 : 422, body: { ok: false, code: g.code, ...(g.minOrderJod !== undefined ? { minOrderJod: g.minOrderJod } : {}) } };
         wheel = { campaignId: cfg.wheelCampaignId, gift: g.gift, campaign: g.campaign };
+        // a second-order discount: this order is the actual second ONLY if no other order of the account was created
+        // or changed since the sequence was read -> the commit is conditional on that version (atomic check + use)
+        if (accountSeq && g.gift.appliesTo === 'next_order') accountSeq.guarded = true;
       } else if (verifiedUid && mode === 'created') {
         const c = await openCampaign(fs, cfg);
         if (c) wheel = { campaignId: cfg.wheelCampaignId, gift: null, campaign: c };
@@ -418,7 +428,7 @@ export async function createOrder(fs, cfg, rawOrder, ctx, auth = null, extra = {
     }
 
     // Owner is decided ONCE, here, at creation. A replay (ledger exists, above) or an adoption never changes it.
-    const r = await buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields: parsed.strippedFields, userIdWarning, verifiedUid: mode === 'created' ? verifiedUid : null, trackingKeyHash, wheel });
+    const r = await buildAndCommit(fs, cfg, { input, hash, mode, existingOrder, strippedFields: parsed.strippedFields, userIdWarning, verifiedUid: mode === 'created' ? verifiedUid : null, trackingKeyHash, wheel, accountSeq });
     if (r.ok) {
       const p = processNotifications(fs, cfg, id).catch((e) => log('notify.error', { orderId: id, message: String(e?.message || e) }));
       if (ctx?.waitUntil) ctx.waitUntil(p);
