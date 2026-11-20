@@ -665,6 +665,8 @@ async function runWheelSuite() {
     },
     setCampaign,
     countSpins: async () => (await fs.runQuery({ from: [{ collectionId: 'wheelSpins' }] })).length,
+    // spins made WITHOUT an account (stored under the browser's ticket hash)
+    guestSpins: async () => (await fs.runQuery({ from: [{ collectionId: 'wheelGuestSpins' }] })).map((d) => decodeFields(d.fields)),
     // the Worker as the browser reaches it (CORS test proxy, no token added)
     workerUrl: `${URLS.mock}/ui`,
     reseed: reseedAll,

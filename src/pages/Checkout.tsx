@@ -1,5 +1,5 @@
 // src/pages/Checkout.tsx
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useCart } from '../App';
 import Button from '../components/Button';
 import {
@@ -44,7 +44,10 @@ const firebaseUid = (): string | null => getFirebaseAuth()?.currentUser?.uid || 
 import SEO from '../components/SEO';
 import LazyImage from '../components/LazyImage';
 import { BACKEND_ENABLED } from '../config/deployEnv';
-import { WHEEL_ENABLED, chosenPrize, choosePrize, fetchWheelState, prizeEffect, prizeText, usablePrize, type WheelState } from '../services/wheel';
+import {
+  WHEEL_ENABLED, WHEEL_SPIN_ID_RE, chosenPrize, choosePrize, fetchWheelState, prizeEffect, prizeText, usablePrize,
+  claimGuestResult, fetchGuestResult, guestAsSpin, type WheelSpin, type WheelState,
+} from '../services/wheel';
 import { googleMessage, saveCheckoutResume, takeCheckoutResume, type GoogleOutcome } from '../services/googleGate';
 import { currentGoogleUid, finishGoogleRedirect, googlePopup, googleRedirect } from '../services/googleAuth';
 
@@ -222,18 +225,33 @@ const Checkout: React.FC = () => {
   const [submitResult, setSubmitResult] = useState<CheckoutResult | null>(null);
   // why the order was NOT sent (checked locally before sending); shown inline — App's toasts are not rendered
   const [submitBlocked, setSubmitBlocked] = useState('');
-  // Turnstile widget on the payment step; a FRESH single-use token is asked before every send (orderSubmit)
-  const turnstile = useTurnstile(TURNSTILE_SITE_KEY, step === 3, isAR ? 'ar' : 'en');
+  // Owner's sequence: "confirm order" -> Google account chooser (if not signed in) -> security check (Turnstile) ->
+  // "final confirm" -> ONE send. googleUid: the Google session this page knows of (set right after the sign-in).
+  const GOOGLE_GATE = BACKEND_ENABLED && ORDER_SIGN_IN_GOOGLE;
+  const [googleUid, setGoogleUid] = useState<string | null>(() => currentGoogleUid());
+  useEffect(() => { setGoogleUid(currentGoogleUid()); }, [user?.id]);
+  const googleReady = !GOOGLE_GATE || !!googleUid;
+  // Turnstile widget on the payment step — with the Google rule only AFTER the sign-in; a FRESH single-use token is
+  // asked before every send (orderSubmit)
+  const turnstile = useTurnstile(TURNSTILE_SITE_KEY, step === 3 && googleReady, isAR ? 'ar' : 'en');
   // prize wheel (VITE_WHEEL_MODE=test only): the account's won prizes come from the Worker (never from this browser
-  // alone); the one used is sent with the SIGNED-IN order ONLY when it applies, and the Worker re-checks everything
+  // alone); the one used is sent with the SIGNED-IN order ONLY when it applies, and the Worker re-checks everything.
+  // Not signed in yet: the result of the spin made WITHOUT an account (this browser's ticket) is SHOWN, never sent —
+  // it is linked to the Google account right after the sign-in, before the final confirmation.
   const [wheelState, setWheelState] = useState<WheelState | null>(null);
+  const [guestPrize, setGuestPrize] = useState<WheelSpin | null>(null);
+  const [wheelNotice, setWheelNotice] = useState('');
   const [wheelPick, setWheelPick] = useState<string | null>(() => chosenPrize()?.spinId ?? null);
   const [wheelRemoved, setWheelRemoved] = useState(false);
   const wheelPrize = useMemo(() => {
-    if (!WHEEL_ENABLED || wheelRemoved || !wheelState) return null;
-    const usable = wheelState.spins.filter((s) => usablePrize(s));
-    return usable.find((s) => s.spinId === wheelPick) ?? usable[usable.length - 1] ?? null;
-  }, [wheelState, wheelPick, wheelRemoved]);
+    if (!WHEEL_ENABLED || wheelRemoved) return null;
+    if (wheelState) {
+      const usable = wheelState.spins.filter((s) => usablePrize(s));
+      return usable.find((s) => s.spinId === wheelPick) ?? usable[usable.length - 1] ?? null;
+    }
+    return guestPrize && usablePrize(guestPrize) ? guestPrize : null;
+  }, [wheelState, guestPrize, wheelPick, wheelRemoved]);
+  const prizeIsGuest = !!wheelPrize && !wheelPrize.spinId;
   const wheelAttachRef = useRef<string | null>(null); // the spin id sent with the order (only when the prize applies)
   // Google sign-in at "confirm order" (owner's rule)
   const [googleIssue, setGoogleIssue] = useState<GoogleOutcome | null>(null);
@@ -302,16 +320,35 @@ const Checkout: React.FC = () => {
     []
   );
 
-  // prize wheel: the signed-in account's prizes, from the Worker (refreshed when the account changes)
-  useEffect(() => {
+  // prize wheel: signed in -> this browser's guest result (if any) is linked to the account FIRST (the Worker decides,
+  // once), then the account's prizes; not signed in -> the guest result, for display only
+  const refreshWheel = useCallback(async (isStale: () => boolean = () => false) => {
     if (!WHEEL_ENABLED || !BACKEND_ENABLED) return;
+    const url = String(import.meta.env.VITE_WORKER_URL || '');
+    const t = await getFirebaseAuth()?.currentUser?.getIdToken().catch(() => null);
+    if (!t) {
+      const g = await fetchGuestResult(url, workerDeps);
+      if (isStale()) return;
+      setWheelState(null);
+      setGuestPrize(g && g !== 'unavailable' ? guestAsSpin(g) : null);
+      return;
+    }
+    const c = await claimGuestResult(t, url, workerDeps);
+    if (isStale()) return;
+    if (c.kind === 'claimed' && c.result?.status === 'issued') { choosePrize({ spinId: c.spinId, label: c.result.label }); setWheelPick(c.spinId); }
+    if (c.kind === 'account_has_spin') setWheelNotice(tr('لحسابك نتيجة دولاب سابقة، فبقيت هي المعتمدة ولم تُضف نتيجة اللفة التي قمت بها قبل تسجيل الدخول.', 'Your account already has a wheel result: it stays, and the spin made before signing in is not added.'));
+    else if (c.kind === 'expired') setWheelNotice(tr('انتهت مدة حجز جائزة الدولاب قبل تسجيل الدخول، فلم تُربط بحسابك.', 'The wheel prize hold ended before you signed in, so it was not linked to your account.'));
+    else if (c.kind === 'claimed_by_other') setWheelNotice(tr('نتيجة الدولاب في هذا المتصفح مرتبطة بحساب آخر، فلا تُطبَّق على هذا الحساب.', 'The wheel result in this browser belongs to another account, so it does not apply here.'));
+    else if (c.kind === 'unavailable') setWheelNotice(tr('تعذّر ربط جائزة الدولاب بحسابك الآن، فلن تُطبَّق على هذا الطلب. يمكنك إكمال الطلب بدونها أو إعادة المحاولة لاحقًا؛ تبقى محفوظة في هذا المتصفح.', 'The wheel prize could not be linked to your account right now, so it is not applied to this order. You can order without it or try later; it stays saved in this browser.'));
+    const r = await fetchWheelState(t, url, workerDeps);
+    if (isStale()) return;
+    setGuestPrize(null);
+    setWheelState(r.kind === 'ok' ? r.value : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workerDeps, isAR]);
+  useEffect(() => {
     let stop = false;
-    (async () => {
-      const t = await getFirebaseAuth()?.currentUser?.getIdToken().catch(() => null);
-      if (!t) { if (!stop) setWheelState(null); return; }
-      const r = await fetchWheelState(t, String(import.meta.env.VITE_WORKER_URL || ''), workerDeps);
-      if (!stop) setWheelState(r.kind === 'ok' ? r.value : null);
-    })();
+    void refreshWheel(() => stop);
     return () => { stop = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
@@ -358,8 +395,9 @@ const Checkout: React.FC = () => {
     if (typeof saved.cliqRef === 'string') setCliqRef(saved.cliqRef);
     if (typeof saved.acceptDeliveryPolicy === 'boolean') setAcceptDeliveryPolicy(saved.acceptDeliveryPolicy);
     setStep(3);
-    void finishGoogleRedirect().then((g) => {
-      if (g?.outcome === 'ok') setResumeNotice(tr('تم تسجيل الدخول بحساب Google. راجع طلبك ثم اضغط «تأكيد الطلب».', 'Signed in with Google. Review your order, then press "Confirm order".'));
+    // nothing is sent automatically: the customer reviews, passes the security check and confirms
+    void finishGoogleRedirect().then(async (g) => {
+      if (g?.outcome === 'ok' && g.uid) await afterGoogleSignIn(g.uid);
       else if (g) { setGoogleIssue(g.outcome); setSubmitBlocked(googleMessage(g.outcome, isAR)); }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -683,6 +721,23 @@ const Checkout: React.FC = () => {
     }
   };
 
+  /**
+   * Right after a successful Google sign-in (popup or the Google page): the page now belongs to this account (a payload
+   * prepared for another identity is never resent under it), the guest wheel result is linked, the account's prizes
+   * are loaded — all BEFORE the final confirmation, so the summary the customer confirms is the one sent.
+   */
+  const afterGoogleSignIn = async (uid: string) => {
+    if (identityAtOpenRef.current !== uid) {
+      identityAtOpenRef.current = uid;
+      lastPayloadRef.current = null;
+    }
+    setGoogleUid(uid);
+    await refreshWheel();
+    setResumeNotice(TURNSTILE_SITE_KEY
+      ? tr('تم تسجيل الدخول بحساب Google. أكمل التحقق الأمني أدناه، ثم اضغط «تأكيد الطلب النهائي» لإرسال الطلب.', 'Signed in with Google. Complete the security check below, then press "Final confirmation" to send the order.')
+      : tr('تم تسجيل الدخول بحساب Google. راجع الملخص ثم اضغط «تأكيد الطلب النهائي» لإرسال الطلب.', 'Signed in with Google. Review the summary, then press "Final confirmation" to send the order.'));
+  };
+
   const handlePlaceOrder = async () => {
     if (submittingRef.current) return;
     setSubmitBlocked('');
@@ -714,12 +769,6 @@ const Checkout: React.FC = () => {
       }
     }
 
-    // Turnstile configured but unavailable: nothing is sent (the Worker would refuse a missing token anyway)
-    if (turnstile.enabled && turnstile.status === 'error') {
-      setSubmitBlocked(tr('تعذّر تحميل التحقق الأمني، فلم يُرسل الطلب. حدّث الصفحة ثم أعد المحاولة.', 'The security check is unavailable, so the order was not sent. Refresh the page and try again.'));
-      return;
-    }
-
     // the Worker's input limits: refuse HERE with a clear message (nothing is sent; cart and pending attempt untouched)
     const limitProblems = checkOrderLimits({
       fullName: normalizeName(formData.fullName),
@@ -739,36 +788,42 @@ const Checkout: React.FC = () => {
       return;
     }
 
-    // Owner's rule: a Google account confirms every order. Not signed in with Google -> the Google window (account
-    // chooser) opens NOW, straight from this click (nothing awaited before it, else the browser blocks it). Closed /
-    // failed -> nothing is sent; cart, form and prize stay as they are. A valid saved Google session -> no new sign-in.
+    // Owner's sequence. Not signed in with Google -> the Google window (account chooser) opens NOW, straight from this
+    // click (nothing awaited before it, else the browser blocks it). NOTHING is sent by this click:
+    //   closed / failed -> cart, form and prize stay as they are, the message says the order was not sent
+    //   signed in       -> the wheel result made before signing in is linked to the account (prices updated), the
+    //                      security check (Turnstile) appears, and the customer presses "final confirm" to send ONCE.
+    // A valid saved Google session -> this is already the final confirmation.
     // (a sandbox build has no Firebase and no Worker: nothing can be sent there, the usual "not sent" message applies)
-    if (BACKEND_ENABLED && ORDER_SIGN_IN_GOOGLE && !currentGoogleUid()) {
+    if (GOOGLE_GATE && !currentGoogleUid()) {
       setGoogleIssue(null);
+      setResumeNotice('');
       setGoogleBusy(true);
       submittingRef.current = true; // a second click while the Google window is open does nothing
-      let g: { outcome: GoogleOutcome; uid?: string };
       try {
-        g = await googlePopup();
+        const g = await googlePopup();
+        if (g.outcome !== 'ok' || !g.uid) {
+          setGoogleIssue(g.outcome);
+          setSubmitBlocked(googleMessage(g.outcome === 'ok' ? 'failed' : g.outcome, isAR));
+          return;
+        }
+        await afterGoogleSignIn(g.uid);
       } finally {
         submittingRef.current = false;
         setGoogleBusy(false);
       }
-      if (g.outcome !== 'ok' || !g.uid) {
-        setGoogleIssue(g.outcome);
-        setSubmitBlocked(googleMessage(g.outcome === 'ok' ? 'failed' : g.outcome, isAR));
-        return;
-      }
-      // the customer signed in ON PURPOSE for this order: the page now belongs to this account. A payload prepared
-      // for another identity is never resent under it (placeOrder refuses that anyway).
-      if (identityAtOpenRef.current !== g.uid) {
-        identityAtOpenRef.current = g.uid;
-        lastPayloadRef.current = null;
-      }
+      return;
     }
 
-    // the prize travels with THIS attempt only when it applies (the Worker re-checks owner, status, minimum, prices)
-    wheelAttachRef.current = prizeApplies && wheelPrize ? wheelPrize.spinId : null;
+    // Turnstile configured but unavailable: nothing is sent (the Worker would refuse a missing token anyway)
+    if (turnstile.enabled && turnstile.status === 'error') {
+      setSubmitBlocked(tr('تعذّر تحميل التحقق الأمني، فلم يُرسل الطلب. حدّث الصفحة ثم أعد المحاولة.', 'The security check is unavailable, so the order was not sent. Refresh the page and try again.'));
+      return;
+    }
+
+    // the prize travels with THIS attempt only when it applies AND belongs to the signed-in account (a result made
+    // before signing in is never sent; the Worker re-checks owner, status, minimum, prices)
+    wheelAttachRef.current = prizeApplies && wheelPrize && WHEEL_SPIN_ID_RE.test(wheelPrize.spinId) ? wheelPrize.spinId : null;
 
     await runSubmission(() =>
       placeOrder({
@@ -785,6 +840,15 @@ const Checkout: React.FC = () => {
       })
     );
   };
+
+  // the button names the step: "confirm order" (opens the Google sign-in, sends nothing) -> "final confirmation" (sends)
+  const confirmLabel = googleBusy
+    ? tr('بانتظار تسجيل الدخول بـ Google…', 'Waiting for Google sign-in…')
+    : isProcessing
+    ? tr('جاري تأكيد الطلب...', 'Confirming the order…')
+    : GOOGLE_GATE
+    ? (googleReady ? tr('تأكيد الطلب النهائي', 'Final confirmation') : tr('تأكيد الطلب', 'Confirm order'))
+    : tt('placeOrder', 'تأكيد وإتمام الطلب', 'Confirm & Place Order');
 
   /** "Retry with the same number": resends the exact last payload (never a new number). */
   const handleRetrySame = async () => {
@@ -1387,9 +1451,9 @@ const Checkout: React.FC = () => {
                 {resumeNotice && !submitBlocked && (
                   <div className="mt-8 rounded-3xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800" role="status" data-testid="google-resumed">{resumeNotice}</div>
                 )}
-                {BACKEND_ENABLED && ORDER_SIGN_IN_GOOGLE && !currentGoogleUid() && (
+                {GOOGLE_GATE && !googleReady && (
                   <p className="mt-6 text-xs font-bold text-ink-600" data-testid="google-required-hint">
-                    {tr('عند الضغط على «تأكيد الطلب» ستظهر نافذة Google لاختيار حسابك (مرة واحدة)، ثم يُرسل الطلب. هذا تسجيل دخول وليس دفعًا.', 'When you press "Confirm order", a Google window opens to choose your account (once), then the order is sent. This is a sign-in, not a payment.')}
+                    {tr('عند الضغط على «تأكيد الطلب» ستظهر نافذة Google لاختيار حسابك، ثم التحقق الأمني، ثم تضغط «تأكيد الطلب النهائي» فيُرسل الطلب مرة واحدة. هذا تسجيل دخول وليس دفعًا.', 'When you press "Confirm order", a Google window opens to choose your account, then the security check, then you press "Final confirmation" and the order is sent once. This is a sign-in, not a payment.')}
                   </p>
                 )}
 
@@ -1455,8 +1519,10 @@ const Checkout: React.FC = () => {
                     className="w-full sm:w-auto px-12 py-5 text-lg shadow-xl shadow-sky-500/20"
                     isLoading={isProcessing || googleBusy}
                     disabled={isProcessing || googleBusy}
+                    data-testid="checkout-confirm"
+                    data-stage={GOOGLE_GATE ? (googleReady ? 'final' : 'sign-in') : 'single'}
                   >
-                    {googleBusy ? tr('بانتظار تسجيل الدخول بـ Google…', 'Waiting for Google sign-in…') : isProcessing ? 'جاري تأكيد الطلب...' : tt('placeOrder', 'تأكيد وإتمام الطلب', 'Confirm & Place Order')}
+                    {confirmLabel}
                   </Button>
                 </div>
               </div>
@@ -1516,6 +1582,9 @@ const Checkout: React.FC = () => {
                 })}
               </div>
 
+              {WHEEL_ENABLED && wheelNotice && (
+                <p className="mb-4 rounded-2xl border border-ink-100 bg-paper-100 p-3 text-xs font-bold text-ink-800" role="status" data-testid="checkout-wheel-notice">🎡 {wheelNotice}</p>
+              )}
               {WHEEL_ENABLED && wheelPrize && prizeFx && (
                 <div className={`mb-4 rounded-2xl border p-3 text-sm ${prizeApplies ? 'border-gold-200 bg-gold-50' : 'border-ink-100 bg-paper-100'}`} data-testid="checkout-wheel-gift" data-state={prizeFx.state} data-prize-type={wheelPrize.type}>
                   <div className="flex items-center justify-between gap-2">
@@ -1528,6 +1597,9 @@ const Checkout: React.FC = () => {
                   <p className="mt-1 text-xs font-bold" data-testid="checkout-wheel-status">
                     {prizeFx.state === 'applies' && (
                       <span className="text-emerald-700">{tr('تنطبق على هذا الطلب — بانتظار تأكيد الطلب، وتُثبَّت عند تسليمه.', 'Applies to this order — waiting for the order to be confirmed; final once delivered.')}</span>
+                    )}
+                    {prizeIsGuest && (
+                      <span className="mt-1 block text-ink-700" data-testid="checkout-wheel-guest">{tr('نتيجة لفّتك قبل تسجيل الدخول: تُربط بحسابك عند تسجيل الدخول بـ Google في «تأكيد الطلب»، ثم تُطبَّق إذا حقق الطلب شروطها.', 'Your spin before signing in: linked to your account when you sign in with Google at "Confirm order", then applied if the order meets its conditions.')}</span>
                     )}
                     {prizeFx.state === 'below_min' && (
                       <span className="text-amber-800">
@@ -1701,13 +1773,15 @@ const Checkout: React.FC = () => {
               else handlePlaceOrder();
             }}
             className="flex-1 py-4 text-base shadow-xl shadow-sky-500/20"
-            isLoading={isProcessing}
-            disabled={isProcessing}
+            isLoading={isProcessing || googleBusy}
+            disabled={isProcessing || googleBusy}
           >
             {step === 1
               ? tt('continueToShipping', 'متابعة للتوصيل', 'Continue to Delivery')
               : step === 2
               ? tt('continueToPayment', 'متابعة للدفع', 'Continue to Payment')
+              : GOOGLE_GATE
+              ? confirmLabel
               : tt('confirmOrder', 'تأكيد الطلب', 'Confirm Order')}
           </Button>
         </div>

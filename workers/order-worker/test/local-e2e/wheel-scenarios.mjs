@@ -151,7 +151,7 @@ export function buildWheelScenarios(ctx) {
   const noHScroll = (t) => t.evaluate(`document.documentElement.scrollWidth <= innerWidth + 1`);
 
   return [
-    ['WU01', 'DESKTOP first visit: the popup opens by itself, THREE "حظ أوفر" segments visible; signed out -> the spin button starts the Google sign-in (offline: fails -> message, NO spin used); signed in -> the server draws -> the wheel stops ON the drawn segment; closed with X; a reload does NOT reopen it nor give a new spin; Escape closes', async (t) => {
+    ['WU01', 'DESKTOP first visit, NOT signed in: the popup opens by itself, THREE "حظ أوفر" segments; the spin works WITHOUT any sign-in (no Google window, ever) -> the server draws and stores it under the browser ticket -> the wheel stops ON the drawn segment; closed with X; a reload does NOT reopen it, reopening shows the SAME result and no new spin; cleared site data = a new visitor (documented limit); Escape closes', async (t) => {
       await ctx.setCampaign([
         { id: 'disc-1', type: 'discount', label: 'خصم دينار', valueJod: 1, minOrderJod: 5, weight: 3, quantity: 50 }, NONES[0],
         { id: 'gift-2', type: 'gift', label: 'هدية بقيمة 2 د.أ', valueJod: 2, unitCostJod: 2, weight: 3, quantity: 50 }, NONES[1],
@@ -164,28 +164,22 @@ export function buildWheelScenarios(ctx) {
       const segs = await t.evaluate(`[...document.querySelectorAll('[data-testid=wheel-segment]')].map((s) => s.dataset.slotType + ':' + s.dataset.slotId)`);
       assert.deepEqual(segs, ['discount:disc-1', 'none:none-1', 'gift:gift-2', 'none:none-2', 'gift:watch', 'none:none-3']);
       assert.equal((await t.evaluate(`[...document.querySelectorAll('[data-testid=wheel-segment] text')].map((x) => x.textContent).join('|')`)).split('حظ أوفر').length - 1, 3, 'the three "حظ أوفر" labels are drawn');
-      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-spin]').innerText`), /Google/);
+      const label = await t.evaluate(`document.querySelector('[data-testid=wheel-spin]').innerText.trim()`);
+      assert.equal(label, 'لفّ الدولاب');
+      assert.doesNotMatch(await t.evaluate(`document.querySelector('[data-testid=wheel-popup]').innerText`), /سجّل الدخول بـ Google ولفّ/);
       await shot(t, 'wu01-popup-first-visit');
-      // signed out: the spin button starts the Google sign-in. In this OFFLINE run it cannot complete (Firebase's popup
-      // flow loads a script from apis.google.com, blocked by the isolation) -> the customer sees a message, NO spin used
-      await spinAndWait(t);
-      await t.waitFor(`!!document.querySelector('[data-testid=wheel-message]')`, 30_000, 'sign-in failure message');
-      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-message]').innerText`), /لم يكتمل تسجيل الدخول|لم تُستخدم/);
-      assert.equal(await ctx.countSpins(), 0, 'a failed sign-in uses no spin');
-      // the same visitor signs in with a Google-linked account, opens the wheel again and spins
-      const email1 = 'wheel.first@example.invalid';
-      const uid = await ctx.createGoogleCustomer({ email: email1, password: 'Test-pass-12345', name: 'زبون أول' });
-      await signIn(t, email1, 'Test-pass-12345');
-      await openPopupFromFab(t);
       await spinAndWait(t);
       const text = await waitResult(t);
+      assert.equal(await ctx.popupOpen(), false, 'NO Google window for the spin');
       const land = await t.evaluate(LANDING);
       assert.ok(land.result, `a result: ${text}`);
       assert.equal(land.landed, land.result, `the wheel stops on the drawn segment ${JSON.stringify(land)}`);
-      const sp = await spinDoc(uid, 1);
-      assert.ok(sp, 'the result is stored on the server');
-      assert.equal(sp.prizeId, land.result);
-      if (sp.prizeType !== 'none') assert.match(text, /مبروك! ظهرت لك/);
+      const gs = await ctx.guestSpins();
+      assert.equal(gs.length, 1, 'the result is stored on the server');
+      assert.equal(gs[0].prizeId, land.result);
+      assert.equal(await ctx.countSpins(), 0, 'no account involved yet');
+      assert.match(await t.evaluate(`localStorage.getItem('anta_wheel_guest_v1') || ''`), /^[A-Za-z0-9_-]{43}$/, 'the browser keeps only a random ticket');
+      if (gs[0].prizeType !== 'none') assert.match(text, /مبروك! ظهرت لك[\s\S]*تسجّل الدخول بـ Google فتُربط الجائزة بحسابك/);
       await shot(t, 'wu01-popup-result');
       await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
       await t.waitFor(`!document.querySelector('[data-testid=wheel-popup]')`, 5_000, 'popup closed');
@@ -193,23 +187,45 @@ export function buildWheelScenarios(ctx) {
       await sleep(4_000);
       assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=wheel-popup]')`), false, 'not shown again after a refresh');
       await openPopupFromFab(t);
-      await t.waitFor(`/اللفات المتاحة لحسابك: 0/.test(document.querySelector('[data-testid=wheel-chances]')?.innerText || '')`, 20_000, 'no chance left');
-      await spinAndWait(t);
-      await t.waitFor(`/لا توجد لفة متاحة/.test(document.querySelector('[data-testid=wheel-message]')?.innerText || '')`, 20_000, 'no new spin after refresh');
-      assert.equal(await spinDoc(uid, 2), null, 'no second result');
+      await t.waitFor(`document.querySelector('[data-testid=wheel-result]')?.dataset.prizeId === ${JSON.stringify(land.result)}`, 20_000, 'the SAME stored result is shown again');
+      assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-spin]').disabled`), true, 'no new spin');
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-spin]').innerText`), /استخدمت لفّتك/);
+      assert.equal((await t.evaluate(LANDING)).landed, land.result, 'the wheel rests on the stored segment');
+      await t.evaluate(`document.querySelector('[data-testid=wheel-spin]').click(); true`);
+      await sleep(1_500);
+      assert.equal((await ctx.guestSpins()).length, 1, 'still one result');
+      await shot(t, 'wu01-reopened-same-result');
       await t.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
       await t.waitFor(`!document.querySelector('[data-testid=wheel-popup]')`, 5_000, 'Escape closes');
+      // HONEST LIMIT: before signing in there is no identity — cleared site data is a new visitor and can spin again
+      // (the Worker's per-IP limit only slows this down; at checkout each Google account keeps ONE welcome result)
+      await fresh(t);
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-spin]')`, 25_000, 'popup for a new visitor');
+      await spinAndWait(t);
+      await waitResult(t);
+      assert.equal((await ctx.guestSpins()).length, 2, 'cleared storage = a second guest result (documented limit)');
     }],
-    ['WU02', 'CHECKOUT signed out: "confirm" starts the Google sign-in; when it does not complete NOTHING is sent (cart + form kept, clear message, pressing again sends nothing); a guest order sent straight to the Worker is refused (ORDER_SIGN_IN=google); signed in with Google -> confirmed under that account', async (t) => {
+    ['WU02', 'GUEST spin -> CHECKOUT: the prize is shown (linked at sign-in); "confirm order" starts the Google sign-in and sends NOTHING (offline it fails: cart, form, prize kept; a second press sends nothing); a guest order straight to the Worker is refused; signed in with Google -> the guest result becomes the account\'s welcome prize, the button becomes "final confirmation", ONE order with the server-checked discount', async (t) => {
+      await ctx.setCampaign([{ id: 'disc-1', type: 'discount', label: 'خصم دينار', valueJod: 1, minOrderJod: 5, weight: BIG, quantity: 10 }, ...NONES]);
       await viewport(t, 1366, 900, false);
       await fresh(t);
       await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
-      await sleep(2_500);
-      await t.evaluate(`document.querySelector('[data-testid=wheel-close]')?.click(); true`);
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-spin]')`, 25_000, 'first-visit popup');
+      await spinAndWait(t);
+      assert.match(await waitResult(t), /مبروك! ظهرت لك: خصم دينار/);
+      assert.equal(await ctx.popupOpen(), false, 'no Google window for the spin');
+      await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
+      // shopping + details, still WITHOUT an account
       await openCheckoutWith(t, CART_OK);
+      await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'applies' && !!document.querySelector('[data-testid=checkout-wheel-guest]')`, 20_000, 'guest prize shown in the summary');
       await fillToPayment(t, '0795100001');
-      assert.ok(await t.evaluate(`!!document.querySelector('[data-testid=google-required-hint]')`), 'the customer is told a Google window will open');
-      // the Google sign-in starts from the click; OFFLINE it fails (see WU01) -> the failure path the owner asked for
+      assert.ok(await t.evaluate(`!!document.querySelector('[data-testid=google-required-hint]')`), 'the customer is told what happens at "confirm order"');
+      assert.equal(await t.evaluate(`document.querySelector('[data-testid=checkout-confirm]').dataset.stage`), 'sign-in');
+      assert.equal(await t.evaluate(`document.querySelector('[data-testid=checkout-sticky-action]').innerText.trim()`), 'تأكيد الطلب');
+      await shot(t, 'wu02-guest-prize-checkout');
+      // "confirm order": the Google sign-in starts from the click; OFFLINE it cannot complete (Firebase's popup flow loads
+      // a script from apis.google.com, blocked by the isolation) -> the failure path: nothing sent, everything kept
       await clickConfirm(t);
       const o1 = await outcome(t);
       assert.ok(/^blocked:(failed|cancelled|network|blocked)$/.test(o1), `not sent, Google problem shown (${o1})`);
@@ -217,8 +233,9 @@ export function buildWheelScenarios(ctx) {
       assert.equal(await ctx.countOrders(), 0, 'nothing sent');
       assert.equal(await t.evaluate(`JSON.parse(localStorage.getItem('anta_cart') || '[]').length`), 1, 'cart kept');
       assert.equal(await t.evaluate(`document.querySelector('input[placeholder="الاسم الأول والأخير"]') ? 'form' : 'payment'`), 'payment', 'still on the payment step');
+      assert.match(await t.evaluate(`localStorage.getItem('anta_wheel_guest_v1') || ''`), /^[A-Za-z0-9_-]{43}$/, 'the prize ticket is kept');
+      assert.equal((await ctx.guestSpins())[0].status, 'held');
       await shot(t, 'wu02-google-failed');
-      // pressing again: same result, still nothing sent, never two orders
       await clickConfirm(t);
       await sleep(1_500);
       assert.equal(await ctx.countOrders(), 0, 'still nothing sent');
@@ -226,19 +243,38 @@ export function buildWheelScenarios(ctx) {
       const direct = await t.evaluate(`fetch(${JSON.stringify(ctx.workerUrl)} + '/create-order', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ order: { id: 'ORD-AAAA1111-BBBB2222' } }) }).then(async (r) => ({ s: r.status, b: await r.json() }))`);
       assert.equal(direct.s, 401);
       assert.equal(direct.b.code, 'SIGN_IN_REQUIRED');
-      // signed in with a Google-linked account: the same checkout goes through, under that account
+      // the same visitor now has a Google session (Google-linked account; the real account chooser is a manual check)
       const email = 'wheel.checkout@example.invalid';
       const uid = await ctx.createGoogleCustomer({ email, password: 'Test-pass-12345', name: 'زبون الدفع' });
       await signIn(t, email, 'Test-pass-12345');
       await openCheckoutWith(t, CART_OK, email);
+      // the guest result became the account's WELCOME result (same prize, once) and the ticket is forgotten
+      const sp = await until(async () => spinDoc(uid, 1), 20_000, 'guest result linked to the account');
+      assert.equal(sp.prizeId, 'disc-1');
+      assert.equal(sp.fromGuest, true);
+      assert.equal(sp.status, 'issued');
+      assert.equal((await ctx.guestSpins())[0].status, 'claimed');
+      await t.waitFor(`!localStorage.getItem('anta_wheel_guest_v1')`, 10_000, 'ticket forgotten after the link');
+      await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'applies' && !document.querySelector('[data-testid=checkout-wheel-guest]')`, 20_000, 'account prize applies');
       await fillToPayment(t, '0795100001');
-      await clickConfirm(t);
+      assert.equal(await t.evaluate(`document.querySelector('[data-testid=checkout-confirm]').dataset.stage`), 'final');
+      assert.equal(await t.evaluate(`document.querySelector('[data-testid=checkout-sticky-action]').innerText.trim()`), 'تأكيد الطلب النهائي');
+      assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=google-required-hint]')`), false);
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=summary-wheel-discount]')?.innerText || ''`), /خصم جائزة الدولاب/);
+      await shot(t, 'wu02-final-confirmation');
+      // "final confirmation", pressed three times: ONE order
+      await t.evaluate(`(() => { const b = ${STICKY}; b.click(); b.click(); b.click(); return true; })()`);
       assert.equal(await outcome(t), 'success');
+      assert.equal(await ctx.popupOpen(), false, 'no Google window with a valid session');
       const orderId = await t.evaluate(`location.hash.split('/').pop()`);
       const O = await get(`orders/${orderId}`);
       assert.equal(O.userId, uid, 'placed under the Google account');
       assert.equal(O.userIdVerified, true);
+      assert.equal(O.wheelPrize.discountJod, 1);
+      assert.equal((await get(`orderLedger/${orderId}`)).serverPricing.total, 8.75, '7.5 - 0.75 volume - 1 prize + 3 delivery (Zarqa)');
+      assert.equal((await spinDoc(uid, 1)).status, 'reserved');
       assert.equal(await ctx.countOrders(), 1, 'exactly one order');
+      assert.equal(await ctx.countSpins(), 1, 'one result for the account');
       await shot(t, 'wu02-order-success');
     }],
     ['WU03', 'already signed in with Google (valid session): NO Google window; 1-JOD discount prize below 5 JOD -> shown with what is missing, order goes WITHOUT it (prize kept); 7.5 JOD -> applied (server-checked total); a triple click sends ONE order', async (t) => {

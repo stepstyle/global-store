@@ -1,7 +1,7 @@
 // Prize wheel — TEST ONLY. Visible only in a build with VITE_WHEEL_MODE=test (never set for production: the
 // production Worker also refuses WHEEL_MODE != off). The draw happens on the Worker; the browser only asks and shows.
 //
-// Nothing here is a protection: the Worker decides the result, stores it with the verified account, re-checks the
+// Nothing here is a protection: the Worker decides the result, stores it (under a ticket, then the account), re-checks the
 // prize (owner, status, expiry, minimum, previous delivered order, prices) on every order. The browser only keeps a
 // preference (which prize to use) and the "popup already shown" flag — both harmless if edited or cleared.
 import { normalizeWorkerUrl, type SubmitDeps } from './orderSubmit.ts';
@@ -91,6 +91,134 @@ export const spinWheel = (idToken: string | null, workerUrl: string, deps: Submi
     const result = spinOf(b.result);
     return result ? { result, repeated: b.repeated === true, chancesLeft: Math.max(0, Number(b.chancesLeft) || 0) } : null;
   });
+
+// ------------------------------------------------------------------ the spin WITHOUT an account (owner's rule)
+// The Worker draws and stores the result under a random TICKET made here (32 bytes from the browser's CSPRNG) and kept
+// in localStorage BEFORE asking: a retry after a lost answer sends the same ticket and gets the same stored result.
+// At "confirm order", after the Google sign-in, the ticket is CLAIMED: the result becomes the account's welcome result
+// (once; an account that already spun keeps its own). Clearing the storage loses the ticket (and its prize) and does
+// give a new spin — the Worker's per-IP limit only slows that down. Nothing here decides a prize.
+const GUEST_KEY = 'anta_wheel_guest_v1';
+export const GUEST_TICKET_RE = /^[A-Za-z0-9_-]{43}$/;
+export type GuestResult = Omit<WheelSpin, 'spinId' | 'n' | 'orderId'> & { holdUntil: string | null };
+
+export function guestTicket(): string | null {
+  try {
+    const t = localStorage.getItem(GUEST_KEY);
+    return t && GUEST_TICKET_RE.test(t) ? t : null;
+  } catch {
+    return null;
+  }
+}
+export function clearGuestTicket(): void {
+  try { localStorage.removeItem(GUEST_KEY); } catch { /* ignore */ }
+}
+function newGuestTicket(): string | null {
+  try {
+    const b = new Uint8Array(32);
+    crypto.getRandomValues(b);
+    let s = '';
+    for (const x of b) s += String.fromCharCode(x);
+    const t = btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    localStorage.setItem(GUEST_KEY, t);
+    // storage refused (private mode, full): no ticket -> no guest spin (the result could never be found again)
+    return localStorage.getItem(GUEST_KEY) === t ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+export const guestOf = (g: any): GuestResult | null =>
+  g && typeof g.prizeId === 'string' && typeof g.label === 'string'
+    ? {
+        prizeId: g.prizeId, label: g.label.slice(0, 40), status: String(g.status || ''),
+        type: g.status === 'none' ? 'none' : typeOf(g.type), valueJod: n0(g.valueJod), minOrderJod: nOrNull(g.minOrderJod), appliesTo: appliesOf(g.appliesTo),
+        description: typeof g.description === 'string' ? g.description.slice(0, 200) : '', expiresAt: typeof g.expiresAt === 'string' ? g.expiresAt : null,
+        holdUntil: typeof g.holdUntil === 'string' ? g.holdUntil : null,
+      }
+    : null;
+
+/** a guest result shown like an account prize ('held' = won, waiting for the sign-in at checkout); never sent with an order */
+export const guestAsSpin = (g: GuestResult): WheelSpin => ({
+  spinId: '', n: 0, prizeId: g.prizeId, label: g.label, status: g.status === 'held' ? 'issued' : g.status, orderId: null,
+  type: g.type, valueJod: g.valueJod, minOrderJod: g.minOrderJod, appliesTo: g.appliesTo, description: g.description,
+  // the hold ends before the validity: past it the prize may be gone, so the shorter date is the one shown
+  expiresAt: g.holdUntil && (!g.expiresAt || Date.parse(g.holdUntil) < Date.parse(g.expiresAt)) ? g.holdUntil : g.expiresAt,
+});
+
+async function post(path: string, body: unknown, idToken: string | null, workerUrl: string, deps: SubmitDeps): Promise<{ status: number; body: any } | null> {
+  const base = normalizeWorkerUrl(workerUrl);
+  if (!WHEEL_ENABLED || !base) return null;
+  try {
+    const r = await deps.fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(idToken ? { authorization: `Bearer ${idToken}` } : {}) },
+      body: JSON.stringify(body),
+    });
+    let b: any = null;
+    try { b = JSON.parse(await r.text()); } catch { b = null; }
+    return { status: r.status, body: b };
+  } catch {
+    return null;
+  }
+}
+
+export type GuestSpinOutcome =
+  | { kind: 'ok'; result: GuestResult; repeated: boolean }
+  | { kind: 'closed'; code: string } | { kind: 'limit' } | { kind: 'no_storage' } | { kind: 'unavailable' };
+
+/** spins (or, with a kept ticket, returns the stored result) — no account, no sign-in window */
+export async function spinAsGuest(workerUrl: string, deps: SubmitDeps): Promise<GuestSpinOutcome> {
+  const ticket = guestTicket() ?? newGuestTicket();
+  if (!ticket) return { kind: 'no_storage' };
+  const r = await post('/wheel/guest/spin', { ticket }, null, workerUrl, deps);
+  if (!r) return { kind: 'unavailable' };
+  const g = r.status === 200 && r.body?.ok ? guestOf(r.body.result) : null;
+  if (g) return { kind: 'ok', result: g, repeated: r.body.repeated === true };
+  if (r.status === 429 && r.body?.code === 'WHEEL_GUEST_LIMIT') return { kind: 'limit' };
+  if (r.status === 409 && typeof r.body?.code === 'string') return { kind: 'closed', code: r.body.code };
+  return { kind: 'unavailable' };
+}
+
+/** the stored result of this browser's ticket (null = no ticket / unknown ticket, which is then forgotten) */
+export async function fetchGuestResult(workerUrl: string, deps: SubmitDeps): Promise<GuestResult | null | 'unavailable'> {
+  const ticket = guestTicket();
+  if (!ticket) return null;
+  const r = await post('/wheel/guest/state', { ticket }, null, workerUrl, deps);
+  if (!r) return 'unavailable';
+  if (r.status === 404 || r.status === 400) { clearGuestTicket(); return null; }
+  return r.status === 200 && r.body?.ok ? guestOf(r.body.result) : 'unavailable';
+}
+
+export type ClaimOutcome =
+  | { kind: 'none' } // no ticket in this browser
+  | { kind: 'claimed'; spinId: string; result: GuestResult | null }
+  | { kind: 'account_has_spin' } | { kind: 'expired' } | { kind: 'claimed_by_other' }
+  | { kind: 'sign_in_required' } | { kind: 'unavailable' };
+
+/**
+ * After the Google sign-in: this browser's guest result becomes the account's welcome result (the Worker decides,
+ * once). The ticket is forgotten on every FINAL answer; kept on a network failure (the claim can be retried).
+ */
+export async function claimGuestResult(idToken: string | null, workerUrl: string, deps: SubmitDeps): Promise<ClaimOutcome> {
+  const ticket = guestTicket();
+  if (!ticket) return { kind: 'none' };
+  if (!idToken) return { kind: 'sign_in_required' };
+  const r = await post('/wheel/guest/claim', { ticket }, idToken, workerUrl, deps);
+  if (!r) return { kind: 'unavailable' };
+  if (r.status === 401) return { kind: 'sign_in_required' };
+  const code = r.body?.code;
+  let out: ClaimOutcome | null = null;
+  if (r.status === 200 && r.body?.ok && typeof r.body.spinId === 'string' && WHEEL_SPIN_ID_RE.test(r.body.spinId)) out = { kind: 'claimed', spinId: r.body.spinId, result: guestOf(r.body.result) };
+  else if (code === 'WHEEL_ACCOUNT_HAS_SPIN') out = { kind: 'account_has_spin' };
+  else if (code === 'WHEEL_GUEST_EXPIRED') out = { kind: 'expired' };
+  else if (code === 'WHEEL_GUEST_CLAIMED') out = { kind: 'claimed_by_other' };
+  // unknown ticket (another campaign, data reset): nothing to link — forgotten without a message
+  else if (code === 'WHEEL_GUEST_NOT_FOUND' || code === 'WHEEL_TICKET_INVALID') out = { kind: 'none' };
+  if (!out) return { kind: 'unavailable' };
+  clearGuestTicket();
+  return out;
+}
 
 /** a won prize the customer can still use (issued, not expired at `now`) */
 export const usablePrize = (s: WheelSpin, now = Date.now()) =>

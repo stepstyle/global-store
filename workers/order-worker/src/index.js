@@ -7,6 +7,8 @@
 //   POST /orders/:id/claim       link a guest order to the signed-in account (ID token + the order's tracking key)
 //   GET  /wheel/state            prize wheel (WHEEL_MODE=test only; 404 when off): chances + stored results (ID token)
 //   POST /wheel/spin             one server-side draw per chance, stored; a repeat returns the stored result (ID token)
+//   POST /wheel/guest/spin|state the spin WITHOUT an account (random ticket from the browser; one result per ticket)
+//   POST /wheel/guest/claim      the ticket's result becomes the signed-in account's welcome result (ID token)
 //   POST /products/:id/ratings   recompute a product's rating figures from its published reviews (ID token)
 //   GET  /test                  Telegram test message      (x-worker-auth required)
 //   POST /notify-order          resend notifications        (x-worker-auth required)
@@ -28,6 +30,7 @@ import { claimOrder } from './claims.js';
 import { recomputeProductRating } from './ratings.js';
 import { wheelState, wheelPublic, spinWheel, expireUnclaimedPrizes } from './wheel.js';
 import { adminWheelGet, adminWheelSave, adminWheelSpins } from './wheel-admin.js';
+import { guestSpin, guestState, claimGuest, releaseExpiredGuestHolds } from './wheel-guest.js';
 
 const STATUS_PATH = /^\/orders\/([^/]+)\/status$/;
 const ADMIN_STATUS_PATH = /^\/admin\/orders\/([^/]+)\/status$/;
@@ -242,6 +245,24 @@ async function handle(request, env, ctx, cfg) {
     const r = await adminWheelSave(fs, cfg, body, who.uid);
     return reply(r.body, r.status);
   }
+  // spin WITHOUT an account (owner's rule): the browser's random ticket names the stored result; the claim (signed in,
+  // at checkout) makes it the account's welcome result. No Turnstile / no sign-in on the spin itself — see wheel-guest.js
+  if (url.pathname === '/wheel/guest/spin' || url.pathname === '/wheel/guest/state' || url.pathname === '/wheel/guest/claim') {
+    if (cfg.wheelMode === 'off') return reply({ ok: false, code: 'NOT_FOUND' }, 404);
+    if (request.method !== 'POST') return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    const isState = url.pathname === '/wheel/guest/state';
+    if (!(await allowRequest(env, cfg, isState ? 'status' : 'create', ip))) return reply({ ok: false, code: 'RATE_LIMITED' }, 429);
+    const { body, error } = await readJsonBody(request, 1024);
+    if (error === 413) return reply({ ok: false, code: 'PAYLOAD_TOO_LARGE' }, 413);
+    if (error || !body || typeof body !== 'object') return reply({ ok: false, code: 'INVALID_JSON' }, 400);
+    if (url.pathname === '/wheel/guest/spin') { const r = await guestSpin(fs, cfg, body.ticket, ip); return reply(r.body, r.status); }
+    if (isState) { const r = await guestState(fs, cfg, body.ticket); return reply(r.body, r.status); }
+    const who = await signedInUid(request, cfg);
+    if (!who.ok) return reply({ ok: false, code: who.code }, 401);
+    if (!who.emailVerified) return reply({ ok: false, code: 'WHEEL_ACCOUNT_NOT_VERIFIED' }, 403);
+    const r = await claimGuest(fs, cfg, who.uid, body.ticket, { email: who.email });
+    return reply(r.body, r.status);
+  }
   if (url.pathname === '/wheel/state' || url.pathname === '/wheel/spin') {
     if (cfg.wheelMode === 'off') return reply({ ok: false, code: 'NOT_FOUND' }, 404);
     const isSpin = url.pathname === '/wheel/spin';
@@ -341,8 +362,10 @@ export default {
       const sync = await syncDirectStatusChanges(fs, cfg).catch((e) => ({ enabled: true, error: String(e?.message || e).slice(0, 120) }));
       // prize wheel (test only): unclaimed prizes past their validity go back to the pool (never a reserved one)
       const wheel = await expireUnclaimedPrizes(fs, cfg).catch((e) => ({ enabled: true, error: String(e?.message || e).slice(0, 120) }));
-      log('cron.done', { retried, reconcile: rec.enabled, processed: rec.processed, skipped: rec.skipped.length, sync, wheel });
-      return { retried, reconcile: rec, sync, wheel };
+      // units held for guest tickets nobody claimed in time go back to the pool
+      const guest = await releaseExpiredGuestHolds(fs, cfg).catch((e) => ({ enabled: true, error: String(e?.message || e).slice(0, 120) }));
+      log('cron.done', { retried, reconcile: rec.enabled, processed: rec.processed, skipped: rec.skipped.length, sync, wheel, guest });
+      return { retried, reconcile: rec, sync, wheel, guest };
     })();
     if (ctx?.waitUntil) ctx.waitUntil(job);
     return job;

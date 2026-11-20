@@ -1,7 +1,11 @@
-// The wheel experience (popup and /wheel page). The Worker draws and stores the result with the verified account; this
-// component only asks, then turns the wheel to the segment that was drawn and explains the prize's conditions.
-//   not signed in -> the spin button opens the Google window (account chooser) first, then spins
-//   one result per chance (refresh / second tab / other device = the same stored result, never a new draw)
+// The wheel experience (popup and /wheel page). The Worker draws and stores every result; this component only asks,
+// then turns the wheel to the segment that was drawn and explains the prize's conditions.
+//   NOT signed in -> spins at once, WITHOUT any sign-in (owner's rule): the result is stored by the Worker under this
+//                    browser's random ticket; the Google sign-in comes only at "confirm order", where the prize is
+//                    linked to the account (services/wheel.ts claimGuestResult)
+//   signed in     -> the account's chances (welcome + one per qualifying delivered order); a kept guest ticket is
+//                    linked to the account first (it IS the welcome spin)
+//   one result per chance / per ticket: refresh, popup reopened, second tab = the same stored result, never a new draw
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as ReactRouterDOM from 'react-router-dom';
 import { useCart } from '../../App';
@@ -10,9 +14,9 @@ import type { SubmitDeps } from '../../services/orderSubmit';
 import { BACKEND_ENABLED } from '../../config/deployEnv';
 import {
   fetchWheelPublic, fetchWheelState, spinWheel, choosePrize, prizeText, targetRotation, usablePrize,
+  spinAsGuest, fetchGuestResult, claimGuestResult, guestAsSpin,
   type WheelSlot, type WheelSpin, type WheelState,
 } from '../../services/wheel';
-import { googlePopup } from '../../services/googleAuth';
 import WheelDial from './WheelDial';
 
 const { Link } = ReactRouterDOM as any;
@@ -45,6 +49,8 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
   const [slots, setSlots] = useState<WheelSlot[]>([]);
   const [terms, setTerms] = useState('');
   const [st, setSt] = useState<WheelState | null>(null);
+  // this browser's guest result (not signed in): the wheel is "used" — shown again, never drawn again
+  const [guestSpun, setGuestSpun] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [rotation, setRotation] = useState(0);
@@ -56,10 +62,13 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const idToken = async () => (await getFirebaseAuth()?.currentUser?.getIdToken().catch(() => null)) ?? null;
+  const signedIn = !!getFirebaseAuth()?.currentUser;
 
   const loadAccount = useCallback(async (): Promise<WheelState | null> => {
     const t = await idToken();
     if (!t) { setSt(null); return null; }
+    // a guest result kept in this browser is the account's welcome spin: link it first (the Worker decides, once)
+    await claimGuestResult(t, workerUrl, deps);
     const r = await fetchWheelState(t, workerUrl, deps);
     if (r.kind === 'ok') {
       setSt(r.value);
@@ -70,6 +79,17 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
     return null;
   }, [workerUrl, deps, isAR]);
 
+  /** the result already stored for this browser's ticket: shown in place, the wheel resting on its segment */
+  const showGuest = useCallback(async (list: WheelSlot[]) => {
+    const g = await fetchGuestResult(workerUrl, deps);
+    if (!alive.current || !g || g === 'unavailable') return;
+    const spin = guestAsSpin(g);
+    setGuestSpun(true);
+    setResult(spin);
+    const idx = list.findIndex((s) => s.id === g.prizeId);
+    if (idx >= 0) { setDuration(0); setRotation(targetRotation(0, idx, list.length, 0, 0)); setHighlight(g.prizeId); }
+  }, [workerUrl, deps]);
+
   const load = useCallback(async () => {
     const p = await fetchWheelPublic(workerUrl, deps);
     if (!alive.current) return;
@@ -78,8 +98,9 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
     setSlots(p.value.slots);
     setTerms(p.value.terms);
     setPhase('ready');
-    await loadAccount();
-  }, [workerUrl, deps, loadAccount]);
+    if (getFirebaseAuth()?.currentUser) await loadAccount();
+    else { setSt(null); await showGuest(p.value.slots); }
+  }, [workerUrl, deps, loadAccount, showGuest]);
 
   useEffect(() => { void load(); }, [load, user?.id]);
 
@@ -101,63 +122,68 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
     setDuration(0);
     setHighlight(idx >= 0 ? r.prizeId : null);
     setResult(r);
-    if (usablePrize(r)) choosePrize({ spinId: r.spinId, label: r.label });
+    if (r.spinId && usablePrize(r)) choosePrize({ spinId: r.spinId, label: r.label });
   };
 
-  const doSpin = async () => {
-    setMsg('');
-    setResult(null);
-    setHighlight(null);
+  const accountSpin = async () => {
     const state = await loadAccount();
-    if (!state) { setBusy(false); return; }
-    if (state.campaign !== 'open') { setPhase('closed'); setBusy(false); return; }
+    if (!state) return;
+    if (state.campaign !== 'open') { setPhase('closed'); return; }
     if (state.chancesLeft < 1) {
       setMsg(L('لا توجد لفة متاحة الآن. تحصل على لفة جديدة مع كل طلب مؤهَّل جديد بعد تسليمه.', 'No spin available now. You get a new spin with every new qualifying order once it is delivered.'));
-      setBusy(false);
       return;
     }
     const r = await spinWheel(await idToken(), workerUrl, deps);
     if (r.kind !== 'ok') {
       setMsg(r.kind === 'not_verified' ? L('يلزم تأكيد بريدك الإلكتروني أولًا.', 'Please verify your e-mail first.') : r.kind === 'closed' ? L('الحملة غير متاحة حاليًا.', 'The campaign is not available right now.') : L('تعذّر الاتصال الآن. لم تُستخدم لفتك؛ حاول لاحقًا.', 'Could not connect. Your spin was not used; try again later.'));
-      setBusy(false);
       return;
     }
     await animateTo(r.value.result);
     await loadAccount();
-    if (alive.current) setBusy(false);
   };
 
-  // The Google window must open DIRECTLY from the click (no await before it), else the browser blocks it.
-  const onSpin = () => {
-    if (busy) return;
-    setBusy(true);
-    if (!getFirebaseAuth()?.currentUser) {
-      void googlePopup().then((g) => {
-        if (g.outcome === 'ok') return doSpin();
-        setBusy(false);
-        setMsg(
-          g.outcome === 'cancelled' ? L('أُغلقت نافذة Google قبل اختيار حساب. يمكنك المحاولة متى شئت.', 'The Google window was closed. You can try again any time.')
-            : g.outcome === 'blocked' ? L('منع المتصفح نافذة Google. اضغط الزر مرة أخرى، أو سجّل الدخول من صفحة الحساب ثم عد إلى الدولاب.', 'Your browser blocked the Google window. Press the button again, or sign in from the account page and come back.')
-              : g.outcome === 'network' ? L('تعذّر الاتصال بـ Google. تحقّق من الإنترنت ثم أعد المحاولة.', 'Could not reach Google. Check your connection and try again.')
-                : L('لم يكتمل تسجيل الدخول. لم تُستخدم أي لفة؛ أعد المحاولة.', 'The sign-in did not complete. No spin was used; please try again.'),
-        );
-      });
+  // no sign-in here, ever (owner's rule): the Worker draws for this browser's ticket
+  const guestSpin = async () => {
+    const r = await spinAsGuest(workerUrl, deps);
+    if (r.kind !== 'ok') {
+      setMsg(
+        r.kind === 'limit' ? L('وصلت اللفات من هذه الشبكة إلى الحد اليومي. حاول لاحقًا.', 'The daily spin limit for this network was reached. Try again later.')
+          : r.kind === 'closed' ? L('الحملة غير متاحة حاليًا.', 'The campaign is not available right now.')
+            : r.kind === 'no_storage' ? L('لا يمكن حفظ نتيجتك في هذا المتصفح (وضع التصفح الخاص أو التخزين معطّل). استخدم نافذة عادية للّف.', 'Your result cannot be saved in this browser (private mode or storage disabled). Use a normal window to spin.')
+              : L('تعذّر الاتصال الآن. حاول لاحقًا.', 'Could not connect. Try again later.'),
+      );
       return;
     }
-    void doSpin();
+    setGuestSpun(true);
+    await animateTo(guestAsSpin(r.result));
+  };
+
+  const onSpin = async () => {
+    if (busy || guestSpun) return;
+    setBusy(true);
+    setMsg('');
+    setResult(null);
+    setHighlight(null);
+    try {
+      if (getFirebaseAuth()?.currentUser) await accountSpin();
+      else await guestSpin();
+    } finally {
+      if (alive.current) setBusy(false);
+    }
   };
 
   const won = result && usablePrize(result);
+  const isGuestResult = !!result && !result.spinId;
   const myPrizes = (st?.spins || []).filter((s) => s.type !== 'none').slice().reverse();
-  const signedIn = !!user || !!getFirebaseAuth()?.currentUser;
   const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(isAR ? 'ar-JO' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '');
+  const used = guestSpun && !signedIn;
 
   return (
     <div className="relative" dir={isAR ? 'rtl' : 'ltr'} data-testid="wheel-experience" data-phase={phase}>
       {won && !reduced.current && <Confetti />}
       <p className="mb-2 inline-block rounded-full bg-gold-100 px-3 py-1 text-[11px] font-black text-gold-800">{L('نسخة تجريبية — ليست حملة حقيقية', 'Test version — not a real campaign')}</p>
       <h2 className="font-heading text-2xl font-black text-ink-950" id="wheel-title">{L('دولاب الحظ', 'Lucky wheel')}</h2>
-      <p className="mt-1 text-sm font-medium text-ink-700">{L('لفّة واحدة لكل حساب للترحيب، ولفّة جديدة مع كل طلب مؤهَّل جديد.', 'One welcome spin per account, and a new spin with every new qualifying order.')}</p>
+      <p className="mt-1 text-sm font-medium text-ink-700">{L('لفّة ترحيبية واحدة الآن دون تسجيل، ولفّة جديدة مع كل طلب مؤهَّل جديد.', 'One welcome spin now, no sign-in needed, and a new spin with every new qualifying order.')}</p>
 
       {phase === 'loading' && <p className="mt-6 text-center text-ink-500" role="status">{L('جارٍ التحميل…', 'Loading…')}</p>}
       {phase === 'closed' && <p className="mt-6 rounded-2xl bg-paper-200 p-4 text-center font-bold text-ink-800" data-testid="wheel-closed">{L('الحملة غير متاحة حاليًا.', 'The campaign is not available right now.')}</p>}
@@ -169,21 +195,23 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
             <WheelDial slots={slots} rotation={rotation} durationMs={duration} highlight={highlight} />
           </div>
           <button
-            type="button" onClick={onSpin} disabled={busy} data-testid="wheel-spin"
+            type="button" onClick={() => void onSpin()} disabled={busy || used} data-testid="wheel-spin" data-used={used ? '1' : '0'}
             className="mt-5 w-full rounded-2xl bg-ink-900 py-3.5 font-black text-paper-50 shadow-soft transition hover:bg-ink-800 disabled:opacity-60 focus:outline-none focus-visible:ring-4 focus-visible:ring-gold-300"
           >
-            {busy ? L('جارٍ اللف…', 'Spinning…') : signedIn ? L('لفّ الدولاب', 'Spin the wheel') : L('سجّل الدخول بـ Google ولفّ الدولاب', 'Sign in with Google and spin')}
+            {busy ? L('جارٍ اللف…', 'Spinning…') : used ? L('استخدمت لفّتك — نتيجتك محفوظة', 'Spin used — your result is saved') : L('لفّ الدولاب', 'Spin the wheel')}
           </button>
           {st && <p className="mt-2 text-center text-xs font-bold text-ink-600" data-testid="wheel-chances">{L(`اللفات المتاحة لحسابك: ${st.chancesLeft}`, `Spins available: ${st.chancesLeft}`)}</p>}
 
-          <div aria-live="polite" role="status" className="mt-4 min-h-[1rem]" data-testid="wheel-result" data-prize-id={result?.prizeId || ''} data-prize-type={result?.type || ''}>
+          <div aria-live="polite" role="status" className="mt-4 min-h-[1rem]" data-testid="wheel-result" data-prize-id={result?.prizeId || ''} data-prize-type={result?.type || ''} data-guest={isGuestResult ? '1' : '0'}>
             {msg && <p className="rounded-2xl bg-paper-200 p-3 text-sm font-bold text-ink-800" data-testid="wheel-message">{msg}</p>}
             {result && (won ? (
               <div className="rounded-2xl border border-gold-200 bg-gold-50 p-4" data-testid="wheel-won" data-spin-id={result.spinId}>
                 <p className="font-heading text-lg font-black text-ink-950">{L(`مبروك! ظهرت لك: ${result.label}`, `Congratulations! You got: ${result.label}`)}</p>
                 <p className="mt-1 text-sm font-bold text-ink-800">{prizeText(result, isAR)}</p>
                 <p className="mt-2 text-xs font-medium leading-relaxed text-ink-700">
-                  {L('هذه نتيجة أولية: تُثبَّت الجائزة فقط عند تأكيد طلب يحقق شروطها، ولا تُصرف للطلبات الملغاة.', 'This is a provisional result: the prize is confirmed only with an order that meets its conditions, and never for cancelled orders.')}
+                  {isGuestResult
+                    ? L('النتيجة محفوظة في أنظمتنا لهذا المتصفح. أكمل تسوّقك؛ عند «تأكيد الطلب» تسجّل الدخول بـ Google فتُربط الجائزة بحسابك وتُطبَّق إذا حقق الطلب شروطها.', 'Your result is saved by our system for this browser. Keep shopping; at "Confirm order" you sign in with Google, the prize is linked to your account and applied if the order meets its conditions.')
+                    : L('هذه نتيجة أولية: تُثبَّت الجائزة فقط عند تأكيد طلب يحقق شروطها، ولا تُصرف للطلبات الملغاة.', 'This is a provisional result: the prize is confirmed only with an order that meets its conditions, and never for cancelled orders.')}
                   {result.expiresAt && L(` صالحة حتى ${fmtDate(result.expiresAt)}.`, ` Valid until ${fmtDate(result.expiresAt)}.`)}
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -216,7 +244,9 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
           <details className="mt-5 text-xs text-ink-700">
             <summary className="cursor-pointer font-black">{L('الشروط', 'Terms')}</summary>
             <ul className="mt-2 list-disc space-y-1 ps-5">
-              <li>{L('النتيجة تُحدَّد وتُحفظ في أنظمتنا مع حسابك؛ تحديث الصفحة أو فتحها من جهاز آخر لا يمنح لفة جديدة.', 'The result is decided and stored by our system with your account; refreshing or another device does not give a new spin.')}</li>
+              <li>{L('النتيجة تُحدَّد وتُحفظ في أنظمتنا؛ تحديث الصفحة أو إعادة فتح الدولاب لا يمنح لفة جديدة.', 'The result is decided and stored by our system; refreshing or reopening the wheel does not give a new spin.')}</li>
+              <li>{L('عند تأكيد الطلب تُربط النتيجة بحساب Google الخاص بك. لكل حساب نتيجة ترحيبية واحدة؛ إن كان لحسابك نتيجة سابقة تبقى هي المعتمدة.', 'At checkout the result is linked to your Google account. Each account has one welcome result; if your account already has one, that one stays.')}</li>
+              <li>{L('الجائزة التي لم تُربط بحساب تُحجز لمدة محدودة ثم تعود إلى الحملة.', 'A prize not linked to an account is held for a limited time, then goes back to the campaign.')}</li>
               <li>{L('لكل جائزة حد أدنى لقيمة المنتجات (قبل الخصم ودون التوصيل) وصلاحية تظهر عند الفوز.', 'Each prize has a minimum products total (before the prize, delivery excluded) and a validity shown when you win.')}</li>
               <li>{L('جائزة واحدة كحد أقصى لكل طلب، ولا تُجمع الجوائز.', 'At most one prize per order; prizes cannot be combined.')}</li>
               <li>{L('تُلغى الجائزة إذا أُلغي الطلب أو أُرجع.', 'The prize is cancelled if the order is cancelled or returned.')}</li>
