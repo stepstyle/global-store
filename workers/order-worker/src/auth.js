@@ -157,5 +157,7 @@ export async function verifyFirebaseIdToken(token, o) {
     emailVerified: payload.email_verified === true,
     // how THIS session was signed in ('google.com', 'password', 'anonymous', …) — part of the signed token
     signInProvider: typeof payload.firebase?.sign_in_provider === 'string' ? payload.firebase.sign_in_provider : '',
+    // the ACCOUNT is linked to Google (signed claim firebase.identities['google.com']), whatever method this session used
+    googleLinked: payload.firebase?.sign_in_provider === 'google.com' || Array.isArray(payload.firebase?.identities?.['google.com']),
   };
 }

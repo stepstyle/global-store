@@ -1,10 +1,11 @@
-// E2E_SUITE=wheel — the prize wheel (WHEEL_MODE=test) end to end in the REAL web app, LOCAL ONLY (127.0.0.1):
-// the order Worker under `wrangler dev --local` (workerd), Firestore + Auth EMULATORS, the notification sink, Vite with
-// VITE_WHEEL_MODE=test, headless Chrome (desktop AND phone emulation). TEST settings only — not a real campaign.
+// E2E_SUITE=wheel — prize wheel v2 + Google sign-in at checkout, end to end in the REAL web app, LOCAL ONLY (127.0.0.1):
+// the order Worker under `wrangler dev --local` (workerd, WHEEL_MODE=test, ORDER_SIGN_IN=google, PRICE_CHECK_MODE
+// =enforce), Firestore + Auth EMULATORS, the notification sink, Vite with VITE_WHEEL_MODE=test, headless Chrome
+// (desktop AND phone emulation). TEST settings only — not a real campaign, not real prizes or probabilities.
 //
-// Sign-in: a Google-linked account created in the Auth EMULATOR (google.com provider, verified e-mail) that also has a
-// password, so the browser signs in through the app's Login form. The real Google pop-up is NOT exercised here
-// (no network; it needs Google's servers) — the account's token carries the same verified-e-mail claim the Worker needs.
+// Google sign-in: the app's REAL signInWithPopup against the Auth EMULATOR — the popup is the emulator's own sign-in page
+// (127.0.0.1), driven here like a customer would (add account / choose account, or close it). It is not Google's real
+// account chooser (that needs Google's servers and the production domain): that last check stays a manual one.
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,20 +18,20 @@ const SET_VAL = `const setVal = (el, v) => {
   el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
 };`;
 const STICKY = `document.querySelector('[data-testid=checkout-sticky-action]')`;
-const OUTCOME = `(location.hash.startsWith('#/order-success/') ? 'success' : (document.querySelector('[data-testid=submit-result]')?.dataset.status || ''))`;
+const OUTCOME = `(location.hash.startsWith('#/order-success/') ? 'success' : (document.querySelector('[data-testid=submit-result]')?.dataset.status || (document.querySelector('[data-testid=submit-blocked]') ? 'blocked:' + (document.querySelector('[data-testid=submit-blocked]').dataset.google || '') : '')))`;
 const TOASTS = `[...document.querySelectorAll('[data-testid=toast-message]')].map((t) => t.innerText).join('\\n---\\n')`;
 const STUB_CONFIRM = `(() => { window.__confirms = []; window.confirm = (m) => { window.__confirms.push(String(m)); return true; }; return true; })()`;
+// which segment is under the top pointer (same geometry as services/wheel.ts segmentAt) vs the result the Worker drew
+const LANDING = `(() => { const svg = document.querySelector('[data-testid=wheel-svg]'); const segs = [...document.querySelectorAll('[data-testid=wheel-segment]')]; const n = segs.length; const r = ((Number(svg.dataset.rotation) % 360) + 360) % 360; const i = Math.floor((((360 - r) % 360) / (360 / n))) % n; return { landed: segs[i]?.dataset.slotId || '', result: document.querySelector('[data-testid=wheel-result]')?.dataset.prizeId || '', n, rotation: Number(svg.dataset.rotation) }; })()`;
 
 export const WHEEL_CAMPAIGN_ID = 'e2e-wheel';
-// one TEST prize, always won while it lasts (noPrizeWeight 0) -> deterministic browser checks
-const CAMPAIGN = {
-  active: true, minOrderJod: 5, budgetJod: 10, noPrizeWeight: 0, giftOnCancel: 'return',
-  startsAt: '2026-01-01T00:00:00Z', endsAt: '2099-01-01T00:00:00Z', terms: 'شروط تجريبية للاختبار المحلي فقط — ليست حملة حقيقية.',
-  prizes: [{ id: 'test-a', label: 'جائزة تجريبية', productId: 'p-hundred', weight: 1, quantity: 3, unitCostJod: 1 }],
-};
+const BIG = 1_000_000; // a slot with this weight is drawn (all but surely: the "حظ أوفر" slots have weight 1 each)
+const NONES = [1, 2, 3].map((i) => ({ id: `none-${i}`, type: 'none', label: 'حظ أوفر', weight: 1 }));
 const item = (id, name, price, quantity) => ({ id, name, price, stock: 100, category: 'Stationery', image: '', quantity });
-const CART_SMALL = [item('p-simple', 'دفتر', 2.5, 1)]; // 2.5 JOD in products  < 5
-const CART_OK = [item('p-simple', 'دفتر', 2.5, 3)]; //    7.5 JOD (- discount) >= 5
+const CART_SMALL = [item('p-simple', 'دفتر', 2.5, 1)]; //      2.5 JOD in products  < 5
+const CART_OK = [item('p-simple', 'دفتر', 2.5, 3)]; //         7.5 JOD (volume discount 0.75)
+const CART_1499 = [item('p-1499', 'منتج اختبار 14.99', 14.99, 1)];
+const CART_15 = [item('p-15', 'منتج اختبار 15', 15, 1)];
 
 async function until(fn, ms, label) {
   const end = Date.now() + ms;
@@ -57,7 +58,9 @@ export function buildWheelScenarios(ctx) {
   const reserved = async (pid) => (await get(`stockReservations/${pid}`))?.product || 0;
   const spinDoc = (uid, n) => get(`wheelSpins/${WHEEL_CAMPAIGN_ID}_${uid}_${n}`);
   const telegramFor = async (id) => (await ctx.sinkCalls()).filter((c) => c.channel === 'telegram' && c.method === 'sendMessage' && c.orderId === id && c.ok);
+  const fresh = async (t) => t.send('Storage.clearDataForOrigin', { origin: ctx.base, storageTypes: 'all' });
 
+  /** password sign-in of a Google-LINKED account (a valid saved Google session: no popup needed at checkout) */
   const signIn = async (t, email, password) => {
     await t.send('Storage.clearDataForOrigin', { origin: ctx.base, storageTypes: 'indexeddb' });
     await t.navigate(`${ctx.base}/?r=${Date.now()}#/login`);
@@ -70,26 +73,45 @@ export function buildWheelScenarios(ctx) {
     await t.evaluate(`document.querySelector('input[type=password]')?.form.requestSubmit(); true`);
     await t.waitFor(`location.hash === '#/' || location.hash === '' || location.hash === '#/admin'`, 30_000, 'redirect after sign-in');
   };
-  /** the customer opens /wheel IN-APP (hash change: keeps the session and this tab's chosen gift) */
-  const openWheel = async (t) => {
-    await t.evaluate(`location.hash = '#/wheel'; true`);
-    await t.waitFor(`!!document.querySelector('[data-testid=wheel-page]')`, 20_000, 'wheel page');
-    await t.waitFor(`!!document.querySelector('[data-testid=wheel-spin]') || !!document.querySelector('[data-testid=wheel-sign-in]') || !!document.querySelector('[data-testid=wheel-closed]')`, 30_000, 'wheel state');
+  /** drive the Auth emulator's Google popup: a NEW Google account (email + name), like choosing an account */
+  const googleInPopup = async (email, name) => {
+    const p = await ctx.attachPopup(20_000);
+    assert.ok(p, 'the Google sign-in window opened');
+    await p.waitFor(`!!document.querySelector('#add-account-button') || !!document.querySelector('.js-new-account') || !!document.querySelector('#email-input')`, 20_000, 'emulator sign-in page');
+    await p.evaluate(`(() => { const b = document.querySelector('#add-account-button') || document.querySelector('.js-new-account'); if (b && !document.querySelector('#email-input')?.offsetParent) b.click(); return true; })()`);
+    await p.waitFor(`!!document.querySelector('#email-input')?.offsetParent`, 10_000, 'new account form');
+    await p.evaluate(`(() => { ${SET_VAL}
+      setVal(document.querySelector('#email-input'), ${JSON.stringify(email)});
+      setVal(document.querySelector('#display-name-input'), ${JSON.stringify(name)});
+      return true; })()`);
+    await sleep(200);
+    await p.evaluate(`document.querySelector('#sign-in').click(); true`);
+    await until(async () => !(await ctx.popupOpen()), 20_000, 'Google window closed after sign-in');
   };
+  const openPopupFromFab = async (t) => {
+    await t.waitFor(`!!document.querySelector('[data-testid=wheel-fab]')`, 15_000, 'wheel button');
+    await t.evaluate(`document.querySelector('[data-testid=wheel-fab]').click(); true`);
+    await t.waitFor(`!!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-spin]')`, 20_000, 'popup with the wheel');
+  };
+  const spinAndWait = async (t) => {
+    await t.waitFor(`!document.querySelector('[data-testid=wheel-spin]')?.disabled`, 20_000, 'spin button enabled');
+    await t.send('Runtime.evaluate', { expression: `document.querySelector('[data-testid=wheel-spin]').click(); true`, userGesture: true, returnByValue: true });
+  };
+  const waitResult = (t) => t.waitFor(`(() => { const r = document.querySelector('[data-testid=wheel-result]'); return r && (r.querySelector('[data-testid=wheel-won],[data-testid=wheel-no-prize],[data-testid=wheel-message]')) ? r.innerText.trim() : ''; })()`, 30_000, 'result shown');
   let seedN = 0;
   /** the cart is seeded before the app's scripts run on the next document, then checkout opens (session kept) */
-  const openCheckoutWith = async (t, cart, email) => {
+  const openCheckoutWith = async (t, cart, email = null) => {
     const marker = `seedcart${++seedN}x`;
     await t.send('Page.addScriptToEvaluateOnNewDocument', {
       source: `if (location.search.includes(${JSON.stringify(marker)})) { localStorage.setItem('anta_cart', ${JSON.stringify(JSON.stringify(cart))}); localStorage.setItem('language', 'ar'); }`,
     });
     await t.navigate(`${ctx.base}/?${marker}=1&r=${Date.now()}#/checkout`);
     await t.waitFor(`!!document.querySelector('input[placeholder="0791234567"]')`, 40_000, 'checkout form');
-    await t.waitFor(`document.querySelector('input[placeholder^="name@example.com"]')?.value === ${JSON.stringify(email)}`, 30_000, 'signed-in profile in checkout');
+    if (email) await t.waitFor(`document.querySelector('input[placeholder^="name@example.com"]')?.value === ${JSON.stringify(email)}`, 30_000, 'signed-in profile in checkout');
   };
   const fillToPayment = async (t, phoneLocal) => {
     await t.evaluate(`(() => { ${SET_VAL}
-      setVal(document.querySelector('input[placeholder="الاسم الأول والأخير"]'), 'زبون العجلة التجريبي');
+      setVal(document.querySelector('input[placeholder="الاسم الأول والأخير"]'), 'زبون الدولاب التجريبي');
       setVal(document.querySelector('input[placeholder="0791234567"]'), ${JSON.stringify(phoneLocal)});
       setVal([...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'zarqa')), 'zarqa');
       return true; })()`);
@@ -100,15 +122,10 @@ export function buildWheelScenarios(ctx) {
     await t.evaluate(`${STICKY}.click(); true`);
     await t.waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('CliQ'))`, 10_000, 'step 3');
   };
-  const confirmOrder = async (t) => {
-    await t.evaluate(`${STICKY}.click(); true`);
-    return t.waitFor(`(() => { const o = ${OUTCOME}; return o && o !== 'busy' && o !== 'sending' ? o : ''; })()`, 40_000, 'order outcome');
-  };
-  const spinInUi = async (t) => {
-    await t.waitFor(`!document.querySelector('[data-testid=wheel-spin]')?.disabled`, 20_000, 'spin button enabled');
-    await t.evaluate(`document.querySelector('[data-testid=wheel-spin]').click(); true`);
-    return t.waitFor(`document.querySelector('[data-testid=wheel-result]')?.innerText.trim()`, 20_000, 'result shown');
-  };
+  // a REAL user gesture (as a tap): browsers open the Google window only from one
+  const gesture = (t, expr) => t.send('Runtime.evaluate', { expression: expr, userGesture: true, awaitPromise: true, returnByValue: true });
+  const clickConfirm = (t) => gesture(t, `${STICKY}.click(); true`);
+  const outcome = (t) => t.waitFor(`(() => { const o = ${OUTCOME}; return o && o !== 'busy' && o !== 'sending' ? o : ''; })()`, 40_000, 'order outcome');
   const openDashboardOrder = async (t, orderId) => {
     await signIn(t, ctx.admin.email, ctx.admin.password);
     await t.evaluate(`if (location.hash !== '#/admin') location.hash = '#/admin'; true`);
@@ -123,164 +140,322 @@ export function buildWheelScenarios(ctx) {
     const ok = await t.evaluate(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === ${JSON.stringify(text)} && !x.disabled); if (!b) return false; b.click(); return true; })()`);
     assert.ok(ok, `button "${text}" present and enabled`);
   };
-  /** scrolled to the end of the page, the prize button is really reachable: both ends of the prize row are the topmost elements (never the cookie bar) */
-  const takeNotCovered = async (t) => {
-    // NO scrolling by the test: what the customer sees right after the result (the page brings the row into view)
-    const probe = "(() => { const row = document.querySelector('[data-testid=wheel-take]').closest('[data-testid=wheel-spin-row]'); const r = row.getBoundingClientRect(); const y = r.top + r.height / 2; const hit = (x) => { const e = document.elementFromPoint(x, y); return !!e && row.contains(e); }; const who = (x) => { const e = document.elementFromPoint(x, y); return e ? (e.closest('[data-testid]')?.dataset.testid || e.tagName) + '.' + String(e.className || '').slice(0, 60) : 'none'; }; return { cookieBar: document.documentElement.hasAttribute('data-cookie-bar'), clear: hit(r.left + 10) && hit(r.right - 10), who: who(r.left + 10) + ' | ' + who(r.right - 10), rowTop: Math.round(r.top), vh: innerHeight }; })()";
-    let last;
-    for (let i = 0; i < 20; i++) { last = await t.evaluate(probe); if (last.clear) return last; await sleep(250); } // smooth scroll settles
-    return last;
-  };
   const statusIs = (id, s) => until(async () => (await get(`orders/${id}`))?.status === s, 20_000, `order ${id} -> ${s}`);
+  const deliverInDashboard = async (t, orderId) => {
+    await openDashboardOrder(t, orderId);
+    await clickButton(t, 'بدء التجهيز'); await statusIs(orderId, 'processing');
+    await clickButton(t, 'قيد الشحن'); await statusIs(orderId, 'shipped');
+    await clickButton(t, 'تم التسليم'); await statusIs(orderId, 'delivered');
+  };
+  const prizeBox = (t) => t.evaluate(`(() => { const b = document.querySelector('[data-testid=checkout-wheel-gift]'); return b ? { state: b.dataset.state, type: b.dataset.prizeType, text: b.innerText } : null; })()`);
+  const noHScroll = (t) => t.evaluate(`document.documentElement.scrollWidth <= innerWidth + 1`);
 
   return [
-    ['WU01', 'DESKTOP journey: Google-linked verified account signs in -> /wheel -> spin -> result -> gift added to the order -> below the minimum refused (nothing saved, gift kept) -> enough products -> confirmed; gift reserved, total unchanged, ONE Telegram message with the gift marked', async (t) => {
-      const email = 'wheel.customer@example.invalid';
+    ['WU01', 'DESKTOP first visit: the popup opens by itself, THREE "حظ أوفر" segments visible; signed out -> the spin button starts the Google sign-in (offline: fails -> message, NO spin used); signed in -> the server draws -> the wheel stops ON the drawn segment; closed with X; a reload does NOT reopen it nor give a new spin; Escape closes', async (t) => {
+      await ctx.setCampaign([
+        { id: 'disc-1', type: 'discount', label: 'خصم دينار', valueJod: 1, minOrderJod: 5, weight: 3, quantity: 50 }, NONES[0],
+        { id: 'gift-2', type: 'gift', label: 'هدية بقيمة 2 د.أ', valueJod: 2, unitCostJod: 2, weight: 3, quantity: 50 }, NONES[1],
+        { id: 'watch', type: 'gift', label: 'هدية ساعة', productId: 'p-hundred', unitCostJod: 1, minOrderJod: 15, weight: 1, quantity: 5 }, NONES[2],
+      ]);
+      await viewport(t, 1366, 900, false);
+      await fresh(t);
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-spin]')`, 25_000, 'first-visit popup');
+      const segs = await t.evaluate(`[...document.querySelectorAll('[data-testid=wheel-segment]')].map((s) => s.dataset.slotType + ':' + s.dataset.slotId)`);
+      assert.deepEqual(segs, ['discount:disc-1', 'none:none-1', 'gift:gift-2', 'none:none-2', 'gift:watch', 'none:none-3']);
+      assert.equal((await t.evaluate(`[...document.querySelectorAll('[data-testid=wheel-segment] text')].map((x) => x.textContent).join('|')`)).split('حظ أوفر').length - 1, 3, 'the three "حظ أوفر" labels are drawn');
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-spin]').innerText`), /Google/);
+      await shot(t, 'wu01-popup-first-visit');
+      // signed out: the spin button starts the Google sign-in. In this OFFLINE run it cannot complete (Firebase's popup
+      // flow loads a script from apis.google.com, blocked by the isolation) -> the customer sees a message, NO spin used
+      await spinAndWait(t);
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-message]')`, 30_000, 'sign-in failure message');
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-message]').innerText`), /لم يكتمل تسجيل الدخول|لم تُستخدم/);
+      assert.equal(await ctx.countSpins(), 0, 'a failed sign-in uses no spin');
+      // the same visitor signs in with a Google-linked account, opens the wheel again and spins
+      const email1 = 'wheel.first@example.invalid';
+      const uid = await ctx.createGoogleCustomer({ email: email1, password: 'Test-pass-12345', name: 'زبون أول' });
+      await signIn(t, email1, 'Test-pass-12345');
+      await openPopupFromFab(t);
+      await spinAndWait(t);
+      const text = await waitResult(t);
+      const land = await t.evaluate(LANDING);
+      assert.ok(land.result, `a result: ${text}`);
+      assert.equal(land.landed, land.result, `the wheel stops on the drawn segment ${JSON.stringify(land)}`);
+      const sp = await spinDoc(uid, 1);
+      assert.ok(sp, 'the result is stored on the server');
+      assert.equal(sp.prizeId, land.result);
+      if (sp.prizeType !== 'none') assert.match(text, /مبروك! ظهرت لك/);
+      await shot(t, 'wu01-popup-result');
+      await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
+      await t.waitFor(`!document.querySelector('[data-testid=wheel-popup]')`, 5_000, 'popup closed');
+      await t.reload();
+      await sleep(4_000);
+      assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=wheel-popup]')`), false, 'not shown again after a refresh');
+      await openPopupFromFab(t);
+      await t.waitFor(`/اللفات المتاحة لحسابك: 0/.test(document.querySelector('[data-testid=wheel-chances]')?.innerText || '')`, 20_000, 'no chance left');
+      await spinAndWait(t);
+      await t.waitFor(`/لا توجد لفة متاحة/.test(document.querySelector('[data-testid=wheel-message]')?.innerText || '')`, 20_000, 'no new spin after refresh');
+      assert.equal(await spinDoc(uid, 2), null, 'no second result');
+      await t.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await t.waitFor(`!document.querySelector('[data-testid=wheel-popup]')`, 5_000, 'Escape closes');
+    }],
+    ['WU02', 'CHECKOUT signed out: "confirm" starts the Google sign-in; when it does not complete NOTHING is sent (cart + form kept, clear message, pressing again sends nothing); a guest order sent straight to the Worker is refused (ORDER_SIGN_IN=google); signed in with Google -> confirmed under that account', async (t) => {
+      await viewport(t, 1366, 900, false);
+      await fresh(t);
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
+      await sleep(2_500);
+      await t.evaluate(`document.querySelector('[data-testid=wheel-close]')?.click(); true`);
+      await openCheckoutWith(t, CART_OK);
+      await fillToPayment(t, '0795100001');
+      assert.ok(await t.evaluate(`!!document.querySelector('[data-testid=google-required-hint]')`), 'the customer is told a Google window will open');
+      // the Google sign-in starts from the click; OFFLINE it fails (see WU01) -> the failure path the owner asked for
+      await clickConfirm(t);
+      const o1 = await outcome(t);
+      assert.ok(/^blocked:(failed|cancelled|network|blocked)$/.test(o1), `not sent, Google problem shown (${o1})`);
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=submit-blocked]').innerText`), /لم يُرسل الطلب/);
+      assert.equal(await ctx.countOrders(), 0, 'nothing sent');
+      assert.equal(await t.evaluate(`JSON.parse(localStorage.getItem('anta_cart') || '[]').length`), 1, 'cart kept');
+      assert.equal(await t.evaluate(`document.querySelector('input[placeholder="الاسم الأول والأخير"]') ? 'form' : 'payment'`), 'payment', 'still on the payment step');
+      await shot(t, 'wu02-google-failed');
+      // pressing again: same result, still nothing sent, never two orders
+      await clickConfirm(t);
+      await sleep(1_500);
+      assert.equal(await ctx.countOrders(), 0, 'still nothing sent');
+      // the browser cannot bypass the rule: a guest order sent straight to the Worker is refused (ORDER_SIGN_IN=google)
+      const direct = await t.evaluate(`fetch(${JSON.stringify(ctx.workerUrl)} + '/create-order', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ order: { id: 'ORD-AAAA1111-BBBB2222' } }) }).then(async (r) => ({ s: r.status, b: await r.json() }))`);
+      assert.equal(direct.s, 401);
+      assert.equal(direct.b.code, 'SIGN_IN_REQUIRED');
+      // signed in with a Google-linked account: the same checkout goes through, under that account
+      const email = 'wheel.checkout@example.invalid';
+      const uid = await ctx.createGoogleCustomer({ email, password: 'Test-pass-12345', name: 'زبون الدفع' });
+      await signIn(t, email, 'Test-pass-12345');
+      await openCheckoutWith(t, CART_OK, email);
+      await fillToPayment(t, '0795100001');
+      await clickConfirm(t);
+      assert.equal(await outcome(t), 'success');
+      const orderId = await t.evaluate(`location.hash.split('/').pop()`);
+      const O = await get(`orders/${orderId}`);
+      assert.equal(O.userId, uid, 'placed under the Google account');
+      assert.equal(O.userIdVerified, true);
+      assert.equal(await ctx.countOrders(), 1, 'exactly one order');
+      await shot(t, 'wu02-order-success');
+    }],
+    ['WU03', 'already signed in with Google (valid session): NO Google window; 1-JOD discount prize below 5 JOD -> shown with what is missing, order goes WITHOUT it (prize kept); 7.5 JOD -> applied (server-checked total); a triple click sends ONE order', async (t) => {
+      await ctx.setCampaign([{ id: 'disc-1', type: 'discount', label: 'خصم دينار', valueJod: 1, minOrderJod: 5, weight: BIG, quantity: 10 }, ...NONES]);
+      const email = 'wheel.linked@example.invalid';
       const pw = 'Test-pass-12345';
-      const uid = await ctx.createGoogleCustomer({ email, password: pw, name: 'زبون العجلة' });
+      const uid = await ctx.createGoogleCustomer({ email, password: pw, name: 'زبون مرتبط' });
       await viewport(t, 1366, 900, false);
       await signIn(t, email, pw);
-      await openWheel(t);
-      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-chances]').innerText`), /1/);
-      await shot(t, 'wheel-desktop-before');
-      const result = await spinInUi(t);
-      assert.match(result, /مبروك! ربحت: جائزة تجريبية/);
-      assert.equal(await t.evaluate(`document.activeElement?.dataset?.testid === 'wheel-spin' || true`), true);
-      assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-result]').getAttribute('aria-live')`), 'polite');
-      await t.waitFor(`!!document.querySelector('[data-testid=wheel-take]')`, 20_000, 'take button');
-      { const c = await takeNotCovered(t); assert.ok(c.cookieBar && c.clear, `cookie bar shown AND the prize row not covered (desktop): ${JSON.stringify(c)}`); }
-      await shot(t, 'wheel-desktop-won');
-      const sp = await spinDoc(uid, 1);
-      assert.equal(sp.status, 'issued');
-      await t.evaluate(`document.querySelector('[data-testid=wheel-take]').click(); true`);
-      await t.waitFor(`location.hash === '#/cart'`, 10_000, 'cart after taking the gift');
+      await t.evaluate(`location.hash = '#/wheel'; true`);
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-page] [data-testid=wheel-spin]')`, 25_000, 'wheel page');
+      await spinAndWait(t);
+      await waitResult(t);
+      assert.equal((await spinDoc(uid, 1))?.prizeId, 'disc-1');
       // below the minimum
       await openCheckoutWith(t, CART_SMALL, email);
-      await t.waitFor(`!!document.querySelector('[data-testid=checkout-wheel-gift]')`, 15_000, 'gift shown in checkout');
-      await fillToPayment(t, '0795000001');
-      await shot(t, 'checkout-desktop-gift');
-      assert.equal(await confirmOrder(t), 'rejected');
-      assert.match(await t.evaluate(`document.querySelector('[data-testid=submit-result]').innerText`), /الهدية تحتاج حدًا أدنى/);
-      await shot(t, 'checkout-desktop-min-refused');
-      assert.equal(await ctx.countOrders(), 0, 'nothing saved');
-      assert.equal((await spinDoc(uid, 1)).status, 'issued', 'gift kept');
-      // enough products
+      await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'below_min'`, 20_000, 'prize below minimum');
+      assert.match((await prizeBox(t)).text, /تحتاج إلى إكمال مشترياتك حتى 5 دينارًا/);
+      await fillToPayment(t, '0795100003');
+      assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=google-required-hint]')`), false, 'no Google window needed');
+      await shot(t, 'wu03-below-min');
+      await clickConfirm(t);
+      assert.equal(await outcome(t), 'success');
+      assert.equal(await ctx.popupOpen(), false, 'no Google window was opened');
+      const o1 = await t.evaluate(`location.hash.split('/').pop()`);
+      assert.equal((await get(`orders/${o1}`)).wheelPrize, undefined, 'the prize did NOT travel with the small order');
+      assert.equal((await spinDoc(uid, 1)).status, 'issued', 'prize kept');
+      // enough: applied, triple click
       await openCheckoutWith(t, CART_OK, email);
-      await t.waitFor(`!!document.querySelector('[data-testid=checkout-wheel-gift]')`, 15_000, 'gift still chosen');
-      await fillToPayment(t, '0795000001');
-      assert.equal(await confirmOrder(t), 'success');
-      const orderId = await t.evaluate(`location.hash.split('/').pop()`);
-      await shot(t, 'order-success-desktop');
-      const O = await get(`orders/${orderId}`);
-      assert.equal(O.userId, uid);
+      await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'applies'`, 20_000, 'prize applies');
+      await fillToPayment(t, '0795100003');
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=summary-wheel-discount]')?.innerText || ''`), /خصم جائزة الدولاب/);
+      await shot(t, 'wu03-applies');
+      await t.evaluate(`(() => { const b = ${STICKY}; b.click(); b.click(); b.click(); return true; })()`);
+      assert.equal(await outcome(t), 'success');
+      const o2 = await t.evaluate(`location.hash.split('/').pop()`);
+      const L = await get(`orderLedger/${o2}`);
+      assert.equal(L.serverPricing.total, 8.75, '7.5 - 0.75 volume - 1 prize + 3 delivery (Zarqa)');
+      assert.equal((await get(`orders/${o2}`)).wheelPrize.discountJod, 1);
+      assert.equal((await spinDoc(uid, 1)).status, 'reserved');
+      assert.equal(await ctx.countOrders(), 2, 'one order per confirmation (triple click = one)');
+    }],
+    ['WU04', 'BIG prize (watch, minimum 15): 14.99 JOD -> "مبروك! ظهرت لك هدية ساعة، وتحتاج إلى إكمال مشترياتك حتى 15 دينارًا…", ordered without it; exactly 15 -> the watch travels as a FREE line, reserved; ONE Telegram message marks it', async (t) => {
+      await ctx.setCampaign([{ id: 'watch', type: 'gift', label: 'هدية ساعة', productId: 'p-hundred', unitCostJod: 1, minOrderJod: 15, weight: BIG, quantity: 3 }, ...NONES]);
+      const email = 'wheel.watch@example.invalid';
+      const pw = 'Test-pass-12345';
+      const uid = await ctx.createGoogleCustomer({ email, password: pw, name: 'زبون الساعة' });
+      await viewport(t, 1366, 900, false);
+      await signIn(t, email, pw);
+      await openPopupFromFab(t);
+      await spinAndWait(t);
+      assert.match(await waitResult(t), /مبروك! ظهرت لك: هدية ساعة/);
+      assert.equal((await t.evaluate(LANDING)).landed, 'watch');
+      await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
+      await openCheckoutWith(t, CART_1499, email);
+      await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'below_min'`, 20_000, 'watch below minimum');
+      assert.match((await prizeBox(t)).text, /مبروك! ظهرت لك هدية ساعة، وتحتاج إلى إكمال مشترياتك حتى 15 دينارًا لاستحقاقها عند تأكيد الطلب/);
+      await shot(t, 'wu04-watch-1499');
+      await fillToPayment(t, '0795100004');
+      await clickConfirm(t);
+      assert.equal(await outcome(t), 'success');
+      const o1 = await t.evaluate(`location.hash.split('/').pop()`);
+      assert.ok(!(await get(`orders/${o1}`)).items.some((i) => i.gift), 'no watch on a 14.99 order');
+      await openCheckoutWith(t, CART_15, email);
+      await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'applies'`, 20_000, 'watch applies at 15');
+      await fillToPayment(t, '0795100004');
+      await clickConfirm(t);
+      assert.equal(await outcome(t), 'success');
+      const o2 = await t.evaluate(`location.hash.split('/').pop()`);
+      const O = await get(`orders/${o2}`);
       const g = O.items.filter((i) => i.gift);
       assert.equal(g.length, 1);
       assert.equal(g[0].price, 0);
-      const L = await get(`orderLedger/${orderId}`);
-      assert.equal(L.serverPricing.total, O.total, 'the customer pays exactly the paid order (gift not priced)');
-      assert.equal(L.wheel.spinId, `${WHEEL_CAMPAIGN_ID}_${uid}_1`);
-      assert.equal((await spinDoc(uid, 1)).status, 'reserved');
+      assert.equal((await get(`orderLedger/${o2}`)).serverPricing.total, 18, '15 + 3 delivery: the watch is free');
       assert.equal(await reserved('p-hundred'), 1);
       assert.equal(await stock('p-hundred'), 100, 'nothing deducted before delivery');
-      const msgs = await until(async () => { const m = await telegramFor(orderId); return m.length ? m : null; }, 30_000, 'telegram');
+      assert.equal((await spinDoc(uid, 1)).status, 'reserved');
+      const msgs = await until(async () => { const m = await telegramFor(o2); return m.length ? m : null; }, 30_000, 'telegram');
       await sleep(2_500);
-      assert.equal((await telegramFor(orderId)).length, 1, 'one Telegram message, no duplicate');
-      assert.equal(msgs[0].giftMarked, true, 'the Telegram message marks the gift (sink summary flag)');
-      // the gift left this tab's selection once it travelled with the order
-      assert.equal(await t.evaluate(`sessionStorage.getItem('anta_wheel_prize_v1')`), null);
-      ctx.state.wu01 = { uid, orderId, email, pw };
+      assert.equal((await telegramFor(o2)).length, 1, 'one Telegram message');
+      assert.equal(msgs[0].giftMarked, true, 'the Telegram message marks the gift');
     }],
-    ['WU02', 'ADMIN dashboard shows the gift (badge in the list, marked line in the details); CANCEL there -> gift reservation released, prize back to "issued" on /wheel', async (t) => {
-      const { uid, orderId, email, pw } = ctx.state.wu01 || {};
-      assert.ok(orderId, 'needs WU01');
+    ['WU05', 'SECOND-ORDER discount: not applied to the first order (explained); the first order DELIVERED in the dashboard; then applied (>= 15) with the server total; the dashboard shows the prize; a CANCEL gives the prize back (not consumed)', async (t) => {
+      await ctx.setCampaign([{ id: 'second-4', type: 'discount', label: 'خصم 4 د.أ على الطلب الثاني', valueJod: 4, minOrderJod: 15, appliesTo: 'next_order', weight: BIG, quantity: 5 }, ...NONES]);
+      const email = 'wheel.second@example.invalid';
+      const pw = 'Test-pass-12345';
+      const uid = await ctx.createGoogleCustomer({ email, password: pw, name: 'زبون الطلب الثاني' });
       await viewport(t, 1366, 900, false);
-      await openDashboardOrder(t, orderId);
-      await t.waitFor(`!!document.querySelector('[data-testid=admin-gift-item]')`, 15_000, 'gift line in details');
-      assert.match(await t.evaluate(`document.querySelector('[data-testid=admin-gift-item]').innerText`), /هدية عجلة الجوائز — مجانية/);
-      await shot(t, 'admin-order-gift');
+      await signIn(t, email, pw);
+      await openPopupFromFab(t);
+      await spinAndWait(t);
+      assert.match(await waitResult(t), /طلبك الثاني/);
+      await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
+      await openCheckoutWith(t, CART_15, email);
+      await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'needs_previous_order'`, 20_000, 'second-order explained');
+      await fillToPayment(t, '0795100005');
+      await clickConfirm(t);
+      assert.equal(await outcome(t), 'success');
+      const o1 = await t.evaluate(`location.hash.split('/').pop()`);
+      assert.equal((await get(`orderLedger/${o1}`)).serverPricing.total, 18, 'first order: no discount');
+      await deliverInDashboard(t, o1);
+      await signIn(t, email, pw);
+      await openCheckoutWith(t, CART_15, email);
+      await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'applies'`, 20_000, 'second-order discount applies');
+      await fillToPayment(t, '0795100005');
+      await shot(t, 'wu05-second-order');
+      await clickConfirm(t);
+      assert.equal(await outcome(t), 'success');
+      const o2 = await t.evaluate(`location.hash.split('/').pop()`);
+      assert.equal((await get(`orderLedger/${o2}`)).serverPricing.total, 14, '15 - 4 + 3');
+      assert.equal((await spinDoc(uid, 1)).status, 'reserved');
+      await openDashboardOrder(t, o2);
+      await t.waitFor(`!!document.querySelector('[data-testid=admin-prize-detail]')`, 15_000, 'prize shown in the order details');
+      assert.match(await t.evaluate(`document.querySelector('[data-testid=admin-prize-detail]').innerText`), /خصم 4 د.أ محسوب في الإجمالي/);
+      await shot(t, 'wu05-admin-prize');
       await clickButton(t, 'إلغاء الطلب');
-      await statusIs(orderId, 'cancelled');
-      assert.equal(await reserved('p-hundred'), 0);
-      assert.equal(await stock('p-hundred'), 100);
-      assert.equal((await spinDoc(uid, 1)).status, 'issued');
-      // the customer sees the prize available again
-      await signIn(t, email, pw);
-      await openWheel(t);
-      await t.waitFor(`!!document.querySelector('[data-testid=wheel-take]')`, 20_000, 'prize can be taken again');
+      await statusIs(o2, 'cancelled');
+      const sp = await spinDoc(uid, 1);
+      assert.equal(sp.status, 'issued', 'cancelled order: the prize is not consumed');
+      assert.equal(sp.orderId, null);
     }],
-    ['WU03', 'gift order DELIVERED in the dashboard -> paid lines + gift deducted ONCE, prize consumed, ONE new chance -> the customer spins again on /wheel', async (t) => {
-      const { uid, email, pw } = ctx.state.wu01 || {};
-      assert.ok(uid, 'needs WU01');
+    ['WU06', 'ADMIN wheel tab: a customer gets "not an admin" from the SERVER; the admin sees the slots with their share, edits a weight + minimum, sees the loss warning, saves; visitors see the new wheel; setting the quantity to what is used makes the prize disappear', async (t) => {
+      await ctx.setCampaign([{ id: 'disc-1', type: 'discount', label: 'خصم دينار', valueJod: 1, minOrderJod: 5, weight: 1, quantity: 3 }, ...NONES]);
+      const email = 'wheel.notadmin@example.invalid';
+      const pw = 'Test-pass-12345';
+      await ctx.createGoogleCustomer({ email, password: pw, name: 'ليس مديرًا' });
       await viewport(t, 1366, 900, false);
       await signIn(t, email, pw);
-      await openWheel(t);
-      await t.evaluate(`document.querySelector('[data-testid=wheel-take]').click(); true`);
-      await t.waitFor(`location.hash === '#/cart'`, 10_000, 'cart');
-      await openCheckoutWith(t, CART_OK, email);
-      await t.waitFor(`!!document.querySelector('[data-testid=checkout-wheel-gift]')`, 15_000, 'gift chosen');
-      await fillToPayment(t, '0795000003');
-      assert.equal(await confirmOrder(t), 'success');
-      const orderId = await t.evaluate(`location.hash.split('/').pop()`);
-      const before = await stock('p-simple');
-      await openDashboardOrder(t, orderId);
-      // the dashboard's real path: processing -> shipped -> delivered (the delivered button exists only once shipped)
-      await clickButton(t, 'بدء التجهيز');
-      await statusIs(orderId, 'processing');
-      await clickButton(t, 'قيد الشحن');
-      await statusIs(orderId, 'shipped');
-      assert.equal(await stock('p-hundred'), 100, 'nothing deducted before delivery');
-      await clickButton(t, 'تم التسليم');
-      await statusIs(orderId, 'delivered');
-      assert.equal(await stock('p-hundred'), 99, 'gift deducted once');
-      assert.equal(await stock('p-simple'), before - 3, 'paid line deducted once');
-      assert.equal((await spinDoc(uid, 1)).status, 'consumed');
-      assert.equal((await get(`wheelEntitlements/${WHEEL_CAMPAIGN_ID}_${uid}`)).granted, 2);
-      await signIn(t, email, pw);
-      await openWheel(t);
-      assert.match(await t.evaluate(`document.querySelector('[data-testid=wheel-chances]').innerText`), /1/);
-      assert.match(await spinInUi(t), /مبروك/);
-      assert.equal((await spinDoc(uid, 2)).status, 'issued');
+      await t.evaluate(`location.hash = '#/admin'; true`);
+      await sleep(3_000);
+      const tab = await t.evaluate(`!!document.querySelector('[data-testid=admin-tab-wheel]')`);
+      if (tab) {
+        await t.evaluate(`document.querySelector('[data-testid=admin-tab-wheel]').click(); true`);
+        await t.waitFor(`/ليس مديرًا/.test(document.querySelector('[data-testid=wheel-admin-error]')?.innerText || '')`, 20_000, 'server refuses a customer');
+      }
+      // the admin
+      await signIn(t, ctx.admin.email, ctx.admin.password);
+      await t.evaluate(`if (location.hash !== '#/admin') location.hash = '#/admin'; true`);
+      await t.waitFor(`!!document.querySelector('[data-testid=admin-tab-wheel]')`, 30_000, 'wheel tab');
+      await t.evaluate(`document.querySelector('[data-testid=admin-tab-wheel]').click(); true`);
+      await t.waitFor(`document.querySelectorAll('[data-testid=wheel-admin-slot]').length === 4`, 20_000, 'slots listed');
+      assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="disc-1"] [data-testid=wheel-admin-share]').innerText`), '25%');
+      // add a 5-JOD gift at a 5-JOD minimum -> loss warning (never blocks)
+      await t.evaluate(`document.querySelector('[data-testid=wheel-admin-add-gift]').click(); true`);
+      await t.evaluate(`(() => { ${SET_VAL}
+        const row = [...document.querySelectorAll('[data-testid=wheel-admin-slot]')].pop();
+        setVal(row.querySelector('[data-testid=wheel-admin-label]'), 'هدية 5 د.أ');
+        setVal(row.querySelector('[data-testid=wheel-admin-value]'), '5');
+        setVal(row.querySelector('[data-testid=wheel-admin-qty]'), '2');
+        setVal(row.querySelector('[data-testid=wheel-admin-weight]'), '1');
+        row.querySelector('input[type=checkbox]').click();
+        const d = document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="disc-1"]');
+        setVal(d.querySelector('[data-testid=wheel-admin-weight]'), '3');
+        setVal(d.querySelector('[data-testid=wheel-admin-min]'), '6');
+        return true; })()`);
+      await t.waitFor(`/هدية 5 د.أ.*15/.test(document.querySelector('[data-testid=wheel-admin-warnings]')?.innerText.replace(/\\n/g, ' ') || '')`, 10_000, 'loss warning shown');
+      await t.evaluate(`(() => { ${SET_VAL} const row = [...document.querySelectorAll('[data-testid=wheel-admin-slot]')].pop(); const inp = [...row.querySelectorAll('input')].find((i) => i.previousElementSibling?.textContent.includes('تكلفة الوحدة')); setVal(inp, '5'); return true; })()`);
+      await shot(t, 'wu06-admin-wheel');
+      await t.evaluate(`document.querySelector('[data-testid=wheel-admin-save]').click(); true`);
+      await t.waitFor(`document.querySelector('[data-testid=wheel-admin-save-result]')?.dataset.tone === 'ok'`, 20_000, 'saved');
+      const c = await get(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`);
+      const d = c.prizes.find((p) => p.id === 'disc-1');
+      assert.equal(d.weight, 3);
+      assert.equal(d.minOrderJod, 6);
+      assert.equal(c.prizes.length, 5);
+      assert.equal((await get(`wheelPool/${WHEEL_CAMPAIGN_ID}_gift-1`))?.remaining, 2);
+      // quantity 3 -> 0 (none used): the prize disappears for visitors
+      await t.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="disc-1"] [data-testid=wheel-admin-qty]'), '0'); return true; })()`);
+      await t.evaluate(`document.querySelector('[data-testid=wheel-admin-save]').click(); true`);
+      await until(async () => (await get(`wheelPool/${WHEEL_CAMPAIGN_ID}_disc-1`))?.remaining === 0, 20_000, 'saved again: pool emptied');
+      assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-admin-save-result]')?.dataset.tone`), 'ok');
+      await fresh(t);
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-segment]')`, 25_000, 'visitor popup');
+      const segs = await t.evaluate(`[...document.querySelectorAll('[data-testid=wheel-segment]')].map((s) => s.dataset.slotId)`);
+      assert.ok(!segs.includes('disc-1'), `sold-out prize hidden: ${segs}`);
+      assert.ok(segs.includes('gift-1'), `new prize shown: ${segs}`);
     }],
-    ['WU04', 'PHONE emulation (390x844, touch): wheel page and checkout gift box usable, no horizontal scroll; a second account on the SAME delivery number is refused while the first gift is open', async (t) => {
+    ['WU07', 'PHONE (390x844, touch): first-visit popup fits (no horizontal scroll), close and spin buttons large enough to tap, wheel inside the screen; checkout prize box usable without horizontal scroll', async (t) => {
+      await ctx.setCampaign([{ id: 'ship-1', type: 'free_delivery', label: 'توصيل مجاني', valueJod: 3, minOrderJod: 5, weight: BIG, quantity: 10 }, ...NONES]);
       const email = 'wheel.phone@example.invalid';
       const pw = 'Test-pass-12345';
-      const uid = await ctx.createGoogleCustomer({ email, password: pw, name: 'زبون الهاتف' });
+      await ctx.createGoogleCustomer({ email, password: pw, name: 'زبون الهاتف' });
       await viewport(t, 390, 844, true);
       await t.send('Emulation.setTouchEmulationEnabled', { enabled: true });
       await signIn(t, email, pw);
-      await openWheel(t);
-      await shot(t, 'wheel-phone-before');
-      assert.match(await spinInUi(t), /مبروك/);
-      await t.waitFor(`!!document.querySelector('[data-testid=wheel-take]')`, 20_000, 'take');
-      assert.equal(await t.evaluate(`document.documentElement.scrollWidth <= innerWidth + 1`), true, 'no horizontal scroll on /wheel');
-      const btn = await t.evaluate(`(() => { const r = document.querySelector('[data-testid=wheel-spin]').getBoundingClientRect(); return { h: Math.round(r.height), w: Math.round(r.width) }; })()`);
-      assert.ok(btn.h >= 44, `spin button tall enough to tap (${btn.h}px)`);
-      { const c = await takeNotCovered(t); assert.ok(c.cookieBar && c.clear, `cookie bar shown AND the prize row not covered (phone): ${JSON.stringify(c)}`); }
-      await shot(t, 'wheel-phone-won');
-      await t.evaluate(`document.querySelector('[data-testid=wheel-take]').click(); true`);
-      await t.waitFor(`location.hash === '#/cart'`, 10_000, 'cart');
+      await t.evaluate(`localStorage.removeItem('anta_wheel_popup_seen_v1'); true`);
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-spin]')`, 25_000, 'popup on the phone');
+      assert.equal(await noHScroll(t), true, 'no horizontal scroll with the popup');
+      const m = await t.evaluate(`(() => { const r = (s) => { const b = document.querySelector(s).getBoundingClientRect(); return { w: Math.round(b.width), h: Math.round(b.height), l: Math.round(b.left), r: Math.round(b.right) }; }; return { close: r('[data-testid=wheel-close]'), spin: r('[data-testid=wheel-spin]'), dial: r('[data-testid=wheel-dial]'), vw: innerWidth }; })()`);
+      assert.ok(m.close.h >= 40 && m.close.w >= 40, `close button tappable ${JSON.stringify(m.close)}`);
+      assert.ok(m.spin.h >= 44, `spin button tappable ${JSON.stringify(m.spin)}`);
+      assert.ok(m.dial.l >= 0 && m.dial.r <= m.vw, `wheel inside the screen ${JSON.stringify(m.dial)}`);
+      await shot(t, 'wu07-phone-popup', { full: false });
+      await spinAndWait(t);
+      assert.match(await waitResult(t), /توصيل مجاني/);
+      // nothing (cookie bar, assistant button) lies over the popup: both ends of the result card are the popup itself
+      await t.evaluate(`document.querySelector('[data-testid=wheel-won]').scrollIntoView({ block: 'center' }); true`);
+      await sleep(400);
+      const cover = await t.evaluate(`(() => { const pop = document.querySelector('[data-testid=wheel-popup]'); const r = document.querySelector('[data-testid=wheel-won]').getBoundingClientRect(); const y = r.top + r.height / 2; const at = (x) => { const e = document.elementFromPoint(x, y); return !!e && pop.contains(e); }; return { left: at(r.left + 12), right: at(r.right - 12), cookie: document.documentElement.hasAttribute('data-cookie-bar') }; })()`);
+      assert.ok(cover.left && cover.right, `result card not covered on the phone ${JSON.stringify(cover)}`);
+      await shot(t, 'wu07-phone-won', { full: false });
+      await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
       await openCheckoutWith(t, CART_OK, email);
-      await t.waitFor(`!!document.querySelector('[data-testid=checkout-wheel-gift]')`, 15_000, 'gift box');
-      assert.equal(await t.evaluate(`document.documentElement.scrollWidth <= innerWidth + 1`), true, 'no horizontal scroll in checkout');
-      await fillToPayment(t, '0795000004');
+      await fillToPayment(t, '0795100007');
+      await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'applies'`, 20_000, 'free delivery applies');
+      assert.ok(await t.evaluate(`!!document.querySelector('[data-testid=summary-free-delivery]')`));
+      assert.equal(await noHScroll(t), true, 'no horizontal scroll in checkout');
       await t.evaluate(`document.querySelector('[data-testid=checkout-wheel-gift]').scrollIntoView({ block: 'center' }); true`);
-      await shot(t, 'checkout-phone-gift', { full: false });
-      assert.equal(await confirmOrder(t), 'success');
-      // another verified account, SAME delivery number, while that gift is still open
-      const email2 = 'wheel.phone2@example.invalid';
-      const uid2 = await ctx.createGoogleCustomer({ email: email2, password: pw, name: 'زبون ثان' });
-      await signIn(t, email2, pw);
-      await openWheel(t);
-      assert.match(await spinInUi(t), /مبروك/);
-      await t.waitFor(`!!document.querySelector('[data-testid=wheel-take]')`, 20_000, 'take');
-      await t.evaluate(`document.querySelector('[data-testid=wheel-take]').click(); true`);
-      await t.waitFor(`location.hash === '#/cart'`, 10_000, 'cart');
-      await openCheckoutWith(t, CART_OK, email2);
-      await fillToPayment(t, '0795000004');
-      assert.equal(await confirmOrder(t), 'rejected');
-      assert.match(await t.evaluate(`document.querySelector('[data-testid=submit-result]').innerText`), /تعذّر إرفاق الهدية/);
-      assert.equal((await spinDoc(uid2, 1)).status, 'issued', 'the second account keeps its prize');
-      assert.equal((await spinDoc(uid, 1)).status, 'reserved');
+      await shot(t, 'wu07-phone-checkout', { full: false });
+      await clickConfirm(t);
+      assert.equal(await outcome(t), 'success');
+      const o = await t.evaluate(`location.hash.split('/').pop()`);
+      const L = await get(`orderLedger/${o}`);
+      assert.equal(L.serverPricing.shipping, 0, 'delivery waived by the server');
+      assert.equal(L.serverPricing.total, 6.75, '7.5 - 0.75 + 0');
     }],
   ];
 }
@@ -288,12 +463,10 @@ export function buildWheelScenarios(ctx) {
 export async function runWheelScenarios(ctx) {
   const results = [];
   ctx.state = {};
-  let first = true;
   for (const [id, name, fn] of buildWheelScenarios(ctx)) {
     if (ctx.only && !ctx.only.has(id)) continue;
-    // WU02/WU03 continue WU01's customer: the data is reset only before WU01 and WU04
-    if (first || id === 'WU04') await ctx.reseed();
-    first = false;
+    // every scenario starts from clean data (its own TEST campaign is set inside)
+    await ctx.reseed();
     const t0 = Date.now();
     const t = await ctx.openTab();
     try {
@@ -301,12 +474,20 @@ export async function runWheelScenarios(ctx) {
       results.push({ id, name, ok: true, ms: Date.now() - t0 });
       console.log(`✔ ${id} ${name} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
     } catch (e) {
-      const extra = ` | toasts: ${await t.evaluate(TOASTS).catch(() => '?')} | hash: ${await t.evaluate('location.hash').catch(() => '?')} | result: ${await t.evaluate(`document.querySelector('[data-testid=submit-result]')?.innerText || ''`).catch(() => '?')}`;
+      const extra = ` | toasts: ${await t.evaluate(TOASTS).catch(() => '?')} | hash: ${await t.evaluate('location.hash').catch(() => '?')} | result: ${await t.evaluate(`(document.querySelector('[data-testid=submit-result]')?.innerText || document.querySelector('[data-testid=submit-blocked]')?.innerText || '')`).catch(() => '?')} | google: ${await t.evaluate(`window.__antaLastGoogleError || ''`).catch(() => '?')}`;
       results.push({ id, name, ok: false, ms: Date.now() - t0, error: `${String(e?.message || e).slice(0, 600)}${extra}`.slice(0, 1400) });
       console.log(`✖ ${id} ${name}\n    ${String(e?.message || e).split('\n')[0]}${extra}`);
+      await shot(t, `${id}-FAILED`).catch(() => {});
     } finally {
+      await ctx.closePopup().catch(() => {});
       await t.close();
     }
   }
   return results;
+}
+
+async function shot(t, name) {
+  const r = await t.send('Page.captureScreenshot', { format: 'jpeg', quality: 60 });
+  const dir = process.env.E2E_SHOTS_DIR;
+  if (dir) writeFileSync(join(dir, `${name}.jpg`), Buffer.from(r.data, 'base64'));
 }

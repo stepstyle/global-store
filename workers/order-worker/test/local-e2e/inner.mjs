@@ -15,7 +15,7 @@ import { runScenarios } from '../../staging/scenarios.mjs';
 import { runSubmitScenarios } from './submit-scenarios.mjs';
 import { runApprovalScenarios } from '../../staging/approval-scenarios.mjs';
 import { makeTestSigner } from '../token-signer.mjs';
-import { launchChrome, openTab } from './cdp.mjs';
+import { launchChrome, openTab, attachTo, pageOpen } from './cdp.mjs';
 import { buildUiScenarios, runUiScenarios } from './ui-scenarios.mjs';
 import { runDeliveryScenarios, dashboardAdminEmail } from './delivery-scenarios.mjs';
 import { runWheelScenarios, WHEEL_CAMPAIGN_ID } from './wheel-scenarios.mjs';
@@ -140,7 +140,8 @@ async function translateEmulatorToken(raw, { orderId, path }) {
   uiAuthLog.push({ path, orderId, sub: claims.sub, forwarded: kind, rawId });
   return {
     kind,
-    token: await signerFor.sign({ iss: claims.iss, aud: claims.aud, sub: claims.sub, user_id: claims.sub, email: claims.email, email_verified: claims.email_verified, ...times }),
+    // the sign-in method is copied as the emulator issued it (google.com / password): ORDER_SIGN_IN=google checks it
+    token: await signerFor.sign({ iss: claims.iss, aud: claims.aud, sub: claims.sub, user_id: claims.sub, email: claims.email, email_verified: claims.email_verified, ...(claims.firebase?.sign_in_provider ? { firebase: { sign_in_provider: claims.firebase.sign_in_provider, ...(claims.firebase.identities ? { identities: claims.firebase.identities } : {}) } } : {}), ...times }),
   };
 }
 
@@ -432,6 +433,9 @@ async function runUiSuite() {
       VITE_FIRESTORE_EMULATOR_HOST: `127.0.0.1:${PORTS.emulator}`,
       VITE_AUTH_EMULATOR_HOST: '127.0.0.1:9099',
       VITE_WORKER_URL: workerUrl,
+      // this suite tests the order PIPELINE with guest orders (the guest path stays available with this setting; the
+      // Google-required checkout is tested by the wheel suite with ORDER_SIGN_IN=google on the Worker)
+      VITE_ORDER_SIGN_IN: 'optional',
     };
     const child = spawn(process.execPath, [join(repoRoot, 'node_modules/vite/bin/vite.js'), '--port', String(PORTS.vite), '--strictPort', '--host', '127.0.0.1'], { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.pipe(log);
@@ -553,6 +557,8 @@ async function runDeliverySuite() {
     VITE_FIREBASE_TARGET: 'emulator', VITE_FIREBASE_PROJECT_ID: PROJECT_ID,
     VITE_FIRESTORE_EMULATOR_HOST: `127.0.0.1:${PORTS.emulator}`, VITE_AUTH_EMULATOR_HOST: `127.0.0.1:${PORTS.authEmulator}`,
     VITE_WORKER_URL: URLS.order, VITE_ORDER_ADMIN_URL: `${URLS.mock}/ui`,
+    // guest orders (pipeline tests), as in the UI suite
+    VITE_ORDER_SIGN_IN: 'optional',
   };
   const vite = spawn(process.execPath, [join(repoRoot, 'node_modules/vite/bin/vite.js'), '--port', String(PORTS.vite), '--strictPort', '--host', '127.0.0.1'], { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
   vite.stdout.pipe(log);
@@ -610,14 +616,21 @@ async function runWheelSuite() {
     await reseed();
     await put('config/roles', { ownerUid });
     await put(`users/${ownerUid}`, { id: ownerUid, name: 'مسؤول اختبار', email: admin.email, role: 'admin', orders: [], createdAt: new Date().toISOString() });
-    // TEST campaign: one TEST prize (the synthetic product p-hundred), always won while it lasts
-    await put(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`, {
-      active: true, minOrderJod: 5, budgetJod: 10, noPrizeWeight: 0, giftOnCancel: 'return',
-      startsAt: '2026-01-01T00:00:00Z', endsAt: '2099-01-01T00:00:00Z', terms: 'شروط تجريبية للاختبار المحلي فقط — ليست حملة حقيقية.',
-      prizes: [{ id: 'test-a', label: 'جائزة تجريبية', productId: 'p-hundred', weight: 1, quantity: 3, unitCostJod: 1 }],
-    });
-    await put(`wheelPool/${WHEEL_CAMPAIGN_ID}_test-a`, { remaining: 3 });
+    // synthetic products for the minimum checks (14.99 / exactly 15 JOD)
+    await put('products/p-1499', { name: 'منتج اختبار 14.99', price: 14.99, stock: 20, category: 'Stationery' });
+    await put('products/p-15', { name: 'منتج اختبار 15', price: 15, stock: 20, category: 'Stationery' });
+    // every scenario sets its own TEST campaign (setCampaign); a neutral default here
+    await setCampaign([{ id: 'test-a', type: 'discount', label: 'خصم تجريبي', valueJod: 1, weight: 1, quantity: 3 }, { id: 'none-1', type: 'none', label: 'حظ أوفر', weight: 1 }]);
     for (const [uid, u] of googleUsers) await put(`users/${uid}`, u);
+  };
+  /** TEST campaign (never a real one): the slots in wheel order; every prize gets its quantity in the pool */
+  const setCampaign = async (prizes, extra = {}) => {
+    await put(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`, {
+      active: true, minOrderJod: 5, budgetJod: 500, giftOnCancel: 'return', prizeValidDays: 7,
+      startsAt: '2026-01-01T00:00:00Z', endsAt: '2099-01-01T00:00:00Z', terms: 'شروط تجريبية للاختبار المحلي فقط — ليست حملة حقيقية.',
+      prizes, ...extra,
+    });
+    for (const p of prizes) if (p.type !== 'none') await put(`wheelPool/${WHEEL_CAMPAIGN_ID}_${p.id}`, { remaining: p.quantity ?? 3 });
   };
   const googleUsers = new Map();
   const log = createWriteStream(join(TMP, 'vite-wheel.log'));
@@ -643,6 +656,17 @@ async function runWheelSuite() {
     shotsDir: process.env.E2E_SHOTS_DIR || join(TMP, 'shots'),
     only: process.env.E2E_ONLY ? new Set(process.env.E2E_ONLY.split(',')) : null,
     openTab: () => openTab(PORTS.cdp),
+    // the Google sign-in POPUP the app opens (Auth EMULATOR's own sign-in page, 127.0.0.1 only)
+    attachPopup: (ms) => attachTo(PORTS.cdp, /\/emulator\/auth\/handler/, ms),
+    popupOpen: () => pageOpen(PORTS.cdp, /\/emulator\/auth\/handler/),
+    closePopup: async () => {
+      const list = await (await fetch(`http://127.0.0.1:${PORTS.cdp}/json/list`)).json();
+      for (const x of list) if (x.type === 'page' && /\/emulator\/auth\/handler/.test(x.url)) await fetch(`http://127.0.0.1:${PORTS.cdp}/json/close/${x.id}`);
+    },
+    setCampaign,
+    countSpins: async () => (await fs.runQuery({ from: [{ collectionId: 'wheelSpins' }] })).length,
+    // the Worker as the browser reaches it (CORS test proxy, no token added)
+    workerUrl: `${URLS.mock}/ui`,
     reseed: reseedAll,
     get: async (path) => {
       const d = await fs.get(path);
@@ -686,7 +710,7 @@ try {
     ...(SUITE === 'delivery' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', SYNC_DIRECT_STATUS: 'true' } : {}),
     // prize wheel: TEST mode with a TEST campaign, a random per-run HMAC secret (never written anywhere), production
     // settings otherwise (except Turnstile: the local web app sends no token)
-    ...(SUITE === 'wheel' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', WHEEL_MODE: 'test', WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(36).toString('base64url') } : {}),
+    ...(SUITE === 'wheel' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', ORDER_SIGN_IN: 'google', WHEEL_MODE: 'test', WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(36).toString('base64url') } : {}),
     ...(SUITE === 'approval' ? {
       APPROVAL_MODE: 'telegram', TELEGRAM_CHAT_ID: APPROVAL.chatId, TELEGRAM_ADMIN_USER_IDS: APPROVAL.adminIds.join(','),
       TELEGRAM_WEBHOOK_SECRET: T.webhook, PRICE_CHECK_MODE: 'enforce',

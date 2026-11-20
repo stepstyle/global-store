@@ -52,6 +52,37 @@ export async function launchChrome({ port, tmpDir, track }) {
 /** Open a new tab and return a small driver for it. */
 export async function openTab(port) {
   const t = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json();
+  return driverFor(port, t, { resize: true });
+}
+
+/**
+ * Wait for an EXISTING page whose URL matches `re` (e.g. the Google sign-in popup the app opened) and attach to it.
+ * Returns null when none appears within `timeoutMs`.
+ */
+export async function attachTo(port, re, timeoutMs = 15_000) {
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+      const t = list.find((x) => x.type === 'page' && re.test(x.url) && x.webSocketDebuggerUrl);
+      if (t) return driverFor(port, t, { resize: false });
+    } catch {}
+    await sleep(200);
+  }
+  return null;
+}
+
+/** is a page whose URL matches `re` still open? */
+export async function pageOpen(port, re) {
+  try {
+    const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+    return list.some((x) => x.type === 'page' && re.test(x.url));
+  } catch {
+    return false;
+  }
+}
+
+async function driverFor(port, t, { resize }) {
   const ws = new WebSocket(t.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
     ws.onopen = resolve;
@@ -102,7 +133,9 @@ export async function openTab(port) {
   };
   await send('Page.enable');
   await send('Runtime.enable');
-  await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  if (resize) await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  // newer headless shells give a page no focus: element.focus() would fire no focus event (dropdowns stay closed)
+  await send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
   return {
     targetId: t.id,
     send,

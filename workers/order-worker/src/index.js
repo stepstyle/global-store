@@ -106,7 +106,7 @@ async function handle(request, env, ctx, cfg) {
       const token = bearerToken(request.headers.get('authorization'));
       if (token !== undefined) {
         const v = await verifyFirebaseIdToken(token, { projectId: cfg.projectId, jwksUrl: cfg.authJwksUrl });
-        auth = { uid: v.uid, signInProvider: v.signInProvider };
+        auth = { uid: v.uid, signInProvider: v.signInProvider, googleLinked: v.googleLinked };
       }
     } catch (e) {
       if (!(e instanceof AuthError)) throw e;
@@ -114,11 +114,12 @@ async function handle(request, env, ctx, cfg) {
       if (e.code === 'AUTH_UNAVAILABLE') return reply({ ok: false, code: 'AUTH_UNAVAILABLE' }, 503);
       return reply({ ok: false, code: e.code }, 401);
     }
-    // ORDER_SIGN_IN=google: no order without a VERIFIED Google sign-in (the token's own sign_in_provider) — checked
-    // before Turnstile (the single-use token is not burned) and before anything is read or written
+    // ORDER_SIGN_IN=google: no order without a VERIFIED Firebase token of an account linked to Google (signed claims:
+    // sign_in_provider google.com, or identities['google.com']) — the same rule as the site (hasGoogleSession). Checked
+    // before Turnstile (the single-use token is not burned) and before anything is read or written.
     if (cfg.orderSignIn === 'google') {
       if (!auth) return reply({ ok: false, code: 'SIGN_IN_REQUIRED' }, 401);
-      if (auth.signInProvider !== 'google.com') return reply({ ok: false, code: 'GOOGLE_SIGN_IN_REQUIRED' }, 401);
+      if (!auth.googleLinked) return reply({ ok: false, code: 'GOOGLE_SIGN_IN_REQUIRED' }, 401);
     }
 
     // after the identity check, so a 401 (refresh + resend) never burns a single-use Turnstile token

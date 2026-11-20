@@ -68,7 +68,8 @@ export default function WheelPopup() {
         </button>
       )}
       {open && (
-        <div className="fixed inset-0 z-[90] flex items-end justify-center bg-ink-950/45 p-0 sm:items-center sm:p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }} data-testid="wheel-popup">
+        // above every other layer (cookie bar, shopping assistant, toasts): a modal must never be covered
+        <div className="fixed inset-0 z-[2147483000] flex items-end justify-center bg-ink-950/45 p-0 sm:items-center sm:p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }} data-testid="wheel-popup">
           <div
             ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="wheel-title"
             className="relative max-h-[92vh] w-full overflow-y-auto rounded-t-4xl bg-gradient-to-b from-paper-50 to-ink-50 p-5 pt-12 shadow-lift outline-none sm:max-w-md sm:rounded-4xl sm:p-7 sm:pt-12"

@@ -335,9 +335,12 @@ test('V15 ORDER_SIGN_IN=google: no token / e-mail-password session refused BEFOR
   assert.equal(pw.status, 401);
   assert.equal(pw.body.code, 'GOOGLE_SIGN_IN_REQUIRED');
   assert.equal(mock.state.calls.filter((c) => c.channel === 'turnstile').length, 0, 'Turnstile token not spent on a refused identity');
+  // a password session of an account LINKED to Google (signed identities claim) is accepted — same rule as the site
+  const linked = await callWorker(e, { method: 'POST', path: '/create-order', headers: await authH(BOB, { firebase: { sign_in_provider: 'password', identities: { 'google.com': ['1234567890'] } } }), body: body(cartOrder(BOB, 'p-5', 1)) });
+  assert.equal(linked.status, 200, linked.text);
   const ok = await callWorker(e, { method: 'POST', path: '/create-order', headers: await authH(ALICE), body: body(cartOrder(ALICE, 'p-5', 1)) });
   assert.equal(ok.status, 200, ok.text);
-  assert.equal(await count('orders'), 1);
+  assert.equal(await count('orders'), 2);
   // default (off): unchanged, a guest order is still accepted
   assert.equal((await callWorker(env(), { method: 'POST', path: '/create-order', headers: { origin: 'https://dairsharaf.com' }, body: { order: cartOrder(null, 'p-5', 1) } })).status, 200);
 });

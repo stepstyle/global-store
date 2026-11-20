@@ -52,7 +52,8 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
   const [result, setResult] = useState<WheelSpin | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // set on EVERY mount (React may mount, unmount and mount again: a flag left false would drop every answer)
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const idToken = async () => (await getFirebaseAuth()?.currentUser?.getIdToken().catch(() => null)) ?? null;
 

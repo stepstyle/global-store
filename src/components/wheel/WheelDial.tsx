@@ -42,15 +42,22 @@ export default function WheelDial({ slots, rotation, durationMs, highlight }: { 
             const a0 = i * seg;
             const a1 = (i + 1) * seg;
             const fill = s.color || (s.type === 'none' ? NONE_FILL : FILLS[i % FILLS.length]);
-            const lines = splitLabel(s.label);
+            // labels in the lower half are turned 180° around their own position so they never read upside down
+            const centreDeg = ((i + 0.5) * 360) / n;
+            const flip = centreDeg > 90 && centreDeg < 270;
+            const lines = flip ? splitLabel(s.label).reverse() : splitLabel(s.label);
+            const yOf = (k: number) => -0.6 + k * font * 1.15;
+            const midY = yOf((lines.length - 1) / 2);
             return (
               <g key={s.id} data-testid="wheel-segment" data-slot-id={s.id} data-slot-type={s.type} data-index={i}>
                 <path d={n === 1 ? 'M0 -1 A1 1 0 1 1 -0.0001 -1 Z' : `M0 0 L${pt(a0)} A1 1 0 ${seg > Math.PI ? 1 : 0} 1 ${pt(a1)} Z`} fill={fill} stroke="#FFFDF9" strokeWidth="0.012" opacity={highlight && highlight !== s.id ? 0.55 : 1} />
-                <g transform={`rotate(${((i + 0.5) * 360) / n})`}>
-                  {s.icon && <text x="0" y={-0.8} textAnchor="middle" dominantBaseline="middle" fontSize={font * 1.3}>{s.icon}</text>}
-                  {lines.map((l, k) => (
-                    <text key={k} x="0" y={-0.6 + k * font * 1.15} textAnchor="middle" dominantBaseline="middle" fontSize={font} fontWeight={800} fill={INK} style={{ fontFamily: '"Readex Pro","IBM Plex Sans Arabic",system-ui,sans-serif' }}>{l}</text>
-                  ))}
+                <g transform={`rotate(${centreDeg})`}>
+                  {s.icon && <text x="0" y={-0.8} textAnchor="middle" dominantBaseline="middle" fontSize={font * 1.3} transform={flip ? 'rotate(180 0 -0.8)' : undefined}>{s.icon}</text>}
+                  <g transform={flip ? `rotate(180 0 ${midY})` : undefined}>
+                    {lines.map((l, k) => (
+                      <text key={k} x="0" y={yOf(k)} textAnchor="middle" dominantBaseline="middle" fontSize={font} fontWeight={800} fill={INK} style={{ fontFamily: '"Readex Pro","IBM Plex Sans Arabic",system-ui,sans-serif' }}>{l}</text>
+                    ))}
+                  </g>
                 </g>
               </g>
             );

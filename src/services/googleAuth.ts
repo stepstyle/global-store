@@ -27,6 +27,8 @@ export async function googlePopup(): Promise<{ outcome: GoogleOutcome; uid?: str
     const res = await signInWithPopup(auth, provider());
     return { outcome: 'ok', uid: res.user.uid };
   } catch (e: any) {
+    // the Firebase error CODE only (never a token or an e-mail): lets support / tests see why a sign-in did not finish
+    try { (globalThis as any).__antaLastGoogleError = String(e?.code || 'unknown').slice(0, 80); } catch { /* ignore */ }
     return { outcome: googleOutcome(e?.code) };
   }
 }

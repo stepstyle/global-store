@@ -48,14 +48,20 @@ async function rejects(promise, code, reason) {
 // ------------------------------------------------------------------ valid
 test('valid token -> uid from sub (+ email flags)', async () => {
   const r = await verify(await signer.sign(claims()));
-  assert.deepEqual(r, { uid: 'alice-uid', email: 'alice@example.com', emailVerified: true, signInProvider: '' });
+  assert.deepEqual(r, { uid: 'alice-uid', email: 'alice@example.com', emailVerified: true, signInProvider: '', googleLinked: false });
 });
 
-test('sign-in provider comes from the SIGNED token (firebase.sign_in_provider)', async () => {
+test('sign-in provider / Google link come from the SIGNED token (firebase.sign_in_provider, firebase.identities)', async () => {
   const g = await verify(await signer.sign({ ...claims(), firebase: { sign_in_provider: 'google.com' } }));
   assert.equal(g.signInProvider, 'google.com');
+  assert.equal(g.googleLinked, true);
   const p = await verify(await signer.sign({ ...claims(), firebase: { sign_in_provider: 'password' } }));
   assert.equal(p.signInProvider, 'password');
+  assert.equal(p.googleLinked, false);
+  const linked = await verify(await signer.sign({ ...claims(), firebase: { sign_in_provider: 'password', identities: { 'google.com': ['1234567890'], email: ['a@example.com'] } } }));
+  assert.equal(linked.googleLinked, true);
+  const fake = await verify(await signer.sign({ ...claims(), firebase: { sign_in_provider: 'password', identities: { 'google.com': 'not-a-list' } } }));
+  assert.equal(fake.googleLinked, false);
 });
 
 test('keys are cached (max-age): 3 verifications -> 1 key fetch', async () => {
