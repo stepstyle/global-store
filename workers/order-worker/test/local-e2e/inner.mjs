@@ -19,6 +19,7 @@ import { makeTestSigner } from '../token-signer.mjs';
 import { launchChrome, openTab, attachTo, pageOpen } from './cdp.mjs';
 import { buildUiScenarios, runUiScenarios } from './ui-scenarios.mjs';
 import { runDeliveryScenarios, dashboardAdminEmail } from './delivery-scenarios.mjs';
+import { runVisualScenarios } from './visual-scenarios.mjs';
 import { runWheelScenarios, WHEEL_CAMPAIGN_ID } from './wheel-scenarios.mjs';
 import { resolve as resolvePath } from 'node:path';
 import { WORKER_ROOT } from './plan.mjs';
@@ -309,7 +310,7 @@ const fs = new Firestore({ projectId: PROJECT_ID, firestoreAuth: 'emulator', url
 // delivery suite: always the rules planned for that rollout (firebase/firestore.rules.on-delivery)
 // E2E_RULES=on-delivery-final (any suite): the proposed final rules for the live site
 // E2E_RULES=on-delivery (any suite): the rules LIVE today — the window between the site deploy and the rules deploy
-const RULES_NAME = process.env.E2E_RULES === 'on-delivery-final' || (SUITE === 'wheel' && !process.env.E2E_RULES) ? 'on-delivery-final' : SUITE === 'delivery' ? 'on-delivery' : ['transition', 'final', 'on-delivery'].includes(process.env.E2E_RULES) ? process.env.E2E_RULES : 'compat';
+const RULES_NAME = process.env.E2E_RULES === 'on-delivery-final' || (SUITE === 'wheel' && !process.env.E2E_RULES) ? 'on-delivery-final' : ['delivery', 'visual', 'preview'].includes(SUITE) ? 'on-delivery' : ['transition', 'final', 'on-delivery'].includes(process.env.E2E_RULES) ? process.env.E2E_RULES : 'compat';
 async function loadCompatRules() {
   const content = readFileSync(RULES_NAME === 'on-delivery-final' ? FILES.onDeliveryFinalRules : RULES_NAME === 'on-delivery' ? FILES.onDeliveryRules : RULES_NAME === 'final' ? FILES.finalRules : RULES_NAME === 'transition' ? FILES.transitionRules : FILES.compatRules, 'utf8');
   console.log(`[inner] emulator rules: firestore.rules.${RULES_NAME} (local test file)`);
@@ -531,7 +532,7 @@ async function runUiSuite() {
 }
 
 // ---------------------------------------------------------------- delivery suite (STOCK_POLICY=on_delivery)
-async function runDeliverySuite() {
+async function startDeliveryStack(viteLabel = 'vite-delivery') {
   const repoRoot = resolvePath(WORKER_ROOT, '../..');
   const base = `http://127.0.0.1:${PORTS.vite}`;
   const AUTH = `http://127.0.0.1:${PORTS.authEmulator}`;
@@ -560,7 +561,7 @@ async function runDeliverySuite() {
   };
   // Vite: checkout talks to the Worker DIRECTLY (guest, real CORS); the dashboard uses VITE_ORDER_ADMIN_URL = the local
   // proxy, which re-signs the Auth-emulator ID token with the run's TEST key (the Worker refuses unsigned tokens)
-  const log = createWriteStream(join(TMP, 'vite-delivery.log'));
+  const log = createWriteStream(join(TMP, `${viteLabel}.log`));
   const env = {
     ...process.env,
     VITE_FIREBASE_TARGET: 'emulator', VITE_FIREBASE_PROJECT_ID: PROJECT_ID,
@@ -572,8 +573,12 @@ async function runDeliverySuite() {
   const vite = spawn(process.execPath, [join(repoRoot, 'node_modules/vite/bin/vite.js'), '--port', String(PORTS.vite), '--strictPort', '--host', '127.0.0.1'], { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
   vite.stdout.pipe(log);
   vite.stderr.pipe(log);
-  children.push({ label: 'vite-delivery', child: vite });
-  await waitReady('vite-delivery', base, 90_000);
+  children.push({ label: viteLabel, child: vite });
+  await waitReady(viteLabel, base, 90_000);
+  return { repoRoot, base, admin, ownerUid, put, reseedAll };
+}
+async function runDeliverySuite() {
+  const { base, admin, ownerUid, put, reseedAll } = await startDeliveryStack('vite-delivery');
   await launchChrome({ port: PORTS.cdp, tmpDir: TMP, track: (child) => children.push({ label: 'chrome', child }) });
   console.log(`[inner] delivery suite: Worker STOCK_POLICY=on_delivery, rules on-delivery, Vite ${base}, headless Chrome`);
   return runDeliveryScenarios({
@@ -599,6 +604,41 @@ async function runDeliverySuite() {
     sinkCalls: async () => (await (await fetch(`${URLS.sink}/calls`, { headers: { 'x-sink-auth': T.read } })).json()).calls || [],
     resetSink: async () => { await fetch(`${URLS.sink}/calls`, { method: 'DELETE', headers: { 'x-sink-auth': T.read } }); },
   });
+}
+
+// ---------------------------------------------------------------- visual check + manual preview (delivery stack, Telegram OFF)
+async function runVisualSuite() {
+  const { base, admin, reseedAll } = await startDeliveryStack('vite-visual');
+  await reseedAll();
+  await launchChrome({ port: PORTS.cdp, tmpDir: TMP, track: (child) => children.push({ label: 'chrome', child }) });
+  const shotsDir = process.env.E2E_SHOTS_DIR || join(TMP, 'visual');
+  console.log(`[inner] visual suite: Worker STOCK_POLICY=on_delivery APPROVAL_MODE=off, Vite ${base}, headless Chrome, screenshots ${shotsDir}`);
+  return runVisualScenarios({
+    base, admin, shotsDir, openTab: () => openTab(PORTS.cdp),
+    get: async (path) => { const d = await fs.get(path); return d.exists ? decodeFields(d.fields) : null; },
+  });
+}
+async function runPreview() {
+  const { base, admin, reseedAll } = await startDeliveryStack('vite-preview');
+  await reseedAll();
+  const minutes = Math.min(Math.max(Number(process.env.E2E_PREVIEW_MINUTES) || 180, 5), 600);
+  let stop;
+  const stopped = new Promise((r) => { stop = r; });
+  // a local STOP address (127.0.0.1 only): ends the preview through the normal clean-up (no orphan emulator / workerd)
+  const stopSrv = http.createServer((req, res) => { res.end('preview stopping - you can close this tab'); stop('stop address'); });
+  await new Promise((r) => stopSrv.listen(0, '127.0.0.1', r));
+  const mask = (e) => String(e).replace(/^(.).*(@.*)$/, '$1***$2');
+  console.log('[inner] ================= LOCAL PREVIEW READY =================');
+  console.log(`[inner] site (guest checkout on):  ${base}/#/`);
+  console.log(`[inner] admin dashboard:           ${base}/#/login   e-mail ${mask(admin.email)} (the dashboard admin address)   password ${admin.password}`);
+  console.log('[inner]   (this account exists ONLY in the local Auth emulator of this run; a new password every run)');
+  console.log(`[inner] order Worker:              ${URLS.order}/   STOCK_POLICY=on_delivery, APPROVAL_MODE=off (Telegram -> local sink, no buttons)`);
+  console.log(`[inner] STOP the preview:          http://127.0.0.1:${stopSrv.address().port}/   (or it stops by itself after ${minutes} min)`);
+  console.log('[inner] ========================================================');
+  const how = await Promise.race([stopped, sleep(minutes * 60_000).then(() => 'time limit')]);
+  stopSrv.close();
+  console.log(`[inner] preview stopped (${how})`);
+  return [{ id: 'PREVIEW', name: `local preview (${how})`, ok: true }];
 }
 
 // ---------------------------------------------------------------- wheel suite (WHEEL_MODE=test, VITE_WHEEL_MODE=test)
@@ -723,6 +763,9 @@ try {
     ...(SUITE === 'ui' ? { TURNSTILE_MODE: 'log' } : {}),
     // stock on delivery (production settings except Turnstile: the local web app sends no token) + the rollback sync
     ...(SUITE === 'delivery' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', SYNC_DIRECT_STATUS: 'true' } : {}),
+    // visual check + manual preview: the owner's FINAL policy (orders accepted automatically, stock on delivery, Telegram
+    // notifications only) — production settings except Turnstile (the local web app sends no token)
+    ...(SUITE === 'visual' || SUITE === 'preview' ? { STOCK_POLICY: 'on_delivery', APPROVAL_MODE: 'off', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log' } : {}),
     // prize wheel: TEST mode with a TEST campaign, a random per-run HMAC secret (never written anywhere), production
     // settings otherwise (except Turnstile: the local web app sends no token)
     ...(SUITE === 'wheel' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', ORDER_SIGN_IN: 'google', WHEEL_MODE: E2E_WHEEL_MODE, WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(36).toString('base64url') } : {}),
@@ -771,6 +814,10 @@ try {
     results = await runUiSuite();
   } else if (SUITE === 'delivery') {
     results = await runDeliverySuite();
+  } else if (SUITE === 'visual') {
+    results = await runVisualSuite();
+  } else if (SUITE === 'preview') {
+    results = await runPreview();
   } else if (SUITE === 'wheel') {
     results = await runWheelSuite();
   } else if (SUITE === 'approval-live') {

@@ -36,8 +36,11 @@ const SUGGESTIONS = [
 
 const waAsk = (q: string) => `${STORE_WHATSAPP_URL}?text=${encodeURIComponent(`مرحبا، بدي أستفسر عن: ${q}`)}`;
 
-// pages where a floating button would cover the page's own primary actions (checkout, cart, login, dashboard)
-const HIDDEN_ON = /^\/(checkout|cart|login|admin|order-success)/;
+// pages where a floating button would cover the page's own primary actions (checkout, cart, login, dashboard, the
+// customer's orders / tracking, the contact page — which has its own channels)
+const HIDDEN_ON = /^\/(checkout|cart|login|admin|order-success|my-orders|tracking|contact)/;
+// product page on PHONES: the round button sat on the quantity (+) control of the first screen
+const PHONE_HIDDEN_ON = /^\/product\//;
 
 const ShopAssistant: React.FC = () => {
   const { products, language, isCartOpen } = useCart() as any;
@@ -86,7 +89,7 @@ const ShopAssistant: React.FC = () => {
           data-testid="assistant-open"
           onClick={() => setOpen(true)}
           // phones: a compact round button (it used to cover the price / add button of the product cards while scrolling)
-          className="fixed z-[90] bottom-5 end-4 sm:end-6 inline-flex items-center gap-2 rounded-full bg-ink-900 text-white p-2.5 sm:ps-3.5 sm:pe-4 sm:py-3 shadow-lift ring-1 ring-gold-300/40 hover:bg-ink-800 transition"
+          className={`fixed z-[90] bottom-5 end-4 sm:end-6 ${PHONE_HIDDEN_ON.test(pathname) ? 'hidden sm:inline-flex' : 'inline-flex'} items-center gap-2 rounded-full bg-ink-900 text-white p-2.5 sm:ps-3.5 sm:pe-4 sm:py-3 shadow-lift ring-1 ring-gold-300/40 hover:bg-ink-800 transition`}
           aria-label={isAr ? 'مساعد التسوق' : 'Shopping assistant'}
         >
           <span className="w-7 h-7 rounded-full bg-gold-400 text-ink-900 flex items-center justify-center"><Sparkles size={15} /></span>

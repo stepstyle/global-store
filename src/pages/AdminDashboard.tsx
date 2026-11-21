@@ -33,6 +33,8 @@ import { useCart } from '../App';
 import Button from '../components/Button';
 import EditProductModal from '../components/EditProductModal';
 import AutoApprovalSwitch from '../components/AutoApprovalSwitch';
+// the Telegram auto-approval switch only in a build that asks for it (VITE_AUTO_APPROVAL_UI=on); off by default
+const AUTO_APPROVAL_UI = (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_AUTO_APPROVAL_UI === 'on';
 import { Product, Category, Order } from '../types';
 import { db } from '../services/storage';
 import SEO from '../components/SEO';
@@ -1185,7 +1187,9 @@ const AdminDashboard: React.FC = () => {
         {/* ORDERS (🚀 التعديل الاحترافي هنا) */}
         {activeTab === 'orders' && (
           <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 animate-in fade-in">
-            <AutoApprovalSwitch />
+            {/* Telegram auto-approval switch: NOT used under the owner's final policy (orders accepted automatically,
+                stock on delivery, Telegram = notifications only). Shown only in a build that explicitly enables it. */}
+            {AUTO_APPROVAL_UI && <AutoApprovalSwitch />}
             <h3 className="font-bold text-lg mb-6 flex items-center gap-3">
               {t('orderManagement')}
               {newOrdersCount > 0 && (
@@ -1196,7 +1200,8 @@ const AdminDashboard: React.FC = () => {
             </h3>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left rtl:text-right">
+              {/* phones: the table keeps a readable width and scrolls sideways (the order number no longer breaks letter by letter) */}
+              <table className="w-full min-w-[760px] text-sm text-left rtl:text-right">
                 <thead className="text-xs text-slate-500 uppercase bg-slate-50">
                   <tr>
                     <th className="px-4 py-3">ID</th>
@@ -1222,7 +1227,7 @@ const AdminDashboard: React.FC = () => {
                       <tr key={order.id} className={`transition-colors align-top ${isProcessingThis ? 'bg-slate-50 opacity-50 pointer-events-none' : 'hover:bg-slate-50'}`}>
                         <td className="px-4 py-3">
                           <div className="flex items-start gap-2">
-                            <div className="font-medium text-secondary-dark break-all">
+                            <div className="font-medium text-secondary-dark whitespace-nowrap">
                               {order.id}
                               {Array.isArray((order as any).items) && (order as any).items.some((it: any) => it?.gift === true) && (
                                 <span className="ms-1 inline-block rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-900" data-testid="admin-gift-badge" title="يتضمن هدية عجلة الجوائز">🎁 هدية</span>
