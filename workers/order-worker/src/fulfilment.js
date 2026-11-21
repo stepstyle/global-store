@@ -177,38 +177,45 @@ export async function changeOrderStatus(fs, cfg, { orderId, status, confirmRetur
     const O = decodeFields(orderDoc.fields);
     const from = String(O.status || 'new');
     if (from === status) return { status: 200, body: { ok: true, orderId, status, result: 'unchanged', inventory: L.inventory || 'none' } };
-    // on_acceptance, not decided yet: only Telegram / automatic ACCEPTANCE moves it forward (that is where the stock is
-    // deducted). Cancelling it from the dashboard = rejecting it (reservation released) — the same commit path.
+    // on_acceptance, not decided yet:
+    //  - Telegram approval ON: only Telegram / automatic ACCEPTANCE moves it forward (where its stock is deducted);
+    //    cancelling it from the dashboard = rejecting it (reservation released) — the same commit path.
+    //  - Telegram approval OFF (owner's final decision 2026-11-21: orders accepted automatically, stock deducted ONLY on
+    //    delivery): the order is CONVERTED to on_delivery in the same commit as this status change. Nothing is deducted
+    //    now; its existing reservation is kept and the on_delivery rules apply from here on (processing / shipped: no
+    //    effect, delivered: deducted ONCE + reservation released, cancelled: reservation released). The ledger keeps the
+    //    trace (convertedFrom). Orders already ACCEPTED (stock deducted) are never converted: they keep their record.
+    let LP = L;          // the ledger as the stock rules must see it
+    let convert = false; // true -> this commit converts the order to on_delivery
     if (L.stockPolicy === 'on_acceptance' && (L.decision || 'pending') === 'pending') {
-      if (status !== 'cancelled') {
-        if (cfg.approvalMode === 'telegram') return refuse(409, 'APPROVAL_PENDING', { from, to: status });
-        // Telegram approval switched OFF (owner, 2026-11-21: orders are accepted automatically, stock on delivery).
-        // An order created EARLIER under on_acceptance and still pending would otherwise be stuck (no button left):
-        // moving it forward from the dashboard ACCEPTS it first through its own policy (its reserved quantities are
-        // deducted once, same atomic commit as a Telegram acceptance), then the requested status is applied below.
-        const d = await decideOrder(fs, cfg, { orderId, action: 'accept', actor: { source: 'admin', userId: String(actor?.uid || '') } });
-        if (d.result === 'accepted' || String(d.result).startsWith('already_')) continue; // re-read, then apply the status
+      if (cfg.approvalMode === 'telegram') {
+        if (status !== 'cancelled') return refuse(409, 'APPROVAL_PENDING', { from, to: status });
+        const d = await decideOrder(fs, cfg, { orderId, action: 'reject', actor: { source: 'admin', userId: String(actor?.uid || '') } });
+        if (d.result === 'rejected') return { status: 200, body: { ok: true, orderId, status: 'cancelled', result: 'changed', inventory: 'released' } };
         if (d.result === 'busy') return refuse(503, 'BUSY');
-        if (d.result === 'cannot_accept') return refuse(409, 'INSUFFICIENT_STOCK', { problems: d.problems });
-        return refuse(409, 'APPROVAL_PENDING', { from, to: status, reason: d.result });
+        continue; // decided meanwhile (accepted by Telegram / automatically): re-read and apply the cancellation rules
       }
-      const d = await decideOrder(fs, cfg, { orderId, action: 'reject', actor: { source: 'admin', userId: String(actor?.uid || '') } });
-      if (d.result === 'rejected') return { status: 200, body: { ok: true, orderId, status: 'cancelled', result: 'changed', inventory: 'released' } };
-      if (d.result === 'busy') return refuse(503, 'BUSY');
-      continue; // decided meanwhile (accepted by Telegram / automatically): re-read and apply the cancellation rules
+      if ((L.inventory || 'none') !== 'reserved') return refuse(409, 'APPROVAL_PENDING', { from, to: status, reason: 'not_reserved' });
+      LP = { ...L, stockPolicy: 'on_delivery' };
+      convert = true;
     }
     if (from === 'cancelled' || (from === 'delivered' && status !== 'cancelled')) return refuse(409, 'TRANSITION_NOT_ALLOWED', { from, to: status });
 
     const at = new Date();
     const by = { source: 'admin', uid: String(actor?.uid || '') };
-    const eff = await planStockEffect(fs, L, from, status, { confirmReturn, at, by, orderId });
+    const eff = await planStockEffect(fs, LP, from, status, { confirmReturn, at, by, orderId });
     if (eff.refusal) return eff.refusal;
     const history = [...(Array.isArray(L.statusHistory) ? L.statusHistory : []), { from, to: status, at, by }].slice(-HISTORY_MAX);
     // prize wheel (only orders whose ledger carries `wheel`): prize consumed / given back, chance granted / revoked
-    const wheelW = await wheelStatusWrites(fs, L, orderId, from, status, at);
+    const wheelW = await wheelStatusWrites(fs, LP, orderId, from, status, at);
+    const conversion = convert ? { stockPolicy: 'on_delivery', convertedFrom: 'on_acceptance', convertedAt: at, convertedBy: by, decision: 'auto' } : {};
     const writes = [
-      ledgerUpdate(fs, orderId, ledgerDoc, { ...eff.ledgerFields, inventory: eff.nextInv, statusHistory: history }),
-      orderUpdate(fs, orderId, orderDoc, { status, seenByAdmin: true, inventory: { policy: L.stockPolicy, state: eff.nextInv }, ...(L.stockPolicy === 'on_acceptance' && status === 'cancelled' && from !== 'delivered' ? { approval: { policy: 'telegram', state: 'cancelled', decidedAt: L.decidedAt ?? null, decidedBy: L.decidedBy ?? null, cancelledAt: at, cancelledBy: by } } : {}) }),
+      ledgerUpdate(fs, orderId, ledgerDoc, { ...eff.ledgerFields, ...conversion, inventory: eff.nextInv, statusHistory: history }),
+      orderUpdate(fs, orderId, orderDoc, {
+        status, seenByAdmin: true, inventory: { policy: LP.stockPolicy, state: eff.nextInv },
+        ...(convert ? { approval: { policy: 'off', state: 'auto', convertedFrom: 'on_acceptance', convertedAt: at } } : {}),
+        ...(LP.stockPolicy === 'on_acceptance' && status === 'cancelled' && from !== 'delivered' ? { approval: { policy: 'telegram', state: 'cancelled', decidedAt: L.decidedAt ?? null, decidedBy: L.decidedBy ?? null, cancelledAt: at, cancelledBy: by } } : {}),
+      }),
       ...eff.writes,
       ...wheelW,
     ];
