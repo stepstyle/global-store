@@ -190,6 +190,106 @@ test('P14 SWITCH DAY: orders created by today\'s production Worker (on_delivery,
   assert.equal(await productStock('p-simple'), 7, 'never twice');
 });
 
+// ---------------------------------------------------------------- launch transition (owner 2026-11-21)
+// The launch Worker: on_acceptance + Telegram + wheel live, ORDER_SIGN_IN NOT set yet (the current site still has guests)
+const LAUNCH = { ...WHEEL };
+const TODAY = { STOCK_POLICY: 'on_delivery', APPROVAL_MODE: 'off' };
+
+test('P15 orders from the Nov 16-18 approval version (on_approval ledger) under the launch Worker: one deduction at most, never again', async () => {
+  const OLD_APPROVAL = { STOCK_POLICY: 'on_creation' }; // + APPROVAL_MODE=telegram = the on_approval behaviour of version 274978a8
+  const pend = await create(makeOrder([line('p-simple', 2)]), env(OLD_APPROVAL));
+  const acc = await create(makeOrder([line('p-simple', 3)]), env(OLD_APPROVAL));
+  const done = await create(makeOrder([line('p-simple', 1)]), env(OLD_APPROVAL));
+  assert.equal((await ledger(pend.id)).stockPolicy, 'on_approval');
+  await press(env(OLD_APPROVAL), acc.id, 'acc');
+  assert.equal(await productStock('p-simple'), 7, 'accepted back then: deducted once');
+  // the owner later handled `done` from the dashboard (direct write, as the old site did): status no longer new
+  await putDoc(`orders/${done.id}`, { ...(await order(done.id)), status: 'delivered' });
+  // ---- the launch Worker ----
+  const e = env(LAUNCH);
+  await press(e, done.id, 'acc');
+  assert.equal(await productStock('p-simple'), 7, 'an order already handled is never deducted by an old button');
+  await press(e, pend.id, 'acc');
+  assert.equal(await productStock('p-simple'), 5, 'a still-undecided old order: deducted ONCE on acceptance');
+  await press(e, pend.id, 'acc');
+  assert.equal(await productStock('p-simple'), 5);
+  await press(e, acc.id, 'cfc');
+  assert.equal(await productStock('p-simple'), 8, 'an accepted old order cancelled: back ONCE');
+  await press(e, acc.id, 'cfc');
+  assert.equal(await productStock('p-simple'), 8, 'never twice');
+  // the dashboard keeps its old path for these orders (not Worker-managed): the Worker refuses, the browser writes directly
+  assert.equal((await setStatus(e, pend.id, 'shipped')).status, 409);
+  assert.equal(await reserved('p-simple'), 0, 'no reservation invented for old orders');
+});
+
+test('P16 ROLLBACK BY SETTINGS with orders still pending: nothing lost, nothing doubled; forward again works', async () => {
+  const e = env(LAUNCH);
+  const p1 = await create(makeOrder([line('p-simple', 2)]), e);
+  const p2 = await create(makeOrder([line('p-simple', 3)]), e);
+  const a1 = await create(makeOrder([line('p-simple', 1)]), e);
+  await press(e, a1.id, 'acc');
+  assert.equal(await productStock('p-simple'), 9);
+  assert.equal(await reserved('p-simple'), 5);
+  // ---- rollback: same new code, today's settings (on_delivery, Telegram off) ----
+  const r = env(TODAY);
+  // Telegram buttons are off: a press changes nothing
+  const off = await press(r, p1.id, 'acc');
+  assert.notEqual(off.status, 200);
+  assert.equal(await productStock('p-simple'), 9);
+  // a pending order cannot be moved forward (no deduction behind the owner's back) but CAN be cancelled = rejected
+  assert.equal((await setStatus(r, p2.id, 'processing')).status, 409);
+  assert.equal(await reserved('p-simple'), 5, 'reservation kept');
+  assert.equal((await setStatus(r, p1.id, 'cancelled')).status, 200);
+  assert.equal(await reserved('p-simple'), 3, 'p1 released once');
+  await setStatus(r, p1.id, 'cancelled');
+  assert.equal(await reserved('p-simple'), 3);
+  // the accepted one follows its own policy: delivered = nothing more, stock unchanged
+  assert.equal((await setStatus(r, a1.id, 'delivered')).status, 200);
+  assert.equal(await productStock('p-simple'), 9);
+  // a new order under the rollback settings: the old on_delivery behaviour
+  const n = await create(makeOrder([line('p-simple', 1)]), r);
+  assert.equal((await ledger(n.id)).stockPolicy, 'on_delivery');
+  // ---- forward again: the pending order is still decidable ----
+  await press(e, p2.id, 'acc');
+  assert.equal(await productStock('p-simple'), 6);
+  assert.equal(await reserved('p-simple'), 1, 'only the new on_delivery order is still reserved');
+});
+
+test('P17 the OPENING CAMPAIGN (50 JOD / 30 days) saved through the dashboard endpoint; a won prize goes through acceptance and delivery inside the budget', async () => {
+  const { launchCampaign } = await import('../../../src/services/wheelAdmin.ts');
+  const e = env(LAUNCH);
+  const save = await callWorker(e, { method: 'POST', path: '/admin/wheel/campaign', headers: await authH(OWNER), body: { campaign: launchCampaign(new Date()) } });
+  assert.equal(save.status, 200, save.text);
+  const adm = (await callWorker(e, { method: 'GET', path: '/admin/wheel', headers: await authH(OWNER) })).body;
+  assert.equal(adm.budget.allowanceJod, 50);
+  assert.equal(adm.budget.availableJod, 50);
+  // the unknown-cost prizes are stored but never offered
+  const st = (await callWorker(e, { method: 'GET', path: '/wheel/state', headers: await authH('p17Viewer0000000000000000000V') })).body;
+  assert.equal(st.campaign, 'open');
+  for (const id of ['watch-1', 'toy-1', 'acc-1']) assert.ok(!JSON.stringify(st).includes(`"${id}"`), `${id} not offered`);
+  // spin with fresh accounts until a prize usable on THIS order (gift or cash discount) comes up
+  let won = null; let uid = null;
+  for (let i = 0; i < 120 && !won; i++) {
+    uid = `p17Uid${String(i).padStart(24, '0')}`;
+    const s = (await callWorker(e, { method: 'POST', path: '/wheel/spin', headers: await authH(uid), body: {} })).body.result;
+    if (s && ['gift-2', 'gift-3', 'gift-4', 'gift-5', 'disc-1', 'disc-4', 'disc-5'].includes(s.prizeId)) won = s;
+  }
+  assert.ok(won, 'a prize was won within 120 spins');
+  const held = (await getDecoded(`wheelBudget/${CID}`)).heldMils;
+  assert.ok(held > 0 && held <= 50_000, 'held cost inside the 50 JOD');
+  const discount = won.prizeId.startsWith('disc-') ? Number(won.prizeId.split('-')[1]) : 0;
+  const o = await create(makeOrder([line('p-simple', 7)], { uid, discount }), e, { uid, spinId: won.spinId });
+  assert.equal(await reserved('p-simple'), 7);
+  await press(e, o.id, 'acc');
+  assert.equal(await productStock('p-simple'), 3, 'deducted once on acceptance (a generic gift takes no product stock)');
+  assert.equal((await setStatus(e, o.id, 'delivered')).status, 200);
+  assert.equal(await productStock('p-simple'), 3, 'nothing more on delivery');
+  const b = await getDecoded(`wheelBudget/${CID}`);
+  assert.equal(b.deliveredOrders, 1);
+  assert.ok(b.spentMils > 0 && b.spentMils + b.heldMils <= 50_000, 'spent + held never above 50 JOD');
+  assert.equal((await getDecoded(`wheelSpins/${won.spinId}`)).status, 'consumed');
+});
+
 test('P04 cancel AFTER acceptance from Telegram (confirm step): stock back ONCE; a second cancel changes nothing', async () => {
   const o = await create(makeOrder([line('p-simple', 4)]));
   await press(env(), o.id, 'acc');
