@@ -290,6 +290,22 @@ test('P17 the OPENING CAMPAIGN (50 JOD / 30 days) saved through the dashboard en
   assert.equal((await getDecoded(`wheelSpins/${won.spinId}`)).status, 'consumed');
 });
 
+test('P18 the secret-match probe {"update_id":0}: 200 with the right secret, 401 otherwise — no order, stock, ledger or Telegram call touched', async () => {
+  const e = env(LAUNCH);
+  const o = await create(makeOrder([line('p-simple', 2)]), e);
+  const before = { stock: await productStock('p-simple'), reserved: await reserved('p-simple'), ledger: JSON.stringify(await ledger(o.id)), order: JSON.stringify(await order(o.id)) };
+  const tgBefore = mock.state.calls.filter((c) => c.channel === 'telegram').length + (mock.state.tgUi?.length || 0);
+  const probe = (h) => callWorker(e, { method: 'POST', path: '/telegram/webhook', headers: h, body: { update_id: 0 } });
+  assert.equal((await probe({ 'x-telegram-bot-api-secret-token': SECRET })).status, 200, 'right secret');
+  assert.equal((await probe({ 'x-telegram-bot-api-secret-token': 'f'.repeat(64) })).status, 401, 'other secret');
+  assert.equal((await probe({})).status, 401, 'no secret');
+  assert.equal(await productStock('p-simple'), before.stock);
+  assert.equal(await reserved('p-simple'), before.reserved);
+  assert.equal(JSON.stringify(await ledger(o.id)), before.ledger, 'ledger untouched');
+  assert.equal(JSON.stringify(await order(o.id)), before.order, 'order untouched');
+  assert.equal(mock.state.calls.filter((c) => c.channel === 'telegram').length + (mock.state.tgUi?.length || 0), tgBefore, 'no Telegram call');
+});
+
 test('P04 cancel AFTER acceptance from Telegram (confirm step): stock back ONCE; a second cancel changes nothing', async () => {
   const o = await create(makeOrder([line('p-simple', 4)]));
   await press(env(), o.id, 'acc');
