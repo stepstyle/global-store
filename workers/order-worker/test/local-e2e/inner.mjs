@@ -624,13 +624,13 @@ async function runVisualSuite() {
 }
 // the preview's DEMO campaign: clearly fake prizes, local emulator only, never a real campaign / budget / coupon
 const DEMO_PRIZES = [
-  { id: 'demo-disc-1', type: 'discount', label: 'خصم 1 د.أ (تجريبي)', icon: '💸', valueJod: 1, unitCostJod: 1, minOrderJod: 5, weight: 3, quantity: 100, costConfirmed: true },
+  { id: 'demo-disc-1', type: 'discount', label: 'خصم 1 د.أ', description: 'جائزة تجريبية — ليست حقيقية', icon: '💸', valueJod: 1, unitCostJod: 1, minOrderJod: 5, weight: 3, quantity: 100, costConfirmed: true },
   { id: 'none-1', type: 'none', label: 'حظ أوفر', weight: 2 },
-  { id: 'demo-ship', type: 'free_delivery', label: 'توصيل مجاني (تجريبي)', icon: '🚚', valueJod: 3, unitCostJod: 3, minOrderJod: 5, weight: 2, quantity: 100, costConfirmed: true },
+  { id: 'demo-ship', type: 'free_delivery', label: 'توصيل مجاني', description: 'جائزة تجريبية — ليست حقيقية', icon: '🚚', valueJod: 3, unitCostJod: 3, minOrderJod: 5, weight: 2, quantity: 100, costConfirmed: true },
   { id: 'none-2', type: 'none', label: 'حظ أوفر', weight: 2 },
-  { id: 'demo-gift', type: 'gift', label: 'هدية تجريبية', icon: '🎁', valueJod: 2, unitCostJod: 2, minOrderJod: 5, weight: 2, quantity: 100, costConfirmed: true },
+  { id: 'demo-gift', type: 'gift', label: 'هدية تجريبية', description: 'جائزة تجريبية — ليست حقيقية', icon: '🎁', valueJod: 2, unitCostJod: 2, minOrderJod: 5, weight: 2, quantity: 100, costConfirmed: true },
   { id: 'none-3', type: 'none', label: 'حظ أوفر', weight: 2 },
-  { id: 'demo-second-4', type: 'discount', label: 'خصم 4 على الطلب الثاني (تجريبي)', icon: '🔁', valueJod: 4, unitCostJod: 4, minOrderJod: 15, appliesTo: 'next_order', weight: 1, quantity: 50, costConfirmed: true },
+  { id: 'demo-second-4', type: 'discount', label: 'خصم 4 د.أ', description: 'على الطلب الثاني — جائزة تجريبية', icon: '🔁', valueJod: 4, unitCostJod: 4, minOrderJod: 15, appliesTo: 'next_order', weight: 1, quantity: 50, costConfirmed: true },
 ];
 async function seedDemoWheel(put) {
   await put(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`, {
@@ -653,6 +653,14 @@ async function runPreview() {
     return runPreviewWheelCheck({
       base, shotsDir: process.env.E2E_SHOTS_DIR || join(TMP, 'preview-wheel'), openTab: () => openTab(PORTS.cdp),
       guestSpins: async () => (await fs.runQuery({ from: [{ collectionId: 'wheelGuestSpins' }] })),
+      // layout check only: the REAL opening campaign's names (12 slots) in the LOCAL emulator — nothing is saved elsewhere
+      seedLaunchLabels: async () => {
+        const { launchCampaign } = await import('../../../../src/services/wheelAdmin.ts');
+        const c = launchCampaign(new Date());
+        await put(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`, { ...c, terms: 'فحص تصميم محلي فقط — ليست حملة حقيقية.' });
+        for (const p of c.prizes) if (p.type !== 'none') await put(`wheelPool/${WHEEL_CAMPAIGN_ID}_${p.id}`, { remaining: p.quantity || 0 });
+      },
+      restoreDemo: () => seedDemoWheel(put),
     });
   }
   const minutes = Math.min(Math.max(Number(process.env.E2E_PREVIEW_MINUTES) || 180, 5), 600);

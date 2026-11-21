@@ -25,6 +25,15 @@ export async function runPreviewWheelCheck(ctx) {
     const r = await t.send('Page.captureScreenshot', { format: 'jpeg', quality: 70, captureBeyondViewport: false });
     writeFileSync(join(ctx.shotsDir, `${name}.jpg`), Buffer.from(r.data, 'base64'));
   };
+  // a screenshot of the wheel itself (the dial), sharp, for the design review
+  const dialShot = async (t, name) => {
+    await sleep(400);
+    const r = await t.evaluate(`(() => { const b = document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-dial]').getBoundingClientRect(); return { x: b.left - 12, y: b.top - 16, width: b.width + 24, height: b.height + 28 }; })()`);
+    const img = await t.send('Page.captureScreenshot', { format: 'png', clip: { ...r, scale: 2 } });
+    writeFileSync(join(ctx.shotsDir, `${name}.png`), Buffer.from(img.data, 'base64'));
+  };
+  const metrics = (t) => t.evaluate(`(() => { const s = document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-svg]'); return { font: Number(s.dataset.font), ellipsized: Number(s.dataset.ellipsized), lines: [...s.querySelectorAll('[data-testid=wheel-segment] text')].filter((x) => !/\\p{Extended_Pictographic}/u.test(x.textContent)).map((x) => x.textContent) }; })()`);
+
   for (const vp of VIEWPORTS) {
     const t = await ctx.openTab();
     const id = `PW-${vp.name}`;
@@ -37,11 +46,15 @@ export async function runPreviewWheelCheck(ctx) {
       const segs = await t.evaluate(`[...document.querySelectorAll('[data-testid=wheel-popup] [data-testid=wheel-segment]')].map((s) => s.dataset.slotType)`);
       const terms = await t.evaluate(`document.querySelector('[data-testid=wheel-popup]').innerText`);
       await shot(t, `${vp.name}-wheel-popup`);
+      await dialShot(t, `${vp.name}-dial-before-spin`);
+      const m0 = await metrics(t);
+      console.log(`    layout ${vp.name} (demo): font ${m0.font} units, truncated lines ${m0.ellipsized}, labels: ${m0.lines.join(' | ')}`);
       await t.waitFor(`!document.querySelector('[data-testid=wheel-spin]')?.disabled`, 20_000, 'spin button enabled');
       await t.send('Runtime.evaluate', { expression: `document.querySelector('[data-testid=wheel-spin]').click(); true`, userGesture: true, returnByValue: true });
       await t.waitFor(`(() => { const r = document.querySelector('[data-testid=wheel-result]'); return r && r.querySelector('[data-testid=wheel-won],[data-testid=wheel-no-prize],[data-testid=wheel-message]') ? r.innerText : ''; })()`, 30_000, 'spin result');
       await sleep(800);
       await shot(t, `${vp.name}-wheel-result`);
+      await dialShot(t, `${vp.name}-dial-after-stop`);
       const won = await t.evaluate(`!!document.querySelector('[data-testid=wheel-won]')`);
       const stored = (await ctx.guestSpins()).length;
       // close, then the floating wheel button (FAB) reopens it
@@ -50,7 +63,7 @@ export async function runPreviewWheelCheck(ctx) {
       const fab = await t.evaluate(`!!document.querySelector('[data-testid=wheel-fab]')`);
       await shot(t, `${vp.name}-home-with-wheel-button`);
       const errs = await t.evaluate(`(window.__pwErrs || []).slice(0, 5)`);
-      const ok = segs.length >= 4 && segs.filter((s) => s === 'none').length === 3 && /تجريبي/.test(terms) && stored >= 1 && fab && errs.length === 0;
+      const ok = segs.length >= 4 && segs.filter((s) => s === 'none').length === 3 && /تجريبي/.test(terms) && stored >= 1 && fab && errs.length === 0 && m0.ellipsized === 0 && m0.font >= 7;
       record(id, `${vp.name}: popup on the home page, ${segs.length} demo segments (3 "حظ أوفر"), spin -> ${won ? 'a DEMO prize' : 'no prize'} stored on the local server, wheel button visible, no page error`, ok,
         `segments=${segs.join(',')} demoTerms=${/تجريبي/.test(terms)} storedSpins=${stored} fab=${fab} errors=${errs.join(' | ')}`);
     } catch (e) {
@@ -58,6 +71,32 @@ export async function runPreviewWheelCheck(ctx) {
     } finally {
       await t.close();
     }
+  }
+
+  // layout with the REAL opening campaign's names (12 slots, the narrowest slices) — LOCAL emulator only, then back to the demo
+  if (ctx.seedLaunchLabels) {
+    await ctx.seedLaunchLabels();
+    for (const vp of VIEWPORTS) {
+      const t = await ctx.openTab();
+      const id = `PW-${vp.name}-launch-labels`;
+      try {
+        await t.send('Emulation.setDeviceMetricsOverride', { width: vp.width, height: vp.height, deviceScaleFactor: vp.dpr, mobile: vp.mobile });
+        await t.send('Storage.clearDataForOrigin', { origin: ctx.base, storageTypes: 'all' });
+        await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
+        await t.waitFor(`!!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-spin]')`, 30_000, 'wheel popup');
+        await sleep(800);
+        await dialShot(t, `${vp.name}-dial-launch-labels`);
+        const m = await metrics(t);
+        const n = await t.evaluate(`document.querySelectorAll('[data-testid=wheel-popup] [data-testid=wheel-segment]').length`);
+        console.log(`    layout ${vp.name} (launch names, ${n} slots): font ${m.font} units, truncated lines ${m.ellipsized}, labels: ${m.lines.join(' | ')}`);
+        record(id, `${vp.name}: the opening campaign's ${n} names fit (font ${m.font} >= 7 units, nothing truncated)`, m.font >= 7 && m.ellipsized === 0, `font=${m.font} truncated=${m.ellipsized}`);
+      } catch (e) {
+        record(id, `${vp.name}: opening campaign names`, false, String(e?.message || e).split('\n')[0]);
+      } finally {
+        await t.close();
+      }
+    }
+    await ctx.restoreDemo();
   }
   return results;
 }
