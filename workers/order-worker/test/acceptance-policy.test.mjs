@@ -236,20 +236,26 @@ test('P16 ROLLBACK BY SETTINGS with orders still pending: nothing lost, nothing 
   const off = await press(r, p1.id, 'acc');
   assert.notEqual(off.status, 200);
   assert.equal(await productStock('p-simple'), 9);
-  // a pending order cannot be moved forward (no deduction behind the owner's back) but CAN be cancelled = rejected
-  assert.equal((await setStatus(r, p2.id, 'processing')).status, 409);
-  assert.equal(await reserved('p-simple'), 5, 'reservation kept');
+  // owner's decision (2026-11-21, Telegram approval OFF = orders accepted automatically): moving a pending order forward
+  // from the dashboard ACCEPTS it through its own policy — its reservation becomes ONE deduction, never two
+  assert.equal((await setStatus(r, p2.id, 'processing')).status, 200);
+  assert.equal((await ledger(p2.id)).decision, 'accepted');
+  assert.equal(await productStock('p-simple'), 6, 'p2 deducted once');
+  assert.equal(await reserved('p-simple'), 2, 'p2 reservation released');
+  assert.equal((await setStatus(r, p2.id, 'processing')).body.result, 'unchanged');
+  assert.equal(await productStock('p-simple'), 6);
+  // a pending order can still be cancelled = rejected (released once)
   assert.equal((await setStatus(r, p1.id, 'cancelled')).status, 200);
-  assert.equal(await reserved('p-simple'), 3, 'p1 released once');
+  assert.equal(await reserved('p-simple'), 0, 'p1 released once');
   await setStatus(r, p1.id, 'cancelled');
-  assert.equal(await reserved('p-simple'), 3);
+  assert.equal(await reserved('p-simple'), 0);
   // the accepted one follows its own policy: delivered = nothing more, stock unchanged
   assert.equal((await setStatus(r, a1.id, 'delivered')).status, 200);
-  assert.equal(await productStock('p-simple'), 9);
+  assert.equal(await productStock('p-simple'), 6);
   // a new order under the rollback settings: the old on_delivery behaviour
   const n = await create(makeOrder([line('p-simple', 1)]), r);
   assert.equal((await ledger(n.id)).stockPolicy, 'on_delivery');
-  // ---- forward again: the pending order is still decidable ----
+  // ---- forward again (Telegram on): an already-accepted order is never deducted a second time ----
   await press(e, p2.id, 'acc');
   assert.equal(await productStock('p-simple'), 6);
   assert.equal(await reserved('p-simple'), 1, 'only the new on_delivery order is still reserved');
@@ -304,6 +310,91 @@ test('P18 the secret-match probe {"update_id":0}: 200 with the right secret, 401
   assert.equal(JSON.stringify(await ledger(o.id)), before.ledger, 'ledger untouched');
   assert.equal(JSON.stringify(await order(o.id)), before.order, 'order untouched');
   assert.equal(mock.state.calls.filter((c) => c.channel === 'telegram').length + (mock.state.tgUi?.length || 0), tgBefore, 'no Telegram call');
+});
+
+// ---------------------------------------------------------------- owner's FINAL decision (2026-11-21):
+// orders accepted automatically, stock deducted ONLY on confirmed delivery => STOCK_POLICY=on_delivery, APPROVAL_MODE=off.
+// The orders created meanwhile under on_acceptance (pending or accepted) must keep working, exactly once.
+const FINAL = { STOCK_POLICY: 'on_delivery', APPROVAL_MODE: 'off' };
+
+test('P19 switch to on_delivery + Telegram OFF: old PENDING on_acceptance orders are accepted from the dashboard (deducted once), cancelled = released; old buttons do nothing', async () => {
+  const p = await create(makeOrder([line('p-simple', 2)]));
+  const c = await create(makeOrder([line('p-simple', 1)]));
+  assert.equal(await productStock('p-simple'), 10);
+  assert.equal(await reserved('p-simple'), 3);
+  const off = env(FINAL);
+  // the Telegram webhook is off: an old button press is refused, nothing changes
+  assert.notEqual((await press(off, p.id, 'acc')).status, 200);
+  assert.equal((await ledger(p.id)).decision, 'pending');
+  // dashboard "processing" on the old pending order: accepted through ITS policy -> deducted once, reservation released
+  const r1 = await setStatus(off, p.id, 'processing');
+  assert.equal(r1.status, 200, r1.text);
+  assert.equal((await ledger(p.id)).decision, 'accepted');
+  assert.equal((await ledger(p.id)).inventory, 'deducted');
+  assert.equal((await order(p.id)).status, 'processing');
+  assert.equal(await productStock('p-simple'), 8);
+  assert.equal(await reserved('p-simple'), 1);
+  // repeated / later steps never deduct again
+  assert.equal((await setStatus(off, p.id, 'processing')).body.result, 'unchanged');
+  for (const st of ['shipped', 'delivered', 'delivered']) assert.equal((await setStatus(off, p.id, st)).status, 200, st);
+  assert.equal(await productStock('p-simple'), 8, 'nothing more on shipped / delivered / delivered again');
+  // cancel the other old pending order before delivery: reservation released, no stock change
+  assert.equal((await setStatus(off, c.id, 'cancelled')).status, 200);
+  assert.equal(await reserved('p-simple'), 0);
+  assert.equal(await productStock('p-simple'), 8);
+  // return after delivery: only with confirmation, back ONCE
+  assert.equal((await setStatus(off, p.id, 'cancelled')).status, 409, 'return without confirmation refused');
+  assert.equal((await setStatus(off, p.id, 'cancelled', { confirmReturn: true })).status, 200);
+  assert.equal(await productStock('p-simple'), 10);
+  await setStatus(off, p.id, 'cancelled', { confirmReturn: true });
+  assert.equal(await productStock('p-simple'), 10, 'returned once');
+});
+
+test('P20 switch: old ACCEPTED on_acceptance orders: delivered = nothing more; cancel before delivery / confirmed return = back ONCE', async () => {
+  const a = await create(makeOrder([line('p-simple', 3)]));
+  const b = await create(makeOrder([line('p-simple', 1)]));
+  await press(env(), a.id, 'acc');
+  await press(env(), b.id, 'acc');
+  assert.equal(await productStock('p-simple'), 6);
+  const off = env(FINAL);
+  for (const st of ['shipped', 'delivered', 'delivered']) assert.equal((await setStatus(off, a.id, st)).status, 200, st);
+  assert.equal(await productStock('p-simple'), 6, 'already deducted on acceptance: delivery deducts nothing');
+  assert.equal((await setStatus(off, a.id, 'cancelled', { confirmReturn: true })).status, 200);
+  assert.equal(await productStock('p-simple'), 9);
+  await setStatus(off, a.id, 'cancelled', { confirmReturn: true });
+  assert.equal(await productStock('p-simple'), 9);
+  assert.equal((await setStatus(off, b.id, 'cancelled')).status, 200, 'accepted, not delivered: cancel');
+  assert.equal(await productStock('p-simple'), 10);
+  await setStatus(off, b.id, 'cancelled');
+  assert.equal(await productStock('p-simple'), 10, 'never twice');
+});
+
+test('P21 switch: CONCURRENT dashboard presses on an old pending order (5x processing + delivered) deduct exactly once; new orders follow on_delivery next to old reservations (last piece never sold twice)', async () => {
+  const q = await create(makeOrder([line('p-simple', 4)]));
+  const off = env(FINAL);
+  const rs = await Promise.all([...Array(5)].map(() => setStatus(off, q.id, 'processing')).concat([setStatus(off, q.id, 'delivered')]));
+  assert.ok(rs.every((r) => [200, 409, 503].includes(r.status)), rs.map((r) => r.status).join(','));
+  assert.equal(await productStock('p-simple'), 6, 'deducted exactly once');
+  assert.equal(await reserved('p-simple'), 0);
+  assert.equal((await ledger(q.id)).inventory, 'deducted');
+  // the last piece: an OLD pending on_acceptance reservation still counts for NEW on_delivery orders
+  const old = await create(makeOrder([line('p-last-one', 1)]));
+  assert.equal(await reserved('p-last-one'), 1);
+  const refused = await callWorker(off, { method: 'POST', path: '/create-order', body: { order: makeOrder([line('p-last-one', 1)]), turnstileToken: 'pass-token' } });
+  assert.equal(refused.status, 422, 'the last piece is held by the old order');
+  assert.equal(refused.body.code, 'OUT_OF_STOCK');
+  assert.equal((await setStatus(off, old.id, 'cancelled')).status, 200);
+  const n1 = makeOrder([line('p-last-one', 1)]); const n2 = makeOrder([line('p-last-one', 1)]);
+  const both = await Promise.all([n1, n2].map((o) => callWorker(off, { method: 'POST', path: '/create-order', body: { order: o, turnstileToken: 'pass-token' } })));
+  assert.deepEqual(both.map((r) => r.status).sort(), [200, 422], 'two customers at once: exactly one gets it');
+  assert.equal(both.find((r) => r.status === 422).body.code, 'OUT_OF_STOCK');
+  const winner = both[0].status === 200 ? n1 : n2;
+  assert.equal((await ledger(winner.id)).stockPolicy, 'on_delivery');
+  assert.equal(await productStock('p-last-one'), 1, 'on_delivery: nothing deducted at creation');
+  assert.equal((await setStatus(off, winner.id, 'delivered')).status, 200);
+  await setStatus(off, winner.id, 'delivered');
+  assert.equal(await productStock('p-last-one'), 0, 'delivered twice = deducted once');
+  assert.equal(await reserved('p-last-one'), 0);
 });
 
 test('P04 cancel AFTER acceptance from Telegram (confirm step): stock back ONCE; a second cancel changes nothing', async () => {

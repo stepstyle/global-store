@@ -180,7 +180,18 @@ export async function changeOrderStatus(fs, cfg, { orderId, status, confirmRetur
     // on_acceptance, not decided yet: only Telegram / automatic ACCEPTANCE moves it forward (that is where the stock is
     // deducted). Cancelling it from the dashboard = rejecting it (reservation released) — the same commit path.
     if (L.stockPolicy === 'on_acceptance' && (L.decision || 'pending') === 'pending') {
-      if (status !== 'cancelled') return refuse(409, 'APPROVAL_PENDING', { from, to: status });
+      if (status !== 'cancelled') {
+        if (cfg.approvalMode === 'telegram') return refuse(409, 'APPROVAL_PENDING', { from, to: status });
+        // Telegram approval switched OFF (owner, 2026-11-21: orders are accepted automatically, stock on delivery).
+        // An order created EARLIER under on_acceptance and still pending would otherwise be stuck (no button left):
+        // moving it forward from the dashboard ACCEPTS it first through its own policy (its reserved quantities are
+        // deducted once, same atomic commit as a Telegram acceptance), then the requested status is applied below.
+        const d = await decideOrder(fs, cfg, { orderId, action: 'accept', actor: { source: 'admin', userId: String(actor?.uid || '') } });
+        if (d.result === 'accepted' || String(d.result).startsWith('already_')) continue; // re-read, then apply the status
+        if (d.result === 'busy') return refuse(503, 'BUSY');
+        if (d.result === 'cannot_accept') return refuse(409, 'INSUFFICIENT_STOCK', { problems: d.problems });
+        return refuse(409, 'APPROVAL_PENDING', { from, to: status, reason: d.result });
+      }
       const d = await decideOrder(fs, cfg, { orderId, action: 'reject', actor: { source: 'admin', userId: String(actor?.uid || '') } });
       if (d.result === 'rejected') return { status: 200, body: { ok: true, orderId, status: 'cancelled', result: 'changed', inventory: 'released' } };
       if (d.result === 'busy') return refuse(503, 'BUSY');
