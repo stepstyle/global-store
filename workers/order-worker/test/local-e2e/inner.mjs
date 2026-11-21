@@ -20,6 +20,7 @@ import { launchChrome, openTab, attachTo, pageOpen } from './cdp.mjs';
 import { buildUiScenarios, runUiScenarios } from './ui-scenarios.mjs';
 import { runDeliveryScenarios, dashboardAdminEmail } from './delivery-scenarios.mjs';
 import { runVisualScenarios } from './visual-scenarios.mjs';
+import { runPreviewWheelCheck } from './preview-wheel-check.mjs';
 import { runWheelScenarios, WHEEL_CAMPAIGN_ID } from './wheel-scenarios.mjs';
 import { resolve as resolvePath } from 'node:path';
 import { WORKER_ROOT } from './plan.mjs';
@@ -250,6 +251,8 @@ const mock = http.createServer((req, res) => {
 // ---------------------------------------------------------------- wrangler dev (local only)
 const token = () => randomBytes(24).toString('hex');
 const T = { tg: token(), sg: token(), read: token(), worker: token(), webhook: token(), autoHash: token() };
+// the local preview shows a DEMO prize wheel (WHEEL_MODE=test, a local demo campaign) unless E2E_PREVIEW_WHEEL=off
+const PREVIEW_WHEEL = SUITE === 'preview' && process.env.E2E_PREVIEW_WHEEL !== 'off';
 // auto suite: a review still 'queued' after this is finished by the cron (short, so the recovery tests stay fast)
 const AUTO_RECOVER_MS = 3_000;
 // approval suite: Telegram order approval ON, with TEST-only ids (no real Telegram user / chat; the sink stands in)
@@ -532,7 +535,7 @@ async function runUiSuite() {
 }
 
 // ---------------------------------------------------------------- delivery suite (STOCK_POLICY=on_delivery)
-async function startDeliveryStack(viteLabel = 'vite-delivery') {
+async function startDeliveryStack(viteLabel = 'vite-delivery', viteExtra = {}) {
   const repoRoot = resolvePath(WORKER_ROOT, '../..');
   const base = `http://127.0.0.1:${PORTS.vite}`;
   const AUTH = `http://127.0.0.1:${PORTS.authEmulator}`;
@@ -569,6 +572,7 @@ async function startDeliveryStack(viteLabel = 'vite-delivery') {
     VITE_WORKER_URL: URLS.order, VITE_ORDER_ADMIN_URL: `${URLS.mock}/ui`,
     // guest orders (pipeline tests), as in the UI suite
     VITE_ORDER_SIGN_IN: 'optional',
+    ...viteExtra,
   };
   const vite = spawn(process.execPath, [join(repoRoot, 'node_modules/vite/bin/vite.js'), '--port', String(PORTS.vite), '--strictPort', '--host', '127.0.0.1'], { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
   vite.stdout.pipe(log);
@@ -618,9 +622,39 @@ async function runVisualSuite() {
     get: async (path) => { const d = await fs.get(path); return d.exists ? decodeFields(d.fields) : null; },
   });
 }
+// the preview's DEMO campaign: clearly fake prizes, local emulator only, never a real campaign / budget / coupon
+const DEMO_PRIZES = [
+  { id: 'demo-disc-1', type: 'discount', label: 'خصم 1 د.أ (تجريبي)', icon: '💸', valueJod: 1, unitCostJod: 1, minOrderJod: 5, weight: 3, quantity: 100, costConfirmed: true },
+  { id: 'none-1', type: 'none', label: 'حظ أوفر', weight: 2 },
+  { id: 'demo-ship', type: 'free_delivery', label: 'توصيل مجاني (تجريبي)', icon: '🚚', valueJod: 3, unitCostJod: 3, minOrderJod: 5, weight: 2, quantity: 100, costConfirmed: true },
+  { id: 'none-2', type: 'none', label: 'حظ أوفر', weight: 2 },
+  { id: 'demo-gift', type: 'gift', label: 'هدية تجريبية', icon: '🎁', valueJod: 2, unitCostJod: 2, minOrderJod: 5, weight: 2, quantity: 100, costConfirmed: true },
+  { id: 'none-3', type: 'none', label: 'حظ أوفر', weight: 2 },
+  { id: 'demo-second-4', type: 'discount', label: 'خصم 4 على الطلب الثاني (تجريبي)', icon: '🔁', valueJod: 4, unitCostJod: 4, minOrderJod: 15, appliesTo: 'next_order', weight: 1, quantity: 50, costConfirmed: true },
+];
+async function seedDemoWheel(put) {
+  await put(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`, {
+    active: true, minOrderJod: 5, budgetJod: 2000, giftOnCancel: 'return', prizeValidDays: 7,
+    startsAt: '2026-01-01T00:00:00Z', endsAt: '2099-01-01T00:00:00Z',
+    terms: 'حملة تجريبية للمعاينة المحلية فقط — الجوائز وهمية ولا قيمة لها، ولا تُرسَل أي جائزة أو كوبون حقيقي.',
+    prizes: DEMO_PRIZES,
+  });
+  for (const p of DEMO_PRIZES) if (p.type !== 'none') await put(`wheelPool/${WHEEL_CAMPAIGN_ID}_${p.id}`, { remaining: p.quantity });
+}
 async function runPreview() {
-  const { base, admin, reseedAll } = await startDeliveryStack('vite-preview');
+  // demo wheel: the site in VITE_WHEEL_MODE=test (never shown by a production build) and the browser's calls through the
+  // local TEST re-signing proxy, exactly as in the wheel suite
+  const { base, admin, reseedAll, put } = await startDeliveryStack('vite-preview', PREVIEW_WHEEL ? { VITE_WHEEL_MODE: 'test', VITE_WORKER_URL: `${URLS.mock}/ui` } : {});
   await reseedAll();
+  if (PREVIEW_WHEEL) await seedDemoWheel(put);
+  if (process.env.E2E_PREVIEW_CHECK === '1') {
+    // self-check instead of waiting for a human: the demo wheel on a phone and a desktop
+    await launchChrome({ port: PORTS.cdp, tmpDir: TMP, track: (child) => children.push({ label: 'chrome', child }) });
+    return runPreviewWheelCheck({
+      base, shotsDir: process.env.E2E_SHOTS_DIR || join(TMP, 'preview-wheel'), openTab: () => openTab(PORTS.cdp),
+      guestSpins: async () => (await fs.runQuery({ from: [{ collectionId: 'wheelGuestSpins' }] })),
+    });
+  }
   const minutes = Math.min(Math.max(Number(process.env.E2E_PREVIEW_MINUTES) || 180, 5), 600);
   let stop;
   const stopped = new Promise((r) => { stop = r; });
@@ -633,6 +667,7 @@ async function runPreview() {
   console.log(`[inner] admin dashboard:           ${base}/#/login   e-mail ${mask(admin.email)} (the dashboard admin address)   password ${admin.password}`);
   console.log('[inner]   (this account exists ONLY in the local Auth emulator of this run; a new password every run)');
   console.log(`[inner] order Worker:              ${URLS.order}/   STOCK_POLICY=on_delivery, APPROVAL_MODE=off (Telegram -> local sink, no buttons)`);
+  console.log(PREVIEW_WHEEL ? `[inner] prize wheel (DEMO):         opens by itself on the first visit of ${base}/#/ (or the wheel button); fake prizes, local only` : '[inner] prize wheel:                off (E2E_PREVIEW_WHEEL=off)');
   console.log(`[inner] STOP the preview:          http://127.0.0.1:${stopSrv.address().port}/   (or it stops by itself after ${minutes} min)`);
   console.log('[inner] ========================================================');
   const how = await Promise.race([stopped, sleep(minutes * 60_000).then(() => 'time limit')]);
@@ -766,6 +801,9 @@ try {
     // visual check + manual preview: the owner's FINAL policy (orders accepted automatically, stock on delivery, Telegram
     // notifications only) — production settings except Turnstile (the local web app sends no token)
     ...(SUITE === 'visual' || SUITE === 'preview' ? { STOCK_POLICY: 'on_delivery', APPROVAL_MODE: 'off', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log' } : {}),
+    // preview: the DEMO prize wheel (TEST mode, local demo campaign, a random per-run phone secret never written anywhere;
+    // a generous guest-spin limit so a person can try it again and again)
+    ...(PREVIEW_WHEEL ? { WHEEL_MODE: 'test', WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(32).toString('hex'), WHEEL_GUEST_PER_IP_DAY: '200' } : {}),
     // prize wheel: TEST mode with a TEST campaign, a random per-run HMAC secret (never written anywhere), production
     // settings otherwise (except Turnstile: the local web app sends no token)
     ...(SUITE === 'wheel' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', ORDER_SIGN_IN: 'google', WHEEL_MODE: E2E_WHEEL_MODE, WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(36).toString('base64url') } : {}),
