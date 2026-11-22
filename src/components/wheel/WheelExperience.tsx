@@ -14,7 +14,7 @@ import type { SubmitDeps } from '../../services/orderSubmit';
 import { BACKEND_ENABLED } from '../../config/deployEnv';
 import {
   fetchWheelPublic, fetchWheelState, spinWheel, choosePrize, prizeText, targetRotation, usablePrize,
-  spinAsGuest, fetchGuestResult, claimGuestResult, guestAsSpin, prizeExpired, DEFAULT_HOLD_MINUTES, isSecondOrder, prizeWaiting, SECOND_ORDER_HOURS,
+  spinAsGuest, fetchGuestResult, claimGuestResult, guestAsSpin, prizeExpired, DEFAULT_HOLD_MINUTES, isSecondOrder, prizeWaiting, SECOND_ORDER_HOURS, WHEEL_TEST_BUILD,
   type WheelSlot, type WheelSpin, type WheelState,
 } from '../../services/wheel';
 import WheelDial from './WheelDial';
@@ -39,7 +39,7 @@ function Confetti() {
   );
 }
 
-export default function WheelExperience({ variant = 'page', onClose }: { variant?: 'popup' | 'page'; onClose?: () => void }) {
+export default function WheelExperience({ variant = 'page', onClose, onClosed }: { variant?: 'popup' | 'page'; onClose?: () => void; onClosed?: () => void }) {
   const { user, language } = useCart() as any;
   const isAR = language !== 'en';
   const L = (ar: string, en: string) => (isAR ? ar : en);
@@ -66,6 +66,8 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
   const alive = useRef(true);
   // set on EVERY mount (React may mount, unmount and mount again: a flag left false would drop every answer)
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  // no open campaign: the host hides the wheel (the /wheel page leaves for the home page)
+  useEffect(() => { if (phase === 'closed') onClosed?.(); }, [phase, onClosed]);
 
   const idToken = async () => (await getFirebaseAuth()?.currentUser?.getIdToken().catch(() => null)) ?? null;
   const signedIn = !!getFirebaseAuth()?.currentUser;
@@ -192,7 +194,7 @@ export default function WheelExperience({ variant = 'page', onClose }: { variant
   return (
     <div className="relative" dir={isAR ? 'rtl' : 'ltr'} data-testid="wheel-experience" data-phase={phase}>
       {won && !reduced.current && <Confetti />}
-      <p className="mb-2 inline-block rounded-full bg-gold-100 px-3 py-1 text-[11px] font-black text-gold-800">{L('نسخة تجريبية — ليست حملة حقيقية', 'Test version — not a real campaign')}</p>
+      {WHEEL_TEST_BUILD && <p className="mb-2 inline-block rounded-full bg-gold-100 px-3 py-1 text-[11px] font-black text-gold-800" data-testid="wheel-test-badge">{L('نسخة تجريبية — ليست حملة حقيقية', 'Test version — not a real campaign')}</p>}
       <h2 className="font-heading text-2xl font-black text-ink-950" id="wheel-title">{L('دولاب الحظ', 'Lucky wheel')}</h2>
       <p className="mt-1 text-sm font-medium text-ink-700">{L('لفّة ترحيبية واحدة الآن دون تسجيل، ولفّة جديدة مع كل طلب مؤهَّل جديد.', 'One welcome spin now, no sign-in needed, and a new spin with every new qualifying order.')}</p>
 

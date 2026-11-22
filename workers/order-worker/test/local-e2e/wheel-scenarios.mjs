@@ -702,6 +702,47 @@ export function buildWheelScenarios(ctx) {
       }
       assert.deepEqual(problems, []);
     }],
+    ['WU10', 'NO OPEN CAMPAIGN = NOTHING OF THE WHEEL: campaign switched off -> a first visit gets no popup, a RETURNING visitor (popup already seen) gets no floating button, #/wheel goes to the home page; never a "test version" text in a live build. Campaign open again -> the returning visitor gets the button back (no popup by itself), the badge only in a TEST build', async (t) => {
+      const prizes = [{ id: 'disc-1', type: 'discount', label: 'خصم دينار', valueJod: 1, minOrderJod: 5, weight: 1, quantity: 5 }, ...NONES];
+      const badge = `document.body.innerText.includes('نسخة تجريبية')`;
+      const fab = `!!document.querySelector('[data-testid=wheel-fab]')`;
+      const popup = `!!document.querySelector('[data-testid=wheel-popup]')`;
+      await ctx.setCampaign(prizes, { active: false });
+      for (const [vw, vh, mobile] of [[1366, 900, false], [390, 844, true]]) {
+        await viewport(t, vw, vh, mobile);
+        await fresh(t);
+        // first visit: the check answers "closed" -> no popup, no button
+        await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
+        await t.waitFor(`document.readyState === 'complete' && document.body.innerText.trim().length > 40`, 30_000, 'home');
+        await sleep(3_500);
+        assert.equal(await t.evaluate(popup), false, 'no popup while closed');
+        assert.equal(await t.evaluate(fab), false, 'no button while closed (first visit)');
+        // returning visitor (the popup was seen on an earlier visit): still nothing
+        await t.evaluate(`localStorage.setItem('anta_wheel_popup_seen_v1', '1'); true`);
+        for (const hash of ['#/', '#/tracking', '#/about']) {
+          await t.navigate(`${ctx.base}/?r=${Date.now()}${hash}`);
+          await t.waitFor(`document.readyState === 'complete' && document.body.innerText.trim().length > 40`, 30_000, hash);
+          await sleep(3_500);
+          assert.equal(await t.evaluate(fab), false, `no button while closed (returning, ${hash})`);
+          assert.equal(await t.evaluate(popup), false, `no popup while closed (returning, ${hash})`);
+        }
+        // the wheel page itself: leaves for the home page, the "closed" box and the badge are never left on screen
+        await t.navigate(`${ctx.base}/?r=${Date.now()}#/wheel`);
+        await t.waitFor(`location.hash === '#/' || location.hash === ''`, 30_000, '#/wheel -> home');
+        await sleep(800);
+        assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=wheel-closed]')`), false, 'no "campaign unavailable" box');
+        assert.equal(await t.evaluate(badge), false, 'no "test version" text');
+      }
+      // open again: the returning visitor sees the button (the popup does NOT open by itself a second time)
+      await ctx.setCampaign(prizes);
+      await viewport(t, 1366, 900, false);
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
+      await t.waitFor(fab, 20_000, 'button back while open');
+      assert.equal(await t.evaluate(popup), false, 'no popup by itself for a returning visitor');
+      await openPopupFromFab(t);
+      assert.equal(await t.evaluate(badge), ctx.wheelMode !== 'live', `badge shown only in a TEST build (mode ${ctx.wheelMode})`);
+      await shot(t, `wu10-open-${ctx.wheelMode}`, { full: false });
+    }],
   ];
 }
 

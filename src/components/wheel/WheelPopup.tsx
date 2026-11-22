@@ -1,4 +1,4 @@
-// First-visit popup (TEST builds only, VITE_WHEEL_MODE=test). Shown ONCE on the first visit when the campaign is open
+// First-visit popup (wheel builds: VITE_WHEEL_MODE=test, or =live for the approved campaign). Shown ONCE on the first visit when the campaign is open
 // (a browser flag — comfort only: the number of spins is decided by the Worker, per verified account). Closable with
 // the X button, Escape or a click outside; reopened from the small floating button. Never over checkout / admin / login.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -26,16 +26,17 @@ export default function WheelPopup() {
   const workerUrl = BACKEND_ENABLED ? String(import.meta.env.VITE_WORKER_URL || '') : '';
   const deps = useMemo<SubmitDeps>(() => ({ fetch: (url, init) => window.fetch(url, init as RequestInit) as any }), []);
 
-  // first visit only: is there an open campaign? (one request; never repeated on later visits)
+  // every visit: is there an open campaign? (one request per page load). Nothing of the wheel — popup or floating
+  // button — is shown until the Worker says the campaign is open; closed / unreachable = hidden. The popup opens by
+  // itself on the first visit only.
   useEffect(() => {
-    if (popupSeen() || quiet) return;
     let stop = false;
     const t = window.setTimeout(async () => {
       const p = await fetchWheelPublic(workerUrl, deps);
       if (stop) return;
       const ok = p.kind === 'ok' && p.value.campaign === 'open' && p.value.slots.length >= 2;
       setAvailable(ok);
-      if (ok) { markPopupSeen(); setOpen(true); }
+      if (ok && !popupSeen() && !quiet) { markPopupSeen(); setOpen(true); }
     }, 1200);
     return () => { stop = true; window.clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -60,7 +61,7 @@ export default function WheelPopup() {
 
   return (
     <>
-      {!open && !quiet && available !== false && !FAB_HIDDEN_PATHS.some((re) => re.test(location?.pathname || '')) && (
+      {!open && !quiet && available === true && !FAB_HIDDEN_PATHS.some((re) => re.test(location?.pathname || '')) && (
         <button
           type="button" onClick={() => setOpen(true)} data-testid="wheel-fab"
           className="fixed bottom-24 start-4 z-[60] flex items-center gap-2 rounded-full border border-gold-200 bg-paper-50/95 px-3.5 py-2 text-sm font-black text-ink-900 shadow-lift backdrop-blur focus:outline-none focus-visible:ring-4 focus-visible:ring-gold-300"
@@ -81,7 +82,7 @@ export default function WheelPopup() {
               className="absolute end-3 top-3 flex h-10 w-10 items-center justify-center rounded-full bg-white text-xl font-black text-ink-800 shadow-soft focus:outline-none focus-visible:ring-4 focus-visible:ring-gold-300"
               aria-label={isAR ? 'إغلاق' : 'Close'}
             >×</button>
-            <WheelExperience variant="popup" onClose={close} />
+            <WheelExperience variant="popup" onClose={close} onClosed={close} />
           </div>
         </div>
       )}

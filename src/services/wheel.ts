@@ -15,6 +15,8 @@ const VITE_WHEEL = typeof __WHEEL_MODE__ !== 'undefined' ? __WHEEL_MODE__ : (imp
 // 'test': sandbox / local builds only (a production build ignores it). 'live': the approved production campaign
 // (owner's decision 2026-11-21) — the production Worker must run WHEEL_MODE=live too, otherwise every call is a 404.
 export const WHEEL_ENABLED = VITE_WHEEL === 'live' || (!PRODUCTION_BUILD && VITE_WHEEL === 'test');
+// the "test version" badge: a TEST build only — never shown to customers of the live campaign
+export const WHEEL_TEST_BUILD = WHEEL_ENABLED && VITE_WHEEL !== 'live';
 export const WHEEL_SPIN_ID_RE = /^[a-z0-9-]{1,40}_[A-Za-z0-9_-]{1,128}_\d{1,4}$/;
 const PRIZE_KEY = 'anta_wheel_prize_v1';
 const POPUP_KEY = 'anta_wheel_popup_seen_v1';

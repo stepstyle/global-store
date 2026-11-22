@@ -758,6 +758,7 @@ async function runWheelSuite() {
       for (const x of list) if (x.type === 'page' && /\/emulator\/auth\/handler/.test(x.url)) await fetch(`http://127.0.0.1:${PORTS.cdp}/json/close/${x.id}`);
     },
     setCampaign,
+    wheelMode: E2E_WHEEL_MODE,
     put,
     triggerCron: async () => { await fetch(`${URLS.order}/__scheduled?cron=*+*+*+*+*`); },
     countSpins: async () => (await fs.runQuery({ from: [{ collectionId: 'wheelSpins' }] })).length,
