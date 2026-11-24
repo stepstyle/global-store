@@ -15,7 +15,7 @@ import { BACKEND_ENABLED } from '../../config/deployEnv';
 import {
   fetchWheelPublic, fetchWheelState, spinWheel, choosePrize, prizeText, targetRotation, usablePrize,
   spinAsGuest, fetchGuestResult, claimGuestResult, guestAsSpin, prizeExpired, DEFAULT_HOLD_MINUTES, isSecondOrder, prizeWaiting, SECOND_ORDER_HOURS, WHEEL_TEST_BUILD, failureText,
-  type WheelSlot, type WheelSpin, type WheelState,
+  type WheelSlot, type WheelSpin, type WheelState, type WheelPublic, type WheelUnavailable,
 } from '../../services/wheel';
 import WheelDial from './WheelDial';
 import { siteKeyFrom } from '../../services/turnstile';
@@ -44,7 +44,7 @@ function Confetti() {
   );
 }
 
-export default function WheelExperience({ variant = 'page', onClose, onClosed }: { variant?: 'popup' | 'page'; onClose?: () => void; onClosed?: () => void }) {
+export default function WheelExperience({ variant = 'page', onClose, onClosed, initial = null }: { variant?: 'popup' | 'page'; onClose?: () => void; onClosed?: () => void; initial?: WheelPublic | null }) {
   const { user, language } = useCart() as any;
   const isAR = language !== 'en';
   const L = (ar: string, en: string) => (isAR ? ar : en);
@@ -53,6 +53,10 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed }:
   const reduced = useRef(typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
 
   const [phase, setPhase] = useState<'loading' | 'ready' | 'closed' | 'unavailable'>('loading');
+  // why the wheel could not be loaded (shown with a retry button)
+  const [loadFail, setLoadFail] = useState<WheelUnavailable | null>(null);
+  // the campaign answer the popup already has: used for the FIRST load (no second request -> no long "loading")
+  const initialRef = useRef<WheelPublic | null>(initial);
   const [slots, setSlots] = useState<WheelSlot[]>([]);
   const [terms, setTerms] = useState('');
   const [st, setSt] = useState<WheelState | null>(null);
@@ -106,9 +110,16 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed }:
   }, [workerUrl, deps]);
 
   const load = useCallback(async () => {
-    const p = await fetchWheelPublic(workerUrl, deps);
+    const given = initialRef.current;
+    initialRef.current = null;
+    const p = given ? { kind: 'ok' as const, value: given } : await fetchWheelPublic(workerUrl, deps);
     if (!alive.current) return;
-    if (p.kind !== 'ok') { setPhase('unavailable'); return; }
+    if (p.kind !== 'ok') {
+      setLoadFail(p.kind === 'unavailable' ? p : { kind: 'unavailable', reason: 'refused', code: p.kind });
+      setPhase('unavailable');
+      return;
+    }
+    setLoadFail(null);
     if (p.value.campaign !== 'open' || p.value.slots.length < 2) { setPhase('closed'); return; }
     setSlots(p.value.slots);
     setTerms(p.value.terms);
@@ -152,7 +163,9 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed }:
     // a FRESH single-use token for this spin (none configured = none sent; the Worker decides)
     let check: string | null = null;
     if (turnstile.enabled) {
+      if (turnstile.status !== 'ready') setMsg(L('أكمل مربع التحقق الأمني أعلى الزر — تبدأ اللفّة تلقائيًا بعده.', 'Complete the security check above the button — the spin starts right after.'));
       check = await turnstile.getToken();
+      setMsg('');
       if (!check) { setMsg(failureText({ kind: 'unavailable', reason: 'security' }, isAR)); return; }
     }
     const r = await spinWheel(await idToken(), workerUrl, deps, check);
@@ -214,9 +227,18 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed }:
       <h2 className="font-heading text-2xl font-black text-ink-950" id="wheel-title">{L('دولاب الحظ', 'Lucky wheel')}</h2>
       <p className="mt-1 text-sm font-medium text-ink-700">{L('لفّة ترحيبية واحدة الآن دون تسجيل، ولفّة جديدة مع كل طلب مؤهَّل جديد.', 'One welcome spin now, no sign-in needed, and a new spin with every new qualifying order.')}</p>
 
-      {phase === 'loading' && <p className="mt-6 text-center text-ink-500" role="status">{L('جارٍ التحميل…', 'Loading…')}</p>}
+      {phase === 'loading' && (
+        <div className="mt-6 flex items-center justify-center gap-2 text-ink-500" role="status" data-testid="wheel-loading">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-ink-200 border-t-ink-700" aria-hidden="true" />{L('جارٍ تحميل الدولاب…', 'Loading the wheel…')}
+        </div>
+      )}
       {phase === 'closed' && <p className="mt-6 rounded-2xl bg-paper-200 p-4 text-center font-bold text-ink-800" data-testid="wheel-closed">{L('الحملة غير متاحة حاليًا.', 'The campaign is not available right now.')}</p>}
-      {phase === 'unavailable' && <p className="mt-6 rounded-2xl bg-paper-200 p-4 text-center font-bold text-ink-800">{L('تعذّر الاتصال الآن. حاول لاحقًا.', 'Could not connect. Try again later.')}</p>}
+      {phase === 'unavailable' && (
+        <div className="mt-6 rounded-2xl bg-paper-200 p-4 text-center" data-testid="wheel-load-failed" data-reason={loadFail?.reason || ''}>
+          <p className="font-bold text-ink-800">{loadFail ? failureText(loadFail, isAR).replace(/ ?لم تُستخدم لفّتك.| ?Your spin was not used./, '') : L('تعذّر تحميل الدولاب الآن.', 'The wheel could not be loaded now.')}</p>
+          <button type="button" onClick={() => { setPhase('loading'); void load(); }} className="mt-3 rounded-full bg-ink-900 px-5 py-2.5 text-sm font-black text-white hover:bg-ink-800" data-testid="wheel-retry">{L('إعادة المحاولة', 'Try again')}</button>
+        </div>
+      )}
 
       {phase === 'ready' && (
         <>

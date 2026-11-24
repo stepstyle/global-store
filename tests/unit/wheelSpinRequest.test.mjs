@@ -88,3 +88,31 @@ test('messages: one clear text per reason (Arabic + English), each says the spin
   assert.ok(ar[4].includes('X_CODE'));
   assert.ok(!ar.slice(1).some((t) => t.includes('تعذّر الاتصال')), 'only a real network failure says "could not connect"');
 });
+
+test('a request with no answer ends as "timeout" after the limit (never an endless loading); spin and guest spin alike', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const hang = { fetch: () => new Promise(() => {}) };
+  const pub = W.fetchWheelPublic(URL_, hang);
+  const guest = W.spinAsGuest(URL_, hang);
+  const acc = W.spinWheel('t', URL_, hang, 'tt');
+  t.mock.timers.tick(W.WHEEL_TIMEOUT_MS - 1);
+  await Promise.resolve();
+  t.mock.timers.tick(2);
+  assert.deepEqual(await pub, { kind: 'unavailable', reason: 'timeout' });
+  assert.deepEqual(await guest, { kind: 'unavailable', reason: 'timeout' });
+  assert.deepEqual(await acc, { kind: 'unavailable', reason: 'timeout' });
+  assert.ok(W.failureText({ kind: 'unavailable', reason: 'timeout' }, true).includes('وقتًا أطول'));
+});
+
+test('popup memory is PER CAMPAIGN: the same campaign is remembered; other segments / terms / minimum = a new campaign', () => {
+  const a = { slots: [{ id: 'disc-1', label: 'خصم دينار', type: 'discount' }, { id: 'none-1', label: 'حظ أوفر', type: 'none' }], terms: 't', minOrderJod: 5 };
+  const fa = W.campaignFingerprint(a);
+  assert.equal(fa, W.campaignFingerprint(JSON.parse(JSON.stringify(a))));
+  for (const b of [{ ...a, terms: 't2' }, { ...a, minOrderJod: 6 }, { ...a, slots: a.slots.slice(0, 1) }, { ...a, slots: [{ ...a.slots[0], label: 'خصم 2' }, a.slots[1]] }]) {
+    assert.notEqual(W.campaignFingerprint(b), fa);
+  }
+  assert.equal(W.popupSeenFor(fa), false);
+  W.markPopupSeenFor(fa);
+  assert.equal(W.popupSeenFor(fa), true);
+  assert.equal(W.popupSeenFor(W.campaignFingerprint({ ...a, terms: 'new' })), false, 'a new campaign opens again');
+});

@@ -41,12 +41,28 @@ export type WheelState = { campaign: string; minOrderJod: number | null; terms: 
 /**
  * WHY a wheel call failed (shown to the customer as it is; a failed call never uses a spin):
  *   network      no answer at all (offline, DNS, blocked request)
+ *   timeout      no answer within the time limit (WHEEL_TIMEOUT_MS) — the request is abandoned, never left spinning
  *   rate_limited 429 RATE_LIMITED — too many requests in a short time
  *   server       5xx (503 UNAVAILABLE: the database refused / was unreachable)
  *   security     403 TURNSTILE_FAILED — the security check (Cloudflare Turnstile) is missing or failed
  *   refused      any other answer (its status / code kept for the message)
  */
-export type WheelFailure = 'network' | 'rate_limited' | 'server' | 'security' | 'refused';
+export type WheelFailure = 'network' | 'timeout' | 'rate_limited' | 'server' | 'security' | 'refused';
+
+/** time limit of every wheel request (ms): a slow / stuck answer ends as 'timeout' instead of an endless "loading" */
+export const WHEEL_TIMEOUT_MS = 15_000;
+class WheelTimeout extends Error {}
+/** the request, abandoned after `ms` (aborted when the fetch supports a signal; the race covers any fetch) */
+async function timed<T>(start: (signal: AbortSignal | undefined) => Promise<T>, ms = WHEEL_TIMEOUT_MS): Promise<T> {
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = new Promise<never>((_, reject) => { timer = setTimeout(() => { try { ctl?.abort(); } catch { /* ignore */ } reject(new WheelTimeout('timeout')); }, ms); });
+  try {
+    return await Promise.race([start(ctl?.signal), limit]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 export type WheelUnavailable = { kind: 'unavailable'; reason: WheelFailure; status?: number; code?: string };
 export function failureOf(status: number | null, body?: any): WheelUnavailable {
   const code = typeof body?.code === 'string' ? body.code.slice(0, 60) : undefined;
@@ -61,6 +77,7 @@ export function failureText(f: WheelUnavailable, isAR: boolean): string {
   const L = (ar: string, en: string) => (isAR ? ar : en);
   const kept = L(' لم تُستخدم لفّتك.', ' Your spin was not used.');
   switch (f.reason) {
+    case 'timeout': return L('استغرق الاتصال وقتًا أطول من المعتاد. تحقّق من الإنترنت ثم أعد المحاولة.', 'The connection took longer than usual. Check your internet and try again.') + kept;
     case 'network': return L('تعذّر الاتصال بالخادم. تحقّق من اتصالك بالإنترنت ثم حاول مجددًا.', 'Could not reach the server. Check your internet connection and try again.') + kept;
     case 'rate_limited': return L('طلبات كثيرة خلال وقت قصير. انتظر دقيقة ثم حاول مجددًا.', 'Too many requests in a short time. Wait a minute and try again.') + kept;
     case 'server': return L('الخدمة مشغولة مؤقتًا. حاول بعد قليل.', 'The service is temporarily busy. Try again shortly.') + kept;
@@ -81,20 +98,24 @@ async function call<T>(path: string, method: 'GET' | 'POST', idToken: string | n
   if (!WHEEL_ENABLED || !base) return { kind: 'unavailable', reason: 'refused', code: 'WHEEL_NOT_CONFIGURED' };
   if (!idToken && !anonymous) return { kind: 'sign_in_required' };
   try {
-    const r = await deps.fetch(`${base}${path}`, {
-      method,
-      headers: { ...(idToken ? { authorization: `Bearer ${idToken}` } : {}), ...(method === 'POST' ? { 'content-type': 'application/json' } : {}) },
-      ...(method === 'POST' ? { body: JSON.stringify(payload) } : {}),
+    const { r, body } = await timed(async (signal) => {
+      const res = await deps.fetch(`${base}${path}`, {
+        method,
+        headers: { ...(idToken ? { authorization: `Bearer ${idToken}` } : {}), ...(method === 'POST' ? { 'content-type': 'application/json' } : {}) },
+        ...(method === 'POST' ? { body: JSON.stringify(payload) } : {}),
+        ...(signal ? { signal } : {}),
+      } as any);
+      let b: any = null;
+      try { b = JSON.parse(await res.text()); } catch { b = null; }
+      return { r: res, body: b };
     });
-    let body: any = null;
-    try { body = JSON.parse(await r.text()); } catch { body = null; }
     if (r.status === 401) return { kind: 'sign_in_required' };
     if (r.status === 403 && body?.code === 'WHEEL_ACCOUNT_NOT_VERIFIED') return { kind: 'not_verified' };
     if (r.status === 409 && typeof body?.code === 'string' && body.code.startsWith('CAMPAIGN_')) return { kind: 'closed', code: body.code };
     const v = r.status === 200 && body?.ok ? pick(body) : null;
     return v ? { kind: 'ok', value: v } : failureOf(r.status, body);
-  } catch {
-    return failureOf(null);
+  } catch (e) {
+    return e instanceof WheelTimeout ? { kind: 'unavailable', reason: 'timeout' } : failureOf(null);
   }
 }
 
@@ -201,20 +222,24 @@ export const guestAsSpin = (g: GuestResult): WheelSpin => (isSecondOrder(g) && g
   expiresAt: g.holdUntil && (!g.expiresAt || Date.parse(g.holdUntil) < Date.parse(g.expiresAt)) ? g.holdUntil : g.expiresAt,
 });
 
-async function post(path: string, body: unknown, idToken: string | null, workerUrl: string, deps: SubmitDeps): Promise<{ status: number; body: any } | null> {
+// null = no answer (network); timedOut = no answer within WHEEL_TIMEOUT_MS (status 0, never a 200)
+async function post(path: string, body: unknown, idToken: string | null, workerUrl: string, deps: SubmitDeps): Promise<{ status: number; body: any; timedOut?: true } | null> {
   const base = normalizeWorkerUrl(workerUrl);
   if (!WHEEL_ENABLED || !base) return null;
   try {
-    const r = await deps.fetch(`${base}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...(idToken ? { authorization: `Bearer ${idToken}` } : {}) },
-      body: JSON.stringify(body),
+    return await timed(async (signal) => {
+      const r = await deps.fetch(`${base}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(idToken ? { authorization: `Bearer ${idToken}` } : {}) },
+        body: JSON.stringify(body),
+        ...(signal ? { signal } : {}),
+      } as any);
+      let b: any = null;
+      try { b = JSON.parse(await r.text()); } catch { b = null; }
+      return { status: r.status, body: b };
     });
-    let b: any = null;
-    try { b = JSON.parse(await r.text()); } catch { b = null; }
-    return { status: r.status, body: b };
-  } catch {
-    return null;
+  } catch (e) {
+    return e instanceof WheelTimeout ? { status: 0, body: null, timedOut: true } : null;
   }
 }
 
@@ -228,6 +253,7 @@ export async function spinAsGuest(workerUrl: string, deps: SubmitDeps): Promise<
   if (!ticket) return { kind: 'no_storage' };
   const r = await post('/wheel/guest/spin', { ticket }, null, workerUrl, deps);
   if (!r) return failureOf(null);
+  if (r.timedOut) return { kind: 'unavailable', reason: 'timeout' };
   const g = r.status === 200 && r.body?.ok ? guestOf(r.body.result) : null;
   if (g) return { kind: 'ok', result: g, repeated: r.body.repeated === true };
   if (r.status === 429 && r.body?.code === 'WHEEL_GUEST_LIMIT') return { kind: 'limit' };
@@ -366,6 +392,22 @@ export function choosePrize(p: { spinId: string; label: string } | null): void {
 }
 
 /** "popup already shown" — UX only (never a limit: the number of spins is decided by the Worker) */
+// ------------------------------------------------------------------ the first-visit popup, per CAMPAIGN
+// The popup opens by itself once per campaign (not once per browser for ever): the browser keeps the fingerprint of the
+// campaign it was shown for. A new / changed campaign (other segments, terms or minimum) opens it again, once.
+const POPUP_CAMPAIGN_KEY = 'anta_wheel_popup_campaign_v2';
+export function campaignFingerprint(p: Pick<WheelPublic, 'slots' | 'terms' | 'minOrderJod'>): string {
+  const src = JSON.stringify([p.slots.map((s) => [s.id, s.label, s.type]), p.terms || '', p.minOrderJod ?? null]);
+  let h = 5381;
+  for (let i = 0; i < src.length; i++) h = ((h * 33) ^ src.charCodeAt(i)) >>> 0;
+  return `c${h.toString(36)}${src.length.toString(36)}`;
+}
+export function popupSeenFor(fp: string): boolean {
+  try { return localStorage.getItem(POPUP_CAMPAIGN_KEY) === fp; } catch { return true; }
+}
+export function markPopupSeenFor(fp: string): void {
+  try { localStorage.setItem(POPUP_CAMPAIGN_KEY, fp); } catch { /* ignore */ }
+}
 export function popupSeen(): boolean {
   try { return !!localStorage.getItem(POPUP_KEY); } catch { return true; }
 }

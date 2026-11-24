@@ -523,7 +523,7 @@ export function buildWheelScenarios(ctx) {
       await viewport(t, 390, 844, true);
       await t.send('Emulation.setTouchEmulationEnabled', { enabled: true });
       await signIn(t, email, pw);
-      await t.evaluate(`localStorage.removeItem('anta_wheel_popup_seen_v1'); true`);
+      await t.evaluate(`localStorage.removeItem('anta_wheel_popup_campaign_v2'); true`);
       await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
       await t.waitFor(`!!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-spin]')`, 25_000, 'popup on the phone');
       assert.equal(await noHScroll(t), true, 'no horizontal scroll with the popup');
@@ -664,6 +664,9 @@ export function buildWheelScenarios(ctx) {
         await t.navigate(`${ctx.base}/?tour=${Date.now()}${hash}`);
         await t.waitFor(`document.readyState === 'complete' && (document.querySelector('main, #root')?.innerText || '').trim().length > 40`, 30_000, `${label} content`);
         await sleep(1_200);
+        // the wheel opens by itself once per campaign on the home page: closed for the tour
+        if (label === 'home') await t.waitFor(`!!document.querySelector('[data-testid=wheel-popup]') || localStorage.getItem('anta_wheel_popup_campaign_v2')`, 8_000, 'home popup (once per campaign)').catch(() => {});
+        if (await t.evaluate(`!!document.querySelector('[data-testid=wheel-popup]')`)) { await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`); await sleep(300); }
         const st = await t.evaluate(`({ w: document.documentElement.scrollWidth, vw: innerWidth, dir: document.documentElement.dir || getComputedStyle(document.body).direction, errs: (window.__tourErrors || []).slice(0, 3) })`);
         if (st.w > st.vw + 1) problems.push(`${lang} ${label}: horizontal scroll ${st.w} > ${st.vw}`);
         if (st.dir !== (lang === 'ar' ? 'rtl' : 'ltr')) problems.push(`${lang} ${label}: direction ${st.dir}`);
@@ -733,15 +736,60 @@ export function buildWheelScenarios(ctx) {
         assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=wheel-closed]')`), false, 'no "campaign unavailable" box');
         assert.equal(await t.evaluate(badge), false, 'no "test version" text');
       }
-      // open again: the returning visitor sees the button (the popup does NOT open by itself a second time)
+      // open again: this campaign opens by itself once on the home page; after that (reload) only the button
       await ctx.setCampaign(prizes);
       await viewport(t, 1366, 900, false);
       await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
+      await t.waitFor(popup, 20_000, 'opens by itself once for this campaign');
+      await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
       await t.waitFor(fab, 20_000, 'button back while open');
-      assert.equal(await t.evaluate(popup), false, 'no popup by itself for a returning visitor');
+      await sleep(3_500);
+      assert.equal(await t.evaluate(popup), false, 'no popup by itself a second time for the same campaign');
       await openPopupFromFab(t);
       assert.equal(await t.evaluate(badge), ctx.wheelMode !== 'live', `badge shown only in a TEST build (mode ${ctx.wheelMode})`);
       await shot(t, `wu10-open-${ctx.wheelMode}`, { full: false });
+    }],
+    ['WU11', 'AUTOMATIC POPUP, once per campaign, on the HOME page: a visitor landing on the shop gets the button only; reaching home -> the wheel opens by itself after a moment; moving between pages / reloading never reopens it; a NEW campaign opens it once again; the button opens the wheel AT ONCE (no second loading)', async (t) => {
+      const prizes = [{ id: 'disc-1', type: 'discount', label: 'خصم دينار', valueJod: 1, minOrderJod: 5, weight: 1, quantity: 5 }, ...NONES];
+      const fab = `!!document.querySelector('[data-testid=wheel-fab]')`;
+      const popup = `!!document.querySelector('[data-testid=wheel-popup]')`;
+      await ctx.setCampaign(prizes);
+      await viewport(t, 390, 844, true);
+      await fresh(t);
+      // lands on the shop: button only
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/shop`);
+      await t.waitFor(fab, 20_000, 'button on the shop');
+      await sleep(3_500);
+      assert.equal(await t.evaluate(popup), false, 'never by itself outside the home page');
+      // the button: the wheel at once (the campaign answer is handed over: no loading state)
+      await t.evaluate(`document.querySelector('[data-testid=wheel-fab]').click(); true`);
+      await sleep(250);
+      assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-dial]')`), true, 'the wheel is shown at once');
+      assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=wheel-loading]')`), false, 'no loading state');
+      await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
+      // to the home page (in-app navigation): opens by itself after a moment
+      const t0 = Date.now();
+      await t.evaluate(`location.hash = '#/'; true`);
+      await t.waitFor(popup, 10_000, 'opens by itself on home');
+      const ms = Date.now() - t0;
+      assert.ok(ms >= 1_000, `not instantly (${ms} ms): the page shows first`);
+      await shot(t, 'wu11-auto-open-phone', { full: false });
+      await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
+      // moving around, reloading: never again for this campaign
+      for (const h of ['#/shop', '#/', '#/about', '#/']) {
+        await t.evaluate(`location.hash = '${h}'; true`);
+        await sleep(2_500);
+        assert.equal(await t.evaluate(popup), false, `not reopened on ${h}`);
+      }
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
+      await t.waitFor(fab, 20_000, 'button after reload');
+      await sleep(3_000);
+      assert.equal(await t.evaluate(popup), false, 'not reopened after a reload');
+      // a NEW campaign (other terms): once again
+      await ctx.setCampaign(prizes, { terms: 'شروط حملة جديدة للاختبار' });
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
+      await t.waitFor(popup, 20_000, 'a new campaign opens it once');
     }],
   ];
 }
