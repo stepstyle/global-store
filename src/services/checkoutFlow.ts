@@ -36,13 +36,33 @@ const IDB_KEY = 'submit';
 export const IDB_LEASE_MS = 120_000; // > the longest possible send (≈ 80 s: 3 × 12 s timeouts + backoffs + status checks + verify)
 export const IDB_WAIT_MS = 150_000; // give up waiting for another tab after this (the customer gets a clear message)
 
-function idbOpen(idb: IdbFactory): Promise<any> {
+/** Opening IndexedDB can hang forever on some iOS versions / in-app browsers: give up after this (next lock layer). */
+export const IDB_OPEN_TIMEOUT_MS = 3_000;
+function idbOpen(idb: IdbFactory, timeoutMs = IDB_OPEN_TIMEOUT_MS): Promise<any> {
   return new Promise((resolve, reject) => {
-    const req = idb.open(IDB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-    req.onblocked = () => reject(new Error('blocked'));
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      reject(new Error('indexedDB open timed out'));
+    }, timeoutMs);
+    const done = (ok: boolean, v: any) => {
+      if (settled) {
+        if (ok) try { v.close(); } catch {} // opened too late: we already moved on
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      ok ? resolve(v) : reject(v);
+    };
+    try {
+      const req = idb.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+      req.onsuccess = () => done(true, req.result);
+      req.onerror = () => done(false, req.error || new Error('indexedDB open failed'));
+      req.onblocked = () => done(false, new Error('blocked'));
+    } catch (e) {
+      done(false, e); // e.g. SecurityError when the browser blocks site storage
+    }
   });
 }
 /** ONE readwrite transaction: take the lock if free/expired (or already ours: renew). Resolves after the commit. */
@@ -119,7 +139,7 @@ export const OWNERSHIP_MARGIN_MS = 15_000;
 
 /** fn receives stillOwned(): false once the lock was lost (e.g. this tab was frozen past its lease). */
 export type StillOwned = () => Promise<boolean>;
-export async function withIdbLock<T>(fn: (stillOwned: StillOwned) => Promise<T>, idb: IdbFactory, o: { leaseMs?: number; waitMs?: number; pollMs?: number; marginMs?: number; now?: () => number } = {}): Promise<T> {
+export async function withIdbLock<T>(fn: (stillOwned: StillOwned) => Promise<T>, idb: IdbFactory, o: { leaseMs?: number; waitMs?: number; pollMs?: number; marginMs?: number; now?: () => number; openTimeoutMs?: number } = {}): Promise<T> {
   const leaseMs = o.leaseMs ?? IDB_LEASE_MS;
   const marginMs = o.marginMs ?? OWNERSHIP_MARGIN_MS;
   const waitMs = o.waitMs ?? IDB_WAIT_MS;
@@ -127,7 +147,7 @@ export async function withIdbLock<T>(fn: (stillOwned: StillOwned) => Promise<T>,
   const now = o.now ?? Date.now;
   let db: any;
   try {
-    db = await idbOpen(idb);
+    db = await idbOpen(idb, o.openTimeoutMs);
   } catch {
     throw new CheckoutLockUnavailable('unsupported');
   }
@@ -179,25 +199,146 @@ export async function withIdbLock<T>(fn: (stillOwned: StillOwned) => Promise<T>,
   }
 }
 
+// localStorage lease: the third layer, for browsers that offer neither Web Locks nor a usable IndexedDB (some iPhone
+// in-app browsers / older iOS / restricted modes). localStorage has no compare-and-set, so the lease is taken by
+// "write, wait, read back": two tabs writing at the same moment both read back and only the last writer keeps it.
+// Weaker than layers 1–2 (a narrow race remains in theory), and NOT what prevents duplicates of one order: that is the
+// stable order number + the Worker's orderLedger (one order per number, re-sends are recognised as the same order).
+type LeaseKv = { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem(k: string): void };
+export const STORAGE_LEASE_KEY = 'anta_checkout_lock_lease_v1';
+export const STORAGE_SETTLE_MS = 80;
+export async function withStorageLease<T>(
+  fn: (stillOwned: StillOwned) => Promise<T>,
+  ls: LeaseKv,
+  o: { leaseMs?: number; waitMs?: number; pollMs?: number; settleMs?: number; marginMs?: number; now?: () => number } = {},
+): Promise<T> {
+  const leaseMs = o.leaseMs ?? IDB_LEASE_MS;
+  const waitMs = o.waitMs ?? IDB_WAIT_MS;
+  const pollMs = o.pollMs ?? 150;
+  const settleMs = o.settleMs ?? STORAGE_SETTLE_MS;
+  const marginMs = o.marginMs ?? OWNERSHIP_MARGIN_MS;
+  const now = o.now ?? Date.now;
+  const owner = `${now()}-${Math.random().toString(36).slice(2)}`;
+  const read = (): { owner: string; until: number } | null => {
+    const v = JSON.parse(ls.getItem(STORAGE_LEASE_KEY) || 'null');
+    return v && typeof v.owner === 'string' && typeof v.until === 'number' ? v : null;
+  };
+  const write = () => ls.setItem(STORAGE_LEASE_KEY, JSON.stringify({ owner, until: now() + leaseMs }));
+  const giveUpAt = now() + waitMs;
+  for (;;) {
+    let cur: { owner: string; until: number } | null;
+    try {
+      cur = read();
+      if (!cur || cur.until <= now() || cur.owner === owner) {
+        write();
+        await new Promise((r) => setTimeout(r, settleMs));
+        cur = read();
+        // storage that does not keep what was written (blocked / quota 0) cannot be a lock
+        if (!cur) throw new Error('storage does not persist');
+        if (cur.owner === owner) break;
+      }
+    } catch {
+      throw new CheckoutLockUnavailable('unsupported');
+    }
+    if (now() > giveUpAt) throw new CheckoutLockUnavailable('busy');
+    await new Promise((r) => setTimeout(r, pollMs + Math.floor(Math.random() * pollMs)));
+  }
+  let lost = false;
+  const renew = setInterval(() => {
+    try {
+      const cur = read();
+      if (cur && cur.owner === owner && cur.until > now()) write();
+      else {
+        lost = true;
+        clearInterval(renew);
+      }
+    } catch {}
+  }, Math.max(1_000, Math.floor(leaseMs / 3)));
+  const stillOwned = async (): Promise<boolean> => {
+    if (lost) return false;
+    try {
+      const cur = read();
+      const ok = !!cur && cur.owner === owner && cur.until > now() + marginMs;
+      if (!ok) lost = true;
+      return ok;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    return await fn(stillOwned);
+  } finally {
+    clearInterval(renew);
+    try {
+      if (read()?.owner === owner) ls.removeItem(STORAGE_LEASE_KEY);
+    } catch {}
+  }
+}
+
+/** Which cross-tab protection the last checkout send ran under (diagnostics, shown nowhere to the customer). */
+export type CheckoutLockMode = 'web-locks' | 'indexeddb' | 'storage-lease' | 'tab-only';
+let lastMode: CheckoutLockMode | null = null;
+export const lastCheckoutLockMode = (): CheckoutLockMode | null => lastMode;
+
 /**
  * Runs fn while holding ONE lock shared by ALL tabs of this site, so two tabs never prepare/send at the same time
  * (the second one then sees the first one's record: same content -> same number or "already confirmed").
- *   1. Web Locks API (navigator.locks) when available;
- *   2. otherwise an IndexedDB lock (atomic across tabs, see above);
- *   3. neither available -> CheckoutLockUnavailable('unsupported'): the order is NOT sent (fail closed).
- * localStorage is never used as a lock.
+ * Layers, each tried only if the previous one is MISSING or FAILS BEFORE fn started (never after: fn runs once):
+ *   1. Web Locks API (navigator.locks);
+ *   2. an IndexedDB lock (atomic across tabs, see above), opening time-limited;
+ *   3. a localStorage lease (see withStorageLease);
+ *   4. none of them usable (the browser blocks all site storage): this tab only. Other tabs cannot see this tab's
+ *      attempt records either then, so no browser-side lock could help; double taps are still stopped by the in-tab
+ *      lock, and every re-send uses the SAME order number, which the Worker turns into ONE order.
+ * Before (until 2026-11), "1 and 2 missing" refused to send at all — that blocked real customers on some iPhones.
+ * "Another tab is sending right now" (busy) is still never bypassed.
  */
 export async function withCheckoutLock<T>(
   fn: (stillOwned: StillOwned) => Promise<T>,
   locks: LockManager | null | undefined = (globalThis as { navigator?: { locks?: LockManager } }).navigator?.locks,
   idb: IdbFactory | null | undefined = (globalThis as { indexedDB?: IdbFactory }).indexedDB,
+  ls: LeaseKv | null | undefined = safeLocalStorage(),
+  o: { openTimeoutMs?: number; settleMs?: number } = {},
 ): Promise<T> {
-  // a Web Lock is held until fn settles (it cannot expire under us)
-  if (locks && typeof locks.request === 'function') return locks.request(CHECKOUT_LOCK_NAME, () => fn(async () => true));
-  if (idb && typeof idb.open === 'function') return withIdbLock(fn, idb);
-  // not a browser (unit tests / tools): there are no tabs to race with
-  if (typeof (globalThis as { window?: unknown }).window === 'undefined') return fn(async () => true);
-  throw new CheckoutLockUnavailable('unsupported');
+  let started = false;
+  const run = (mode: CheckoutLockMode) => (stillOwned: StillOwned) => {
+    started = true;
+    lastMode = mode;
+    return fn(stillOwned);
+  };
+  // 1. a Web Lock is held until fn settles (it cannot expire under us)
+  if (locks && typeof locks.request === 'function') {
+    try {
+      return await locks.request(CHECKOUT_LOCK_NAME, () => run('web-locks')(async () => true));
+    } catch (e) {
+      if (started) throw e; // fn's own error: never run it twice
+    }
+  }
+  // 2. IndexedDB
+  if (idb && typeof idb.open === 'function') {
+    try {
+      return await withIdbLock(run('indexeddb'), idb, { openTimeoutMs: o.openTimeoutMs });
+    } catch (e) {
+      if (started || !(e instanceof CheckoutLockUnavailable) || e.why === 'busy') throw e;
+    }
+  }
+  // 3. localStorage lease
+  if (ls) {
+    try {
+      return await withStorageLease(run('storage-lease'), ls, { settleMs: o.settleMs });
+    } catch (e) {
+      if (started || !(e instanceof CheckoutLockUnavailable) || e.why === 'busy') throw e;
+    }
+  }
+  // 4. this tab only (also: not a browser — unit tests / tools)
+  return run('tab-only')(async () => true);
+}
+function safeLocalStorage(): LeaseKv | null {
+  try {
+    return (globalThis as { localStorage?: LeaseKv }).localStorage ?? null; // the getter itself throws when storage is blocked
+  } catch {
+    return null;
+  }
 }
 
 // ------------------------------------------------------------------------------------------------ original payload
@@ -367,6 +508,8 @@ export type PlaceOrderInput = {
   locks?: LockManager | null;
   /** IndexedDB used for the fallback lock (default: globalThis.indexedDB) */
   idb?: IdbFactory | null;
+  /** storage for the third lock layer (default: localStorage; null = none) */
+  leaseStorage?: LeaseKv | null;
   /**
    * Who is sending NOW ('guest' | Firebase uid | null = unknown), decided at the moment of sending. When given, the
    * order's userId is taken from it (never from a value read before the session was restored), and an unknown
@@ -426,7 +569,7 @@ export async function placeOrder(input: PlaceOrderInput): Promise<CheckoutResult
         payloads.clear(); // refused and nothing could have been saved: the record is gone, so is the payload
       }
       return mapOutcome(outcome, payload);
-    }, input.locks === undefined ? undefined : input.locks, input.idb === undefined ? undefined : input.idb);
+    }, input.locks === undefined ? undefined : input.locks, input.idb === undefined ? undefined : input.idb, input.leaseStorage === undefined ? undefined : input.leaseStorage);
   } catch (e) {
     // no cross-tab lock: NOTHING was prepared or sent (the attempt records are untouched)
     if (e instanceof CheckoutLockUnavailable) return { status: 'lock_unavailable', why: e.why };

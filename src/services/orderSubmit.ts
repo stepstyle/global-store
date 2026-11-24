@@ -1,6 +1,6 @@
 // Order submission to the order Worker v2 (POST /create-order, GET /orders/{id}/status).
 // Pure and injectable (fetch, timers, storage, online state, Turnstile token source) — unit-tested with node --test
-// and end-to-end against the LOCAL Worker + Firestore emulator (workers/order-worker/test/local-e2e). No imports.
+// and end-to-end against the LOCAL Worker + Firestore emulator (workers/order-worker/test/local-e2e). Only import: the plain-JS SHA-256 fallback.
 //
 // Guarantees
 // 1. One order number per order CONTENT. Retries reuse the SAME number and the SAME frozen payload, so the
@@ -17,6 +17,7 @@
 //
 // Invariant for callers (Checkout, Phase 2): while this module is used, the browser must NOT also write the order
 // document directly — the Worker must be the only writer of orders/{id}.
+import { sha256HexJs, utf8 } from './sha256.ts';
 
 export type OrderPayload = { id: string; [k: string]: unknown };
 
@@ -76,9 +77,16 @@ export const ORDER_ID_RE = /^ORD-[A-Z0-9]{4,16}-[A-Z0-9]{4,16}$/; // = Worker v2
 const DEFAULTS = { timeoutMs: 12_000, maxAttempts: 3, backoffMs: [1_000, 3_000], maxRetryAfterMs: 10_000, statusChecks: 2, statusDelayMs: 2_000 };
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+// crypto.subtle when the browser offers it; the identical plain-JS digest otherwise (some in-app WebViews lack it)
 const sha256Hex = async (text: string): Promise<string> => {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const subtle = (globalThis as { crypto?: { subtle?: { digest?: (a: string, d: Uint8Array) => Promise<ArrayBuffer> } } }).crypto?.subtle;
+  if (subtle && typeof subtle.digest === 'function') {
+    try {
+      const digest = await subtle.digest('SHA-256', utf8(text));
+      return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    } catch {}
+  }
+  return sha256HexJs(text);
 };
 
 /** New order number in the format the Worker accepts (same shape as Checkout's makeOrderId). */

@@ -9,7 +9,7 @@ import {
 import { dropOpenUnsent } from '../../src/services/orderSubmit.ts';
 import { takeOwnerNotices } from '../../src/services/checkoutFlow.ts';
 import { retrySameOrder } from '../../src/services/checkoutFlow.ts';
-import { placeOrder, createSubmitLock, pendingPayloadStore, restorablePayload, recoverPendingAttempts, withCheckoutLock, withIdbLock, CheckoutLockUnavailable, messageFor, trackingKeys } from '../../src/services/checkoutFlow.ts';
+import { placeOrder, createSubmitLock, pendingPayloadStore, restorablePayload, recoverPendingAttempts, withCheckoutLock, withIdbLock, withStorageLease, STORAGE_LEASE_KEY, lastCheckoutLockMode, CheckoutLockUnavailable, messageFor, trackingKeys } from '../../src/services/checkoutFlow.ts';
 import { hashTrackingKey, normalizeTrackingKey } from '../../workers/order-worker/src/tracking.js';
 
 const W = 'http://127.0.0.1:8787';
@@ -245,21 +245,126 @@ test('two tabs, different orders at the same moment, WITH Web Locks -> the secon
   assert.notEqual(r1.orderId, r2.orderId);
 });
 
-test('no Web Locks and no IndexedDB in a BROWSER -> the order is NOT sent (fail closed), nothing prepared', async () => {
+// ------------------------------------------------------------------ browsers without Web Locks / IndexedDB (iPhone in-app browsers, old iOS, blocked storage)
+// Until 2026-11 such a browser was refused ("متصفحك لا يدعم حماية الطلب من التكرار") — real iPhone customers could not order.
+const okCreate = (creates, delay = 0) => async (url, init) => {
+  const id = JSON.parse(init.body).order.id;
+  creates.push(id);
+  if (delay) await new Promise((r) => setTimeout(r, delay));
+  return res(200, { ok: true, orderId: id, replay: creates.filter((x) => x === id).length > 1 });
+};
+const tabOf = (local, lease) => ({ store: localAttemptStore(local, kv()), lock: createSubmitLock(), payloads: pendingPayloadStore(kv()), trackingKeys: trackingKeys(kv()), leaseStorage: lease });
+
+test('no Web Locks, no IndexedDB, no storage at all (a BROWSER) -> the order IS sent, once, under the in-tab protection', async () => {
   const local = kv();
-  let sent = 0;
-  const fetch = async () => { sent++; return res(200, {}); };
+  const creates = [];
   globalThis.window = {}; // "a browser"
   try {
-    const r = await placeOrder({ draft: draft(), store: localAttemptStore(local, kv()), lock: createSubmitLock(), payloads: pendingPayloadStore(kv()), trackingKeys: trackingKeys(kv()), opts, deps: { fetch }, locks: null, idb: null });
-    assert.deepEqual(r, { status: 'lock_unavailable', why: 'unsupported' });
+    const r = await placeOrder({ draft: draft(), ...tabOf(local, null), opts, deps: { fetch: okCreate(creates) }, locks: null, idb: null });
+    assert.equal(r.status, 'confirmed');
+    assert.equal(lastCheckoutLockMode(), 'tab-only');
   } finally {
     delete globalThis.window;
   }
-  assert.equal(sent, 0);
-  assert.deepEqual(localAttemptStore(local, kv()).all(), [], 'no attempt record created');
-  const m = messageFor({ status: 'lock_unavailable', why: 'unsupported' });
-  assert.match(m.bodyAr, /لم نُرسل الطلب/);
+  assert.equal(creates.length, 1);
+});
+
+test('no cross-tab lock at all: a DOUBLE TAP in the same tab sends ONE request (the second tap is "busy")', async () => {
+  const local = kv();
+  const creates = [];
+  const t = tabOf(local, null);
+  const [a, b] = await Promise.all([
+    placeOrder({ draft: draft(), ...t, opts, deps: { fetch: okCreate(creates, 30) }, locks: null, idb: null }),
+    placeOrder({ draft: draft(), ...t, opts, deps: { fetch: okCreate(creates, 30) }, locks: null, idb: null }),
+  ]);
+  assert.deepEqual([a.status, b.status].sort(), ['busy', 'confirmed']);
+  assert.equal(creates.length, 1);
+});
+
+test('no cross-tab lock: connection lost -> uncertain; "retry with the same number" resends the SAME number (one order on the Worker)', async () => {
+  const local = kv();
+  const creates = [];
+  let down = true;
+  const fetch = async (url, init) => {
+    if (String(url).includes('/status')) return res(404, { ok: false });
+    const id = JSON.parse(init.body).order.id;
+    creates.push(id);
+    if (down) throw new TypeError('Load failed'); // Safari's wording for a dropped connection
+    return res(200, { ok: true, orderId: id, replay: true });
+  };
+  const t = tabOf(local, null);
+  const first = await placeOrder({ draft: draft(), ...t, opts, deps: { fetch, sleep: async () => {} }, locks: null, idb: null });
+  assert.equal(first.status, 'not_confirmed');
+  down = false;
+  const again = await retrySameOrder({ ...t, opts, deps: { fetch, sleep: async () => {} }, locks: null, idb: null, lastPayload: first.payload });
+  assert.equal(again.status, 'confirmed');
+  assert.equal(again.orderId, first.orderId, 'same order number');
+  assert.equal(new Set(creates).size, 1, 'only ever ONE order number sent');
+});
+
+test('IndexedDB that cannot be opened (SecurityError / blocked storage) -> the localStorage lease serializes two tabs -> one order', async () => {
+  const local = kv();
+  const lease = kv(); // shared by both "tabs", like localStorage
+  const creates = [];
+  const idb = { open() { throw Object.assign(new Error('The operation is insecure.'), { name: 'SecurityError' }); } };
+  const openedAt = Date.now() - 1000;
+  const [r1, r2] = await Promise.all([
+    placeOrder({ draft: draft(), ...tabOf(local, lease), opts, deps: { fetch: okCreate(creates, 30) }, locks: null, idb, openedAt }),
+    placeOrder({ draft: draft(), ...tabOf(local, lease), opts, deps: { fetch: okCreate(creates, 30) }, locks: null, idb, openedAt }),
+  ]);
+  assert.deepEqual([r1.status, r2.status].sort(), ['already_confirmed', 'confirmed']);
+  assert.equal(creates.length, 1, 'one create request');
+  assert.equal(lastCheckoutLockMode(), 'storage-lease');
+  assert.equal(lease.getItem(STORAGE_LEASE_KEY), null, 'lease released');
+});
+
+test('IndexedDB open that NEVER answers (iOS hang) -> gives up after the time limit, next layer; a late success is closed', async () => {
+  let closed = 0;
+  const req = {};
+  const idb = { open() { setTimeout(() => { req.result = { close: () => closed++ }; req.onsuccess?.(); }, 80); return req; } };
+  const lease = kv();
+  const out = await withCheckoutLock(async () => 'sent', null, idb, lease, { openTimeoutMs: 20, settleMs: 5 });
+  assert.equal(out, 'sent');
+  assert.equal(lastCheckoutLockMode(), 'storage-lease');
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(closed, 1, 'the late connection is closed, not leaked');
+});
+
+test('Web Locks present but REFUSING (rejects before running) -> next layer; an error thrown BY the send is never retried', async () => {
+  const refusing = { request: async () => { throw Object.assign(new Error('denied'), { name: 'SecurityError' }); } };
+  assert.equal(await withCheckoutLock(async () => 'sent', refusing, fakeIdb(), null), 'sent');
+  assert.equal(lastCheckoutLockMode(), 'indexeddb');
+  let runs = 0;
+  const locks = { request: async (n, cb) => cb() };
+  await assert.rejects(withCheckoutLock(async () => { runs++; throw new Error('send blew up'); }, locks, fakeIdb(), kv()), /send blew up/);
+  assert.equal(runs, 1, 'never run twice');
+});
+
+test('localStorage lease: a LIVE lease of another tab is never bypassed ("busy"); an expired one is taken over; storage that keeps nothing -> this tab only', async () => {
+  const lease = kv();
+  lease.setItem(STORAGE_LEASE_KEY, JSON.stringify({ owner: 'other-tab', until: Date.now() + 60_000 }));
+  await assert.rejects(withStorageLease(async () => 'never', lease, { pollMs: 5, waitMs: 40, settleMs: 2 }), (e) => e instanceof CheckoutLockUnavailable && e.why === 'busy');
+  lease.setItem(STORAGE_LEASE_KEY, JSON.stringify({ owner: 'dead-tab', until: Date.now() - 1 }));
+  assert.equal(await withStorageLease(async () => 'ran', lease, { settleMs: 2 }), 'ran');
+  const forgetful = { getItem: () => null, setItem() {}, removeItem() {} }; // e.g. storage quota 0
+  assert.equal(await withCheckoutLock(async () => 'sent', null, null, forgetful, { settleMs: 2 }), 'sent');
+  assert.equal(lastCheckoutLockMode(), 'tab-only');
+  const throwing = { getItem() { throw new Error('SecurityError'); }, setItem() { throw new Error('SecurityError'); }, removeItem() {} };
+  assert.equal(await withCheckoutLock(async () => 'sent', null, null, throwing, { settleMs: 2 }), 'sent');
+  assert.equal(lastCheckoutLockMode(), 'tab-only');
+});
+
+test('localStorage lease: two tabs racing for a FREE lease -> exactly one runs at a time', async () => {
+  const lease = kv();
+  let inside = 0, maxInside = 0;
+  const body = async () => { inside++; maxInside = Math.max(maxInside, inside); await new Promise((r) => setTimeout(r, 25)); inside--; return true; };
+  await Promise.all([1, 2, 3].map(() => withStorageLease(body, lease, { pollMs: 5, settleMs: 10 })));
+  assert.equal(maxInside, 1);
+});
+
+test('"another tab is sending" is still reported as busy, with its own message (never sent twice)', () => {
+  const m = messageFor({ status: 'lock_unavailable', why: 'busy' });
+  assert.match(m.bodyAr, /لم نُرسل هذا الطلب حتى لا يتكرر/);
 });
 
 // A minimal IndexedDB double that SERIALIZES readwrite transactions (as the spec requires for overlapping scopes).

@@ -86,6 +86,8 @@ async function fillToPayment(tab, phoneLocal, name = 'زبون اختبار مح
 }
 
 const confirm = (tab) => tab.evaluate(`${STICKY}.click(); true`);
+// a browser without Web Locks and without IndexedDB (some iPhone in-app browsers / older iOS / blocked storage)
+const NO_LOCKS_NO_IDB = "Object.defineProperty(Navigator.prototype, 'locks', { get: () => undefined, configurable: true }); try { Object.defineProperty(window, 'indexedDB', { get: () => undefined, configurable: true }); } catch {} try { Object.defineProperty(Window.prototype, 'indexedDB', { get: () => undefined, configurable: true }); } catch {}";
 
 const ATTEMPTS = `JSON.parse(localStorage.getItem('anta_checkout_attempts_v2') || '{"attempts":[]}').attempts`;
 const BANNER = (status) => `[...document.querySelectorAll('[data-testid=pending-attempt]')].some((b) => b.dataset.status === ${JSON.stringify(status)})`;
@@ -475,27 +477,43 @@ export function buildUiScenarios(ctx) {
         assert.equal((await tab.evaluate(ATTEMPTS)).some((a) => a.orderId === rec.orderId && a.state !== 'confirmed'), true, 'record kept');
         assert.equal(await countOrdersByPhone('+962791000024'), 0);
       }],
-      ['U27', 'NO Web Locks AND NO IndexedDB: the order is NOT sent (no create request leaves the browser); clear Arabic message + "order on WhatsApp"; cart kept', async (tab) => {
+      // Until 2026-11 such a browser got "متصفحك لا يدعم حماية الطلب من التكرار" and could not order at all (seen on a
+      // real iPhone in production). Now the order goes through, once; duplicate protection = same number + Worker ledger.
+      ['U27', 'NO Web Locks AND NO IndexedDB (some iPhone browsers): the order IS sent, ONCE, even with a double tap; one order, stock once', async (tab) => {
         await setUiMode('pass');
-        await tab.send('Page.addScriptToEvaluateOnNewDocument', { source: "Object.defineProperty(Navigator.prototype, 'locks', { get: () => undefined, configurable: true }); try { Object.defineProperty(window, 'indexedDB', { get: () => undefined, configurable: true }); } catch {} try { Object.defineProperty(Window.prototype, 'indexedDB', { get: () => undefined, configurable: true }); } catch {}" });
+        await tab.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_LOCKS_NO_IDB });
         await openCheckout(tab, ctx.base);
         assert.equal(await tab.evaluate(`navigator.locks === undefined && window.indexedDB === undefined`), true, 'both really absent');
         await fillToPayment(tab, '0791000027');
+        await tab.evaluate(`(() => { ${STICKY}.click(); ${STICKY}.click(); return true; })()`); // double tap
+        assert.equal(await waitOutcome(tab), 'success');
+        assert.equal(await tab.evaluate(`JSON.parse(sessionStorage.getItem('__e2e_creates') || '[]').length`), 1, 'ONE create request');
+        assert.equal(await countOrdersByPhone('+962791000027'), 1, 'one order');
+        assert.equal(await stock(), 8, 'stock once');
+        assert.equal(await tab.evaluate(`document.body.innerText.includes('متصفحك لا يدعم')`), false, 'the old refusal never shown');
+      }],
+      ['U37', 'NO Web Locks, NO IndexedDB, NO crypto.subtle / randomUUID: connection lost AFTER the Worker saved -> "not confirmed" with the number; retry -> the SAME number, one order, stock once', async (tab) => {
+        await setUiMode('savehold');
+        await tab.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_LOCKS_NO_IDB + " try { Object.defineProperty(Crypto.prototype, 'subtle', { get: () => undefined, configurable: true }); } catch {} try { Object.defineProperty(Crypto.prototype, 'randomUUID', { value: undefined, configurable: true }); } catch {}" });
+        await openCheckout(tab, ctx.base);
+        assert.equal(await tab.evaluate(`navigator.locks === undefined && window.indexedDB === undefined && crypto.subtle === undefined && crypto.randomUUID === undefined`), true, 'all four really absent');
+        await fillToPayment(tab, '0791000037');
         await confirm(tab);
-        assert.equal(await waitOutcome(tab), 'lock_unavailable');
-        const text = await tab.evaluate(`document.querySelector('[data-testid=submit-result]').innerText`);
-        assert.match(text, /متصفحك لا يدعم حماية الطلب من التكرار/);
-        assert.match(text, /لم نُرسل الطلب/);
-        const wa = await tab.evaluate(`document.querySelector('[data-testid=order-whatsapp]')?.href || ''`);
-        assert.match(wa, /^https:\/\/wa\.me\/962796047637\?text=/, 'WhatsApp ordering option shown (official number)');
-        const waText = decodeURIComponent(wa.split('?text=')[1]);
-        for (const pii of ['زبون اختبار محلي', '791000027', 'شارع الاختبار', 'buyer@example.com']) assert.equal(waText.includes(pii), false, `WhatsApp text holds ${pii}`);
-        assert.equal(await tab.evaluate(`JSON.parse(sessionStorage.getItem('__e2e_creates') || '[]').length`), 0, 'no create request left the browser');
-        assert.equal(await tab.evaluate(`window.__e2eNet.started`), 0, 'no Worker call at all');
-        assert.deepEqual(await tab.evaluate(ATTEMPTS), [], 'no attempt record (no number used)');
-        assert.equal(await tab.evaluate(CART_LEN), 1, 'cart kept');
-        assert.equal(await countOrdersByPhone('+962791000027'), 0);
-        assert.equal(await stock(), 10, 'stock untouched');
+        const o37 = await waitOutcome(tab, 120_000);
+        assert.equal(o37, 'not_confirmed', `outcome ${o37}: ${await tab.evaluate(`document.querySelector('[data-testid=submit-result]')?.innerText || ''`)}`);
+        const shown = (await tab.evaluate(`document.querySelector('[data-testid=submit-order-id]')?.textContent || ''`)).replace('#', '');
+        assert.match(shown, /^ORD-[A-Z0-9]+-[A-Z0-9]+$/);
+        assert.equal(await countOrdersByPhone('+962791000037'), 1, 'the Worker did save it');
+        await setUiMode('pass');
+        const sentBefore = await tab.evaluate(`window.__e2eNet.started`);
+        await tab.evaluate(`[...document.querySelectorAll('[data-testid=submit-result] button')].find((b) => /نفس رقم الطلب/.test(b.textContent)).click(); true`);
+        await tab.waitFor(`window.__e2eNet.started > ${sentBefore}`, 10_000, 'retry request sent');
+        await tab.waitFor(SUBMIT_SETTLED, 40_000, 'retry finished');
+        assert.equal(await tab.evaluate(OUTCOME), 'success', 'retry confirmed');
+        assert.equal(await tab.evaluate(`location.hash.split('/').pop()`), shown, 'the SAME number');
+        assert.deepEqual([...new Set(await tab.evaluate(`JSON.parse(sessionStorage.getItem('__e2e_creates') || '[]').map((c) => c.id)`))], [shown], 'only that number ever sent');
+        assert.equal(await countOrdersByPhone('+962791000037'), 1, 'still one order');
+        assert.equal(await stock(), 8, 'stock once');
       }],
       ['U25', 'NO Web Locks (disabled in both tabs): the IndexedDB lock still serializes two tabs -> one order, one deduction', async (tab) => {
         await setUiMode('pass');
