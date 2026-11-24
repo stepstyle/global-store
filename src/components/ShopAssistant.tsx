@@ -40,7 +40,7 @@ const waAsk = (q: string) => `${STORE_WHATSAPP_URL}?text=${encodeURIComponent(`Ù
 // customer's orders / tracking, the contact page â€” which has its own channels)
 const HIDDEN_ON = /^\/(checkout|cart|login|admin|order-success|my-orders|tracking|contact)/;
 // product page on PHONES: the round button sat on the quantity (+) control of the first screen
-const PHONE_HIDDEN_ON = /^\/product\//;
+const PHONE_HIDDEN_ON = /^\/(product\/|checkout)/; // on a phone it would sit over these pages' bottom action bar
 
 const ShopAssistant: React.FC = () => {
   const { products, language, isCartOpen } = useCart() as any;

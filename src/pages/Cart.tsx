@@ -313,7 +313,7 @@ const Cart: React.FC = () => {
 
                 <div className="mt-5 rounded-xl bg-slate-50 border border-slate-100 p-3.5 text-xs text-slate-500 flex items-start gap-2.5 leading-relaxed">
                   <ShieldCheck size={18} className="text-green-500 shrink-0 mt-0.5" />
-                  <span>{L('دفع آمن 100%. يتم تشفير وحماية بياناتك وفق أعلى المعايير.', '100% Secure checkout. Your data is encrypted and protected to the highest standards.')}</span>
+                  <span>{L('الاتصال مشفّر (HTTPS)، ولا نطلب بيانات بطاقة: الدفع عند الاستلام أو بحوالة CliQ.', 'Encrypted connection (HTTPS), and no card details asked: pay on delivery or by CliQ transfer.')}</span>
                 </div>
               </div>
 

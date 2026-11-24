@@ -484,16 +484,16 @@ export function buildWheelScenarios(ctx) {
       await t.waitFor(`document.querySelector('[data-testid=wheel-admin-save-result]')?.dataset.tone === 'ok'`, 20_000, 'saved');
       const c = await get(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`);
       const d = c.prizes.find((p) => p.id === 'disc-1');
-      assert.equal(d.weight, 3);
+      assert.equal(d.weight, 3, 'weight saved');
       assert.deepEqual(d.weights, { new: 3, returning: 1, loyal: 5 }, 'each tier saved independently');
-      assert.equal(d.minOrderJod, 6);
-      assert.equal(c.prizes.length, 5);
-      assert.equal((await get(`wheelPool/${WHEEL_CAMPAIGN_ID}_gift-1`))?.remaining, 2);
+      assert.equal(d.minOrderJod, 6, 'minimum saved');
+      assert.equal(c.prizes.length, 5, 'five prizes saved');
+      assert.equal((await get(`wheelPool/${WHEEL_CAMPAIGN_ID}_gift-1`))?.remaining, 2, 'gift pool 2');
       // quantity 3 -> 0 (none used): the prize disappears for visitors
       await t.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('[data-testid=wheel-admin-slot][data-slot-id="disc-1"] [data-testid=wheel-admin-qty]'), '0'); return true; })()`);
       await t.evaluate(`document.querySelector('[data-testid=wheel-admin-save]').click(); true`);
       await until(async () => (await get(`wheelPool/${WHEEL_CAMPAIGN_ID}_disc-1`))?.remaining === 0, 20_000, 'saved again: pool emptied');
-      assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-admin-save-result]')?.dataset.tone`), 'ok');
+      assert.equal(await t.evaluate(`document.querySelector('[data-testid=wheel-admin-save-result]')?.dataset.tone`), 'ok', 'second save result ok');
       // suggested weights: filled into the draft for review, NOT saved
       const before = (await get(`wheelCampaigns/${WHEEL_CAMPAIGN_ID}`)).prizes.find((p) => p.id === 'none-1').weights;
       await t.evaluate(`document.querySelector('[data-testid=wheel-admin-suggest]').click(); true`);

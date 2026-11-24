@@ -217,6 +217,11 @@ const Checkout: React.FC = () => {
   const attemptStoreRef = useRef(localAttemptStore());
   // the same content confirmed AFTER this page was opened (another tab / recovery) is never ordered twice
   const openedAtRef = useRef(Date.now());
+  // phones: the footer under this page leaves room for the fixed action bar (index.css)
+  useEffect(() => {
+    document.documentElement.classList.add('has-bottom-action-bar');
+    return () => document.documentElement.classList.remove('has-bottom-action-bar');
+  }, []);
   // earlier attempts of this browser found when the page opened: recovered (saved and ours) or still unresolved
   const [pendingAttempts, setPendingAttempts] = useState<PendingRecovery[]>([]);
   const [pendingChecked, setPendingChecked] = useState(false);
@@ -400,11 +405,13 @@ const Checkout: React.FC = () => {
     streetAddress: '', 
     postalCode: '',
     phoneLocal: '',
-    saveInfo: true,
+    saveInfo: false, // optional consent: never pre-selected
     billingSameAsShipping: true,
   });
 
-  const [acceptPolicies, setAcceptPolicies] = useState(true);
+  // the order terms are agreed by sending the order, stated right next to the action (data-testid checkout-agreement);
+  // there is no pre-ticked box pretending to be a choice. Recorded with the order as acceptedStorePolicies.
+  const [acceptPolicies] = useState(true);
   const [acceptDeliveryPolicy, setAcceptDeliveryPolicy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -983,7 +990,7 @@ const Checkout: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8 lg:py-12 pb-32 lg:pb-12">
+    <div className="min-h-screen bg-slate-50 py-8 lg:py-12" data-testid="checkout-page">
       <SEO title={tt('checkout', 'إتمام الطلب', 'Checkout')} noIndex={true} />
 
       <div className="container mx-auto px-4 lg:px-8 max-w-7xl">
@@ -993,7 +1000,7 @@ const Checkout: React.FC = () => {
               {tt('checkout', 'إتمام الدفع', 'Secure Checkout')}
             </h1>
             <p className="text-slate-500 font-medium mt-2">
-              {tt('checkoutHint', 'نضمن لك تجربة تسوق آمنة وسريعة', 'Simple, fast, and secure checkout process.')}
+              {tt('checkoutHint', 'ثلاث خطوات: بياناتك، التوصيل، الدفع.', 'Three steps: your details, delivery, payment.')}
             </p>
           </div>
         </div>
@@ -1005,7 +1012,7 @@ const Checkout: React.FC = () => {
           <div className="flex-1 space-y-6 lg:max-w-3xl">
             
             {/* Step Indicator */}
-            <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-4 sm:p-6 sticky top-20 z-20">
+            <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-4 sm:p-6 lg:sticky lg:top-20 z-20">
               <div className="flex items-center justify-between gap-2">
                 {[1, 2, 3].map((i) => {
                   const active = step === i;
@@ -1214,7 +1221,8 @@ const Checkout: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="mt-8 pt-6 border-t border-slate-100 flex justify-end">
+                {/* phones / tablets: the bar fixed at the bottom is the ONE primary action (no second copy here) */}
+                <div className="mt-8 pt-6 border-t border-slate-100 flex justify-end max-lg:hidden">
                   <Button onClick={goToShipping} disabled={isProcessing} className="w-full sm:w-auto px-10 py-4 text-lg">
                     {tt('continueToShipping', 'متابعة لاختيار التوصيل', 'Continue to delivery options')}
                   </Button>
@@ -1271,7 +1279,7 @@ const Checkout: React.FC = () => {
                   <Button variant="outline" onClick={() => changeStep(1)} disabled={isProcessing} className="w-full sm:w-auto px-8 py-4">
                     {tt('back', 'تعديل العنوان', 'Edit Address')}
                   </Button>
-                  <Button onClick={() => changeStep(3)} disabled={isProcessing} className="w-full sm:w-auto px-10 py-4 text-lg shadow-xl shadow-sky-500/20">
+                  <Button onClick={() => changeStep(3)} disabled={isProcessing} className="max-lg:hidden w-full sm:w-auto px-10 py-4 text-lg shadow-xl shadow-sky-500/20">
                     {tt('continueToPayment', 'متابعة للدفع', 'Proceed to Payment')}
                   </Button>
                 </div>
@@ -1450,7 +1458,18 @@ const Checkout: React.FC = () => {
                         {tr('تعذّر تحميل التحقق الأمني. تحقّق من الاتصال ثم حدّث الصفحة. لن يُرسل الطلب بدونه.', 'The security check could not load. Check your connection and refresh the page. The order cannot be sent without it.')}
                       </p>
                     )}
+                    {/* the security check passing is NOT the order being sent: say which one happened */}
+                    {turnstile.status === 'ready' && !isProcessing && !submitResult && (
+                      <p className="mt-2 text-xs font-bold text-emerald-700" role="status" data-testid="turnstile-passed">
+                        {tr('✓ اكتمل التحقق الأمني. لم يُرسل الطلب بعد — اضغط «تأكيد الطلب» لإرساله.', '✓ Security check passed. The order is not sent yet — press "Confirm order" to send it.')}
+                      </p>
+                    )}
                   </div>
+                )}
+                {isProcessing && (
+                  <p className="mt-6 rounded-2xl border border-sky-100 bg-sky-50 p-3 text-sm font-bold text-sky-900" role="status" data-testid="checkout-sending">
+                    {tr('جارٍ إرسال الطلب إلى المكتبة… لا تغلق الصفحة. إذا انقطع الاتصال نعيد المحاولة بنفس رقم الطلب، فلن يتكرر.', 'Sending the order to the shop… keep this page open. If the connection drops we retry with the same order number, so it is never duplicated.')}
+                  </p>
                 )}
 
                 {/* Refused locally (input limits): nothing was sent, cart and any pending attempt are untouched */}
@@ -1539,13 +1558,21 @@ const Checkout: React.FC = () => {
                   );
                 })()}
 
-                <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col-reverse sm:flex-row justify-between items-center gap-4">
+                {/* the required agreement: stated next to the action (no pre-ticked box), recorded with the order */}
+                <p className="mt-8 text-xs font-bold leading-6 text-slate-500" data-testid="checkout-agreement">
+                  {isAR ? (
+                    <>بإرسال الطلب توافق على شروطه الموضّحة في هذه الصفحة (الأسعار، التوصيل، طريقة الدفع) وعلى <ReactRouterDOM.Link to="/privacy" className="underline text-slate-700">سياسة الخصوصية</ReactRouterDOM.Link>.</>
+                  ) : (
+                    <>By sending the order you agree to its terms shown on this page (prices, delivery, payment method) and to the <ReactRouterDOM.Link to="/privacy" className="underline text-slate-700">privacy policy</ReactRouterDOM.Link>.</>
+                  )}
+                </p>
+                <div className="mt-4 pt-6 border-t border-slate-100 flex flex-col-reverse sm:flex-row justify-between items-center gap-4">
                   <button onClick={() => changeStep(2)} disabled={isProcessing} className="text-sm font-bold text-slate-500 hover:text-slate-900 transition-colors w-full sm:w-auto py-3">
                     {tt('backToShipping', 'الرجوع لخيارات التوصيل', 'Back to Delivery')}
                   </button>
                   <Button
                     onClick={handlePlaceOrder}
-                    className="w-full sm:w-auto px-12 py-5 text-lg shadow-xl shadow-sky-500/20"
+                    className="max-lg:hidden w-full sm:w-auto px-12 py-5 text-lg shadow-xl shadow-sky-500/20"
                     isLoading={isProcessing || googleBusy}
                     disabled={isProcessing || googleBusy}
                     data-testid="checkout-confirm"
@@ -1726,9 +1753,9 @@ const Checkout: React.FC = () => {
 
               <div className="mt-6 rounded-[2rem] border border-slate-100 bg-slate-50/70 p-4 sm:p-5">
                 <div className="mb-4">
-                  <h4 className="text-sm font-black text-slate-900">خيارات الطلب والموافقات</h4>
-                  <p className="mt-1 text-xs font-bold text-slate-400">
-                    إعدادات إضافية لتسريع الطلب وتجهيز بياناته بشكل أفضل
+                  <h4 className="text-sm font-black text-slate-900">{tr('خيارات اختيارية', 'Optional choices')}</h4>
+                  <p className="mt-1 text-xs font-bold text-slate-500">
+                    {tr('لا يؤثر أيٌّ منها على طلبك؛ تُسجَّل اختياراتك مع الطلب.', 'None of these affects your order; your choices are recorded with it.')}
                   </p>
                 </div>
 
@@ -1742,11 +1769,11 @@ const Checkout: React.FC = () => {
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-black text-slate-800">حفظ بياناتي لتسريع الدفع مستقبلاً</span>
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">اختياري</span>
+                        <span className="text-sm font-black text-slate-800">{tr('أوافق على احتفاظ المكتبة ببيانات التوصيل لطلباتي القادمة', 'I agree that the shop keeps my delivery details for my next orders')}</span>
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">{tr('اختياري', 'Optional')}</span>
                       </div>
-                      <p className="mt-1 text-xs font-bold text-slate-400">
-                        يحفظ بيانات الاستلام لتعبئة أسرع في الطلبات القادمة
+                      <p className="mt-1 text-xs font-bold text-slate-500">
+                        {tr('غير مفعّل إلا إذا اخترته أنت.', 'Off unless you choose it.')}
                       </p>
                     </div>
                   </label>
@@ -1760,76 +1787,42 @@ const Checkout: React.FC = () => {
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-black text-slate-800">اطلعت على سياسة التوصيل</span>
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">اختياري</span>
+                        <span className="text-sm font-black text-slate-800">{tr('اطلعت على مدة التوصيل وتكلفته الموضّحة في خطوة التوصيل', 'I have read the delivery time and cost shown in the delivery step')}</span>
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">{tr('اختياري', 'Optional')}</span>
                       </div>
-                      <p className="mt-1 text-xs font-bold text-slate-400">
-                        يساعد في توضيح مواعيد وآلية التوصيل قبل تأكيد الطلب
-                      </p>
                     </div>
                   </label>
 
-                  <label
-                    className={`flex items-start gap-3 rounded-2xl border p-4 transition-all cursor-pointer ${
-                      errors.acceptPolicies
-                        ? 'border-red-300 bg-red-50'
-                        : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={acceptPolicies}
-                      onChange={(e) => {
-                        setAcceptPolicies(e.target.checked);
-                        setErrors((prev) => {
-                          const next = { ...prev };
-                          delete next.acceptPolicies;
-                          return next;
-                        });
-                      }}
-                      className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-black text-slate-800">أوافق على سياسات المتجر وأحكام الخدمة</span>
-                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-black text-red-600">مطلوب</span>
-                      </div>
-                      <p className="mt-1 text-xs font-bold text-slate-400">
-                        لا يمكن إتمام الطلب بدون الموافقة على سياسات المتجر
-                      </p>
-                    </div>
-                  </label>
                 </div>
-
-                {errors.acceptPolicies && (
-                  <p className="mt-3 ms-1 text-xs font-black text-red-500">{errors.acceptPolicies}</p>
-                )}
               </div>
-              <div className="mt-6 flex items-center justify-center gap-2 text-xs font-bold text-slate-400 bg-white border border-slate-100 py-3 rounded-2xl">
-                <Shield size={16} className="text-emerald-500" />
-                <span>{tt('secureCheckoutNote', 'بياناتك مشفرة ومحمية بالكامل 100%', 'Your data is 100% encrypted and secure')}</span>
+              {/* a statement that can be checked, not a promise ("100% secure" is not something anyone can verify) */}
+              <div className="mt-6 flex items-start justify-center gap-2 text-xs font-bold leading-5 text-slate-500 bg-white border border-slate-100 px-4 py-3 rounded-2xl" data-testid="checkout-security-note">
+                <Shield size={16} className="text-emerald-500 shrink-0 mt-0.5" />
+                <span>{tr('الاتصال بالموقع مشفّر (HTTPS)، ولا نطلب بيانات بطاقة بنكية: الدفع عند الاستلام أو بحوالة CliQ.', 'The connection to the site is encrypted (HTTPS), and we never ask for card details: pay on delivery or by CliQ transfer.')}</span>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Mobile Sticky Checkout Button */}
-      <div className="lg:hidden fixed bottom-0 left-0 w-full bg-white/90 backdrop-blur-md border-t border-slate-200 p-4 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-50 animate-in slide-in-from-bottom-full">
-        <div className="flex items-center justify-between gap-4 max-w-md mx-auto">
+      {/* Phones / tablets: ONE primary action per step, fixed at the bottom, clear of the iPhone home indicator */}
+      <div className="lg:hidden fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-slate-200 px-4 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] shadow-[0_-6px_24px_rgba(0,0,0,0.06)] z-50" data-testid="checkout-sticky-bar">
+        <div className="flex items-center justify-between gap-3 max-w-md mx-auto">
           <div className="min-w-0 flex flex-col">
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{tt('total', 'المطلوب للدفع', 'Total to pay')}</span>
-            <span className="text-xl font-black text-slate-900 tabular-nums leading-none mt-0.5">{formatMoney(total)}</span>
+            <span className="text-[11px] font-bold text-slate-500 leading-4">{tt('total', 'المطلوب للدفع', 'Total to pay')}</span>
+            <span className="text-lg font-black text-slate-900 tabular-nums leading-6 whitespace-nowrap" data-testid="checkout-sticky-total">{formatMoney(total)}</span>
           </div>
 
           <Button
             data-testid="checkout-sticky-action"
+            data-step={step}
+            size="sm"
             onClick={() => {
               if (step === 1) goToShipping();
               else if (step === 2) changeStep(3);
               else handlePlaceOrder();
             }}
-            className="flex-1 py-4 text-base shadow-xl shadow-sky-500/20"
+            className="flex-1 max-w-[15rem] min-h-[48px] text-[15px] shadow-md shadow-sky-500/20"
             isLoading={isProcessing || googleBusy}
             disabled={isProcessing || googleBusy}
           >

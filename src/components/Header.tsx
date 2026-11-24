@@ -443,9 +443,9 @@ const Header: React.FC = () => {
           </div>
         </div>
 
-        <div className={`w-full flex items-center justify-between px-5 sm:px-6 lg:px-14 2xl:px-24 transition-all duration-300 ${isScrolled ? 'h-14 lg:h-[72px]' : 'h-16 lg:h-20'}`}>
+        <div className={`w-full flex items-center justify-between px-4 min-[360px]:px-5 sm:px-6 lg:px-14 2xl:px-24 transition-all duration-300 ${isScrolled ? 'h-14 lg:h-[72px]' : 'h-16 lg:h-20'}`}>
           
-          <Link to="/" className="flex items-center group shrink-0 min-w-0" onClick={handleHomeClick} aria-label={L('مكتبة دير شرف العلمية — الرئيسية', 'Dair Sharaf Library — Home')}>
+          <Link to="/" className="flex items-center group shrink min-w-0 me-2" onClick={handleHomeClick} aria-label={L('مكتبة دير شرف العلمية — الرئيسية', 'Dair Sharaf Library — Home')}>
             <div className="relative w-11 h-11 rounded-2xl bg-ink-900 flex items-center justify-center shrink-0 shadow-soft ring-1 ring-gold-400/40">
               <span className="font-heading font-bold text-[22px] leading-none text-gold-300 translate-y-[-1px]">{isRtl ? 'د' : 'D'}</span>
               <span className="absolute -bottom-1 -end-1 w-3.5 h-3.5 rounded-full bg-gold-400 border-2 border-white" />

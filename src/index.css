@@ -72,3 +72,9 @@ input:focus, select:focus, textarea:focus {
   .ds-btn-ink { @apply inline-flex items-center justify-center gap-2 rounded-full bg-ink-900 text-white font-bold px-6 py-3.5 hover:bg-ink-800 active:scale-[0.98] transition; }
   .ds-btn-ghost { @apply inline-flex items-center justify-center gap-2 rounded-full border border-ink-900/15 text-ink-900 font-bold px-6 py-3.5 hover:bg-white active:scale-[0.98] transition; }
 }
+
+/* Checkout on phones / tablets: its action bar is fixed at the bottom; the footer below the page gets room for it, so
+   the bar never hides the footer's last line (set by Checkout while it is shown). */
+@media (max-width: 1023.98px) {
+  html.has-bottom-action-bar footer { padding-bottom: calc(5rem + env(safe-area-inset-bottom)); }
+}
