@@ -14,15 +14,20 @@ import type { SubmitDeps } from '../../services/orderSubmit';
 import { BACKEND_ENABLED } from '../../config/deployEnv';
 import {
   fetchWheelPublic, fetchWheelState, spinWheel, choosePrize, prizeText, targetRotation, usablePrize,
-  spinAsGuest, fetchGuestResult, claimGuestResult, guestAsSpin, prizeExpired, DEFAULT_HOLD_MINUTES, isSecondOrder, prizeWaiting, SECOND_ORDER_HOURS, WHEEL_TEST_BUILD,
+  spinAsGuest, fetchGuestResult, claimGuestResult, guestAsSpin, prizeExpired, DEFAULT_HOLD_MINUTES, isSecondOrder, prizeWaiting, SECOND_ORDER_HOURS, WHEEL_TEST_BUILD, failureText,
   type WheelSlot, type WheelSpin, type WheelState,
 } from '../../services/wheel';
 import WheelDial from './WheelDial';
+import { siteKeyFrom } from '../../services/turnstile';
+import { useTurnstile } from '../useTurnstile';
 import PrizeCountdown from './PrizeCountdown';
 import SecondOrderStatus, { secondOrderEndReason } from './SecondOrderStatus';
 
 const { Link } = ReactRouterDOM as any;
 const SPIN_MS = 4600;
+// Cloudflare Turnstile (PUBLIC site key): the SIGNED-IN spin (/wheel/spin) is refused without a fresh token when the
+// Worker runs TURNSTILE_MODE=enforce (production). The guest spin has no Turnstile (owner's rule; per-IP limit instead).
+const TURNSTILE_SITE_KEY = siteKeyFrom(import.meta.env.VITE_TURNSTILE_SITE_KEY);
 
 const STATUS_AR: Record<string, string> = { waiting: 'محفوظة — تبدأ الأيام الخمسة عند تسليم طلبك الأول', issued: 'أولية — تُثبَّت عند تأكيد طلب مؤهَّل', reserved: 'بانتظار تأكيد الطلب', consumed: 'مستحقة ومستخدمة', expired: 'منتهية أو ملغاة', none: 'حظ أوفر' };
 const STATUS_EN: Record<string, string> = { waiting: 'Kept — the 5 days start when your first order is delivered', issued: 'Provisional — confirmed with a qualifying order', reserved: 'Waiting for the order to be confirmed', consumed: 'Earned and used', expired: 'Expired or cancelled', none: 'Better luck' };
@@ -71,6 +76,8 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed }:
 
   const idToken = async () => (await getFirebaseAuth()?.currentUser?.getIdToken().catch(() => null)) ?? null;
   const signedIn = !!getFirebaseAuth()?.currentUser;
+  // the security check, shown above the spin button for a signed-in customer only
+  const turnstile = useTurnstile(TURNSTILE_SITE_KEY, signedIn && phase === 'ready', isAR ? 'ar' : 'en');
 
   const loadAccount = useCallback(async (): Promise<WheelState | null> => {
     const t = await idToken();
@@ -142,9 +149,18 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed }:
       setMsg(L('لا توجد لفة متاحة الآن. تحصل على لفة جديدة مع كل طلب مؤهَّل جديد بعد تسليمه.', 'No spin available now. You get a new spin with every new qualifying order once it is delivered.'));
       return;
     }
-    const r = await spinWheel(await idToken(), workerUrl, deps);
+    // a FRESH single-use token for this spin (none configured = none sent; the Worker decides)
+    let check: string | null = null;
+    if (turnstile.enabled) {
+      check = await turnstile.getToken();
+      if (!check) { setMsg(failureText({ kind: 'unavailable', reason: 'security' }, isAR)); return; }
+    }
+    const r = await spinWheel(await idToken(), workerUrl, deps, check);
     if (r.kind !== 'ok') {
-      setMsg(r.kind === 'not_verified' ? L('يلزم تأكيد بريدك الإلكتروني أولًا.', 'Please verify your e-mail first.') : r.kind === 'closed' ? L('الحملة غير متاحة حاليًا.', 'The campaign is not available right now.') : L('تعذّر الاتصال الآن. لم تُستخدم لفتك؛ حاول لاحقًا.', 'Could not connect. Your spin was not used; try again later.'));
+      setMsg(r.kind === 'not_verified' ? L('يلزم تأكيد بريدك الإلكتروني أولًا.', 'Please verify your e-mail first.')
+        : r.kind === 'closed' ? L('الحملة غير متاحة حاليًا.', 'The campaign is not available right now.')
+          : r.kind === 'sign_in_required' ? L('انتهت جلسة تسجيل الدخول. سجّل الدخول من جديد ثم حاول. لم تُستخدم لفّتك.', 'Your sign-in session ended. Sign in again and retry. Your spin was not used.')
+            : failureText(r, isAR));
       return;
     }
     await animateTo(r.value.result);
@@ -159,7 +175,7 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed }:
         r.kind === 'limit' ? L('وصلت اللفات من هذه الشبكة إلى الحد اليومي. حاول لاحقًا.', 'The daily spin limit for this network was reached. Try again later.')
           : r.kind === 'closed' ? L('الحملة غير متاحة حاليًا.', 'The campaign is not available right now.')
             : r.kind === 'no_storage' ? L('لا يمكن حفظ نتيجتك في هذا المتصفح (وضع التصفح الخاص أو التخزين معطّل). استخدم نافذة عادية للّف.', 'Your result cannot be saved in this browser (private mode or storage disabled). Use a normal window to spin.')
-              : L('تعذّر الاتصال الآن. حاول لاحقًا.', 'Could not connect. Try again later.'),
+              : failureText(r, isAR),
       );
       return;
     }
@@ -207,6 +223,7 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed }:
           <div className="mt-5">
             <WheelDial slots={slots} rotation={rotation} durationMs={duration} highlight={highlight} />
           </div>
+          {signedIn && turnstile.enabled && <div className="mt-4 flex min-h-[65px] justify-center" ref={turnstile.containerRef} data-testid="wheel-turnstile" data-status={turnstile.status} />}
           <button
             type="button" onClick={() => void onSpin()} disabled={busy || used} data-testid="wheel-spin" data-used={used ? '1' : '0'}
             className="mt-5 w-full rounded-2xl bg-ink-900 py-3.5 font-black text-paper-50 shadow-soft transition hover:bg-ink-800 disabled:opacity-60 focus:outline-none focus-visible:ring-4 focus-visible:ring-gold-300"

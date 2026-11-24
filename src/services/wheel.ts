@@ -38,7 +38,37 @@ export type WheelPublic = { campaign: string; slots: WheelSlot[]; minOrderJod: n
 export type WheelState = { campaign: string; minOrderJod: number | null; terms: string; prizeHoldMinutes: number; chancesLeft: number; spins: WheelSpin[]; slots: WheelSlot[]; previousDelivered: boolean | null;
   // where the account stands for a second-order prize (Worker's reading): none | pending | one_delivered | past
   secondOrder: string | null; secondOrderHours: number };
-export type WheelResult<T> = { kind: 'ok'; value: T } | { kind: 'sign_in_required' } | { kind: 'not_verified' } | { kind: 'closed'; code: string } | { kind: 'unavailable' };
+/**
+ * WHY a wheel call failed (shown to the customer as it is; a failed call never uses a spin):
+ *   network      no answer at all (offline, DNS, blocked request)
+ *   rate_limited 429 RATE_LIMITED — too many requests in a short time
+ *   server       5xx (503 UNAVAILABLE: the database refused / was unreachable)
+ *   security     403 TURNSTILE_FAILED — the security check (Cloudflare Turnstile) is missing or failed
+ *   refused      any other answer (its status / code kept for the message)
+ */
+export type WheelFailure = 'network' | 'rate_limited' | 'server' | 'security' | 'refused';
+export type WheelUnavailable = { kind: 'unavailable'; reason: WheelFailure; status?: number; code?: string };
+export function failureOf(status: number | null, body?: any): WheelUnavailable {
+  const code = typeof body?.code === 'string' ? body.code.slice(0, 60) : undefined;
+  if (status === null) return { kind: 'unavailable', reason: 'network' };
+  if (status === 429) return { kind: 'unavailable', reason: 'rate_limited', status, code };
+  if (status >= 500) return { kind: 'unavailable', reason: 'server', status, code };
+  if (status === 403 && code === 'TURNSTILE_FAILED') return { kind: 'unavailable', reason: 'security', status, code };
+  return { kind: 'unavailable', reason: 'refused', status, code };
+}
+/** the customer's message for a failed spin (Arabic / English) */
+export function failureText(f: WheelUnavailable, isAR: boolean): string {
+  const L = (ar: string, en: string) => (isAR ? ar : en);
+  const kept = L(' لم تُستخدم لفّتك.', ' Your spin was not used.');
+  switch (f.reason) {
+    case 'network': return L('تعذّر الاتصال بالخادم. تحقّق من اتصالك بالإنترنت ثم حاول مجددًا.', 'Could not reach the server. Check your internet connection and try again.') + kept;
+    case 'rate_limited': return L('طلبات كثيرة خلال وقت قصير. انتظر دقيقة ثم حاول مجددًا.', 'Too many requests in a short time. Wait a minute and try again.') + kept;
+    case 'server': return L('الخدمة مشغولة مؤقتًا. حاول بعد قليل.', 'The service is temporarily busy. Try again shortly.') + kept;
+    case 'security': return L('لم يكتمل التحقق الأمني. أكمل مربع التحقق ثم اضغط «لفّ الدولاب» مجددًا.', 'The security check did not complete. Finish the check box, then press "Spin" again.') + kept;
+    default: return L(`تعذّر إتمام اللفّة الآن (${f.code || f.status || 'خطأ'}).`, `The spin could not be completed now (${f.code || f.status || 'error'}).`) + kept;
+  }
+}
+export type WheelResult<T> = { kind: 'ok'; value: T } | { kind: 'sign_in_required' } | { kind: 'not_verified' } | { kind: 'closed'; code: string } | WheelUnavailable;
 
 const TYPES: PrizeType[] = ['gift', 'discount', 'free_delivery', 'none'];
 const n0 = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
@@ -46,15 +76,15 @@ const nOrNull = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && 
 const typeOf = (v: unknown): PrizeType => (TYPES.includes(v as PrizeType) ? (v as PrizeType) : 'gift');
 const appliesOf = (v: unknown) => (v === 'next_order' ? 'next_order' as const : 'this_order' as const);
 
-async function call<T>(path: string, method: 'GET' | 'POST', idToken: string | null, workerUrl: string, deps: SubmitDeps, pick: (b: any) => T | null, { anonymous = false } = {}): Promise<WheelResult<T>> {
+async function call<T>(path: string, method: 'GET' | 'POST', idToken: string | null, workerUrl: string, deps: SubmitDeps, pick: (b: any) => T | null, { anonymous = false, payload = {} as Record<string, unknown> } = {}): Promise<WheelResult<T>> {
   const base = normalizeWorkerUrl(workerUrl);
-  if (!WHEEL_ENABLED || !base) return { kind: 'unavailable' };
+  if (!WHEEL_ENABLED || !base) return { kind: 'unavailable', reason: 'refused', code: 'WHEEL_NOT_CONFIGURED' };
   if (!idToken && !anonymous) return { kind: 'sign_in_required' };
   try {
     const r = await deps.fetch(`${base}${path}`, {
       method,
       headers: { ...(idToken ? { authorization: `Bearer ${idToken}` } : {}), ...(method === 'POST' ? { 'content-type': 'application/json' } : {}) },
-      ...(method === 'POST' ? { body: '{}' } : {}),
+      ...(method === 'POST' ? { body: JSON.stringify(payload) } : {}),
     });
     let body: any = null;
     try { body = JSON.parse(await r.text()); } catch { body = null; }
@@ -62,9 +92,9 @@ async function call<T>(path: string, method: 'GET' | 'POST', idToken: string | n
     if (r.status === 403 && body?.code === 'WHEEL_ACCOUNT_NOT_VERIFIED') return { kind: 'not_verified' };
     if (r.status === 409 && typeof body?.code === 'string' && body.code.startsWith('CAMPAIGN_')) return { kind: 'closed', code: body.code };
     const v = r.status === 200 && body?.ok ? pick(body) : null;
-    return v ? { kind: 'ok', value: v } : { kind: 'unavailable' };
+    return v ? { kind: 'ok', value: v } : failureOf(r.status, body);
   } catch {
-    return { kind: 'unavailable' };
+    return failureOf(null);
   }
 }
 
@@ -107,11 +137,12 @@ export const fetchWheelState = (idToken: string | null, workerUrl: string, deps:
     secondOrder: typeof b.secondOrder === 'string' ? b.secondOrder : null, secondOrderHours: nOrNull(b.secondOrderHours) || SECOND_ORDER_HOURS,
   }));
 
-export const spinWheel = (idToken: string | null, workerUrl: string, deps: SubmitDeps) =>
+// the signed-in spin carries a FRESH single-use Turnstile token (production: TURNSTILE_MODE=enforce refuses it without)
+export const spinWheel = (idToken: string | null, workerUrl: string, deps: SubmitDeps, turnstileToken: string | null = null) =>
   call<{ result: WheelSpin; repeated: boolean; chancesLeft: number }>('/wheel/spin', 'POST', idToken, workerUrl, deps, (b) => {
     const result = spinOf(b.result);
     return result ? { result, repeated: b.repeated === true, chancesLeft: Math.max(0, Number(b.chancesLeft) || 0) } : null;
-  });
+  }, { payload: turnstileToken ? { turnstileToken } : {} });
 
 // ------------------------------------------------------------------ the spin WITHOUT an account (owner's rule)
 // The Worker draws and stores the result under a random TICKET made here (32 bytes from the browser's CSPRNG) and kept
@@ -189,19 +220,21 @@ async function post(path: string, body: unknown, idToken: string | null, workerU
 
 export type GuestSpinOutcome =
   | { kind: 'ok'; result: GuestResult; repeated: boolean }
-  | { kind: 'closed'; code: string } | { kind: 'limit' } | { kind: 'no_storage' } | { kind: 'unavailable' };
+  | { kind: 'closed'; code: string } | { kind: 'limit' } | { kind: 'no_storage' } | WheelUnavailable;
 
 /** spins (or, with a kept ticket, returns the stored result) — no account, no sign-in window */
 export async function spinAsGuest(workerUrl: string, deps: SubmitDeps): Promise<GuestSpinOutcome> {
   const ticket = guestTicket() ?? newGuestTicket();
   if (!ticket) return { kind: 'no_storage' };
   const r = await post('/wheel/guest/spin', { ticket }, null, workerUrl, deps);
-  if (!r) return { kind: 'unavailable' };
+  if (!r) return failureOf(null);
   const g = r.status === 200 && r.body?.ok ? guestOf(r.body.result) : null;
   if (g) return { kind: 'ok', result: g, repeated: r.body.repeated === true };
   if (r.status === 429 && r.body?.code === 'WHEEL_GUEST_LIMIT') return { kind: 'limit' };
-  if (r.status === 409 && typeof r.body?.code === 'string') return { kind: 'closed', code: r.body.code };
-  return { kind: 'unavailable' };
+  // closed campaign (CAMPAIGN_*) or no welcome spin in it; a 409 BUSY (contention) is a temporary server state
+  if (r.status === 409 && typeof r.body?.code === 'string' && (r.body.code.startsWith('CAMPAIGN_') || r.body.code === 'WHEEL_NO_WELCOME_SPIN')) return { kind: 'closed', code: r.body.code };
+  if (r.status === 409 && r.body?.code === 'BUSY') return { kind: 'unavailable', reason: 'server', status: 409, code: 'BUSY' };
+  return failureOf(r.status, r.body);
 }
 
 /** the stored result of this browser's ticket (null = no ticket / nothing stored for it) */
