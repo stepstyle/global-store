@@ -209,7 +209,7 @@ const CartItemCard: React.FC<Props> = ({ item, title, formatMoney, onRemove, onS
             </div>
 
             <div className="text-[10px] font-bold text-slate-500">
-              {t('lineTotal') ?? 'الإجمالي'}:{' '}
+              {t('lineTotal')}:{' '}
               <span className="font-black text-slate-900 tabular-nums ml-1 rtl:ml-0 rtl:mr-1">{formatMoney(lineTotal)}</span>
             </div>
           </div>
