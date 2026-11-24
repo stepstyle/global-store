@@ -250,7 +250,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
       {/* badges */}
       <div className="absolute top-4 start-4 z-20 flex flex-col items-start gap-1.5">
         {discountPct > 0 ? (
-          <span className="rounded-full bg-gold-500 text-white text-[11px] font-bold px-2.5 py-1 shadow-gold">-{discountPct}%</span>
+          <span className="rounded-full bg-rose-600 text-white text-[11px] font-bold px-2.5 py-1 shadow-soft" data-testid="card-sale-badge">{language === 'ar' ? <>خصم <bdi dir="ltr">{discountPct}%</bdi></> : `${discountPct}% off`}</span>
         ) : badge ? (
           <span className="rounded-full bg-ink-900 text-gold-200 text-[11px] font-bold px-2.5 py-1">{badge}</span>
         ) : null}
@@ -311,11 +311,14 @@ const ProductCard: React.FC<ProductCardProps> = ({
               {sale.onSale && (
                 <span className="text-[12px] text-ink-300 font-semibold line-through tabular-nums mb-1" data-testid="card-original-price">{formatJod(sale.original)} {L('د.أ', 'JOD')}</span>
               )}
-              <span className="font-heading font-bold text-ink-900 text-[18px] sm:text-[20px] tabular-nums" data-testid="card-price">
+              <span className={`font-heading font-bold text-[18px] sm:text-[20px] tabular-nums ${sale.onSale ? 'text-rose-700' : 'text-ink-900'}`} data-testid="card-price">
                 {fromPrice && <span className="text-[11px] font-semibold text-ink-400 me-1">{L('من', 'from')}</span>}
                 {formatJod(shown.price ?? product.price)}
                 <span className="text-[11px] font-semibold text-gold-600 ms-1">{L('د.أ', 'JOD')}</span>
               </span>
+              {sale.onSale && (
+                <span className="mt-1.5 inline-flex w-fit rounded-full bg-rose-50 text-rose-700 ring-1 ring-rose-100 px-2 py-0.5 text-[10.5px] font-bold tabular-nums" data-testid="card-save">{L(`وفّر ${formatJod(sale.save)} د.أ`, `Save ${formatJod(sale.save)} JOD`)}</span>
+              )}
             </div>
 
             <button

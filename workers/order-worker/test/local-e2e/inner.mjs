@@ -21,6 +21,7 @@ import { buildUiScenarios, runUiScenarios } from './ui-scenarios.mjs';
 import { runDeliveryScenarios, dashboardAdminEmail } from './delivery-scenarios.mjs';
 import { runVisualScenarios } from './visual-scenarios.mjs';
 import { runPreviewWheelCheck } from './preview-wheel-check.mjs';
+import { runStoreScenarios, storeCatalogue } from './store-scenarios.mjs';
 import { runWheelScenarios, WHEEL_CAMPAIGN_ID } from './wheel-scenarios.mjs';
 import { resolve as resolvePath } from 'node:path';
 import { WORKER_ROOT } from './plan.mjs';
@@ -313,7 +314,7 @@ const fs = new Firestore({ projectId: PROJECT_ID, firestoreAuth: 'emulator', url
 // delivery suite: always the rules planned for that rollout (firebase/firestore.rules.on-delivery)
 // E2E_RULES=on-delivery-final (any suite): the proposed final rules for the live site
 // E2E_RULES=on-delivery (any suite): the rules LIVE today — the window between the site deploy and the rules deploy
-const RULES_NAME = process.env.E2E_RULES === 'on-delivery-final' || (SUITE === 'wheel' && !process.env.E2E_RULES) ? 'on-delivery-final' : ['delivery', 'visual', 'preview'].includes(SUITE) ? 'on-delivery' : ['transition', 'final', 'on-delivery'].includes(process.env.E2E_RULES) ? process.env.E2E_RULES : 'compat';
+const RULES_NAME = process.env.E2E_RULES === 'on-delivery-final' || (SUITE === 'wheel' && !process.env.E2E_RULES) ? 'on-delivery-final' : ['delivery', 'visual', 'preview', 'store'].includes(SUITE) ? 'on-delivery' : ['transition', 'final', 'on-delivery'].includes(process.env.E2E_RULES) ? process.env.E2E_RULES : 'compat';
 async function loadCompatRules() {
   const content = readFileSync(RULES_NAME === 'on-delivery-final' ? FILES.onDeliveryFinalRules : RULES_NAME === 'on-delivery' ? FILES.onDeliveryRules : RULES_NAME === 'final' ? FILES.finalRules : RULES_NAME === 'transition' ? FILES.transitionRules : FILES.compatRules, 'utf8');
   console.log(`[inner] emulator rules: firestore.rules.${RULES_NAME} (local test file)`);
@@ -622,6 +623,22 @@ async function runVisualSuite() {
     get: async (path) => { const d = await fs.get(path); return d.exists ? decodeFields(d.fields) : null; },
   });
 }
+// ---------------------------------------------------------------- store improvements (offers, suggestions) — synthetic showcase
+async function seedCatalogue(put) {
+  for (const [id, data] of Object.entries(storeCatalogue())) await put(`products/${id}`, { ...data, synthetic: true, isNew: false, rating: 0, reviews: 0 });
+}
+async function runStoreSuite() {
+  const { base, admin, put, reseedAll } = await startDeliveryStack('vite-store');
+  await reseedAll();
+  await seedCatalogue(put);
+  await launchChrome({ port: PORTS.cdp, tmpDir: TMP, track: (child) => children.push({ label: 'chrome', child }) });
+  const shotsDir = process.env.E2E_SHOTS_DIR || join(TMP, 'store');
+  console.log(`[inner] store suite: Worker STOCK_POLICY=on_delivery APPROVAL_MODE=off PRICE_CHECK_MODE=enforce, Vite ${base}, headless Chrome, screenshots ${shotsDir}`);
+  return runStoreScenarios({
+    base, admin, shotsDir, openTab: () => openTab(PORTS.cdp),
+    get: async (path) => { const d = await fs.get(path); return d.exists ? decodeFields(d.fields) : null; },
+  });
+}
 // the preview's DEMO campaign: clearly fake prizes, local emulator only, never a real campaign / budget / coupon
 const DEMO_PRIZES = [
   { id: 'demo-disc-1', type: 'discount', label: 'خصم 1 د.أ', description: 'جائزة تجريبية — ليست حقيقية', icon: '💸', valueJod: 1, unitCostJod: 1, minOrderJod: 5, weight: 3, quantity: 100, costConfirmed: true },
@@ -646,6 +663,8 @@ async function runPreview() {
   // local TEST re-signing proxy, exactly as in the wheel suite
   const { base, admin, reseedAll, put } = await startDeliveryStack('vite-preview', PREVIEW_WHEEL ? { VITE_WHEEL_MODE: 'test', VITE_WORKER_URL: `${URLS.mock}/ui` } : {});
   await reseedAll();
+  // the synthetic showcase catalogue (offers, suggestions) next to the fixtures
+  await seedCatalogue(put);
   if (PREVIEW_WHEEL) await seedDemoWheel(put);
   if (process.env.E2E_PREVIEW_CHECK === '1') {
     // self-check instead of waiting for a human: the demo wheel on a phone and a desktop
@@ -809,7 +828,7 @@ try {
     ...(SUITE === 'delivery' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', SYNC_DIRECT_STATUS: 'true' } : {}),
     // visual check + manual preview: the owner's FINAL policy (orders accepted automatically, stock on delivery, Telegram
     // notifications only) — production settings except Turnstile (the local web app sends no token)
-    ...(SUITE === 'visual' || SUITE === 'preview' ? { STOCK_POLICY: 'on_delivery', APPROVAL_MODE: 'off', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log' } : {}),
+    ...(SUITE === 'visual' || SUITE === 'preview' || SUITE === 'store' ? { STOCK_POLICY: 'on_delivery', APPROVAL_MODE: 'off', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log' } : {}),
     // preview: the DEMO prize wheel (TEST mode, local demo campaign, a random per-run phone secret never written anywhere;
     // a generous guest-spin limit so a person can try it again and again)
     ...(PREVIEW_WHEEL ? { WHEEL_MODE: 'test', WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(32).toString('hex'), WHEEL_GUEST_PER_IP_DAY: '200' } : {}),
@@ -863,6 +882,8 @@ try {
     results = await runDeliverySuite();
   } else if (SUITE === 'visual') {
     results = await runVisualSuite();
+  } else if (SUITE === 'store') {
+    results = await runStoreSuite();
   } else if (SUITE === 'preview') {
     results = await runPreview();
   } else if (SUITE === 'wheel') {

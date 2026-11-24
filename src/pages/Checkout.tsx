@@ -43,6 +43,9 @@ import { ORDER_LIMITS, ORDER_EMAIL_RE, checkOrderLimits, sanitizeOrderLine } fro
 const firebaseUid = (): string | null => getFirebaseAuth()?.currentUser?.uid || null;
 import SEO from '../components/SEO';
 import LazyImage from '../components/LazyImage';
+import SuggestionRail from '../components/SuggestionRail';
+import { liveCartLine } from '../services/priceDisplay';
+import { cartSuggestions } from '../services/recommendations';
 import { BACKEND_ENABLED } from '../config/deployEnv';
 import {
   WHEEL_ENABLED, WHEEL_SPIN_ID_RE, chosenPrize, choosePrize, fetchWheelState, prizeEffect, prizeText, usablePrize,
@@ -512,19 +515,19 @@ const Checkout: React.FC = () => {
 
   const validatedCart = useMemo(() => {
     const safeCart = Array.isArray(cart) ? cart : [];
+    // price / stock from the LIVE catalogue (variant looked up by id), the numbers the order server uses
     return safeCart.map((cartItem: any) => {
-      const realProduct = products.find((p: Product) => p.id === cartItem.id);
-      const variant = cartItem.selectedVariant;
-      
-      const finalPrice = variant ? variant.price : (realProduct ? realProduct.price : cartItem.price);
-      
+      const live = liveCartLine(cartItem, products as Product[]);
       return {
         ...cartItem,
-        price: finalPrice,
-        stock: variant ? variant.stock : (realProduct ? realProduct.stock : cartItem.stock),
+        selectedVariant: live.selectedVariant ?? cartItem.selectedVariant,
+        price: live.price,
+        stock: live.stock,
       };
     });
   }, [cart, products]);
+  // first step only, three at most: related products the customer may add (never added by itself)
+  const checkoutSuggestions = useMemo(() => cartSuggestions(Array.isArray(cart) ? cart : [], products as Product[], 3), [cart, products]);
 
   const subtotal = useMemo(
     () =>
@@ -1607,6 +1610,12 @@ const Checkout: React.FC = () => {
                   );
                 })}
               </div>
+
+              {step === 1 && checkoutSuggestions.length > 0 && (
+                <div className="mb-6 -mt-2">
+                  <SuggestionRail products={checkoutSuggestions} title={tr('قد تحتاج أيضًا', 'You may also need')} compact testId="checkout-suggestions" />
+                </div>
+              )}
 
               {WHEEL_ENABLED && wheelNotice && (
                 <p className="mb-4 rounded-2xl border border-ink-100 bg-paper-100 p-3 text-xs font-bold text-ink-800" role="status" data-testid="checkout-wheel-notice">🎡 {wheelNotice}</p>

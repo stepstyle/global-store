@@ -7,6 +7,9 @@ import SEO from '../components/SEO';
 import CartItemCard from '../components/CartItemCard';
 import { Product } from '../types';
 import { ORDER_LIMITS } from '../services/orderLimits';
+import { liveCartLine } from '../services/priceDisplay';
+import { cartSuggestions } from '../services/recommendations';
+import SuggestionRail from '../components/SuggestionRail';
 
 const { useNavigate } = ReactRouterDOM as any;
 
@@ -80,24 +83,31 @@ const Cart: React.FC = () => {
   // ==========================================
   
   // 1. دمج بيانات السلة مع السعر والمخزون الحقيقي من الباك إند
+  // price / stock / discount of each line from the LIVE catalogue (the variant looked up by id in the current product),
+  // never the copy stored in this browser when the item was added — the same numbers the order server will use
   const validatedCart = useMemo(() => {
     return safeCart.map((cartItem: any) => {
-      const realProduct = products.find((p: Product) => p.id === cartItem.id);
-      const variant = cartItem.selectedVariant;
-
-      // 🚀 إذا كان الزبون قد اختار Variant (حجم/لون)، نأخذ سعره ومخزونه، وإلا نأخذ الأساسي
-      const finalPrice = variant ? variant.price : (realProduct ? realProduct.price : cartItem.price);
-      const finalStock = variant ? variant.stock : (realProduct ? realProduct.stock : cartItem.stock);
-
+      const live = liveCartLine(cartItem, products as Product[]);
+      const finalStock = live.stock;
       return {
         ...cartItem,
-        price: finalPrice,
+        selectedVariant: live.selectedVariant ?? cartItem.selectedVariant,
+        price: live.price,
         stock: finalStock,
+        sale: live.sale,
         isAvailable: finalStock !== undefined && finalStock > 0,
         hasStockIssue: finalStock !== undefined && cartItem.quantity > finalStock,
       };
     });
   }, [safeCart, products]);
+
+  // what the real discounts save on this cart (display only — the totals use the live prices above)
+  const saleSavings = useMemo(
+    () => validatedCart.reduce((sum: number, it: any) => sum + (it.sale?.onSale ? it.sale.save * Number(it.quantity || 0) : 0), 0),
+    [validatedCart]
+  );
+  // "complete your order": related, buyable products not already in the cart (shown only, never added by itself)
+  const suggestions = useMemo(() => cartSuggestions(safeCart, products as Product[], 6), [safeCart, products]);
 
   const totalItems = useMemo(
     () => validatedCart.reduce((sum: number, it: any) => sum + Number(it.quantity || 0), 0),
@@ -225,6 +235,13 @@ const Cart: React.FC = () => {
               })}
             </div>
 
+            <SuggestionRail
+              products={suggestions}
+              title={L('كمّل طلبك', 'Complete your order')}
+              subtitle={L('منتجات مرتبطة بما في سلتك — تُضاف فقط عند الضغط على «أضف»', 'Related to what is in your cart — added only when you press "Add"')}
+              testId="cart-suggestions"
+            />
+
             {/* 📝 ملاحظات الطلب */}
             <div className="bg-white border border-slate-200/60 rounded-2xl p-5 sm:p-6 mt-6 shadow-sm">
               <div className="flex items-center justify-between gap-3 mb-3">
@@ -272,6 +289,13 @@ const Cart: React.FC = () => {
                   <span>{L('المجموع الفرعي', 'Subtotal')}</span>
                   <span className="font-bold text-slate-800" dir="ltr">{formatMoney(subtotal)}</span>
                 </div>
+
+                {saleSavings > 0.0005 && (
+                  <div className="rounded-xl bg-rose-50 ring-1 ring-rose-100 px-3 py-2 text-rose-700 text-[12.5px] font-bold flex items-center justify-between gap-2" data-testid="cart-sale-savings">
+                    <span>{L('وفّرت بفضل العروض (محسوب في الأسعار)', 'Saved on offers (already in the prices)')}</span>
+                    <span className="tabular-nums" dir="ltr">{formatMoney(saleSavings)}</span>
+                  </div>
+                )}
 
                 {discountAmount > 0 && (
                   <div className="flex justify-between text-green-600">

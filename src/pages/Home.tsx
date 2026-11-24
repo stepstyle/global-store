@@ -3,8 +3,9 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Search, ArrowLeft, ArrowRight, Truck, ShieldCheck, Wallet, Headset, Sparkles, MessageCircle, Facebook, Instagram, MapPin,
-  GraduationCap, Gift, Blocks, Bike, Star,
+  GraduationCap, Gift, Blocks, Bike, Star, BadgePercent,
 } from 'lucide-react';
+import { offerProducts } from '../services/recommendations';
 
 import ProductCard from '../components/ProductCard';
 import { useCart } from '../App';
@@ -92,6 +93,11 @@ const Home: React.FC = () => {
     for (const p of latest) if (picks.length < 3 && firstImage(p) && !picks.includes(p)) picks.push(p);
     return picks.slice(0, 3);
   }, [latest]);
+
+  // featured offers: REAL discounts only (original price above the selling price), biggest first, buyable now
+  const offers = useMemo(() => offerProducts(list), [list]);
+  const featuredOffers = useMemo(() => [...offers].sort((a, b) => b.percent - a.percent || b.save - a.save || (a.p.id < b.p.id ? -1 : 1)).slice(0, 8).map((o) => o.p), [offers]);
+  const maxOffer = useMemo(() => offers.reduce((m, o) => Math.max(m, o.percent), 0), [offers]);
 
   const card = (p: any, i: number) => (
     <ProductCard key={p.id} product={p} onAddToCart={addToCart} onToggleWishlist={toggleWishlist} onQuickView={openQuickView} isLiked={wishlist.has(p.id)} priority={i < 2} />
@@ -218,6 +224,24 @@ const Home: React.FC = () => {
           ))}
         </div>
       </section>
+
+      {/* ============================ FEATURED OFFERS ============================ */}
+      {featuredOffers.length > 0 && (
+        <section className="ds-container pb-12 sm:pb-16" data-testid="home-offers">
+          <div className="rounded-[2rem] bg-gradient-to-b from-rose-50/80 to-paper-100 ring-1 ring-rose-100 p-4 sm:p-8">
+            <div className="flex items-end justify-between gap-4 mb-5 sm:mb-7">
+              <div className="min-w-0">
+                <div className="ds-eyebrow mb-2 !text-rose-700"><BadgePercent size={14} />{isRtl ? <>خصومات حتى <bdi dir="ltr">{maxOffer}%</bdi></> : `Up to ${maxOffer}% off`}</div>
+                <h2 className="ds-title">{L('عروض مميزة', 'Featured offers')}</h2>
+              </div>
+              <Link to="/offers" className="inline-flex items-center gap-2 rounded-full bg-rose-600 text-white text-[13px] sm:text-[14px] font-bold px-4 py-2.5 hover:bg-rose-700 transition shrink-0" data-testid="home-offers-all">
+                {L(`كل العروض (${offers.length})`, `All offers (${offers.length})`)} {isRtl ? <ArrowLeft size={16} /> : <ArrowRight size={16} />}
+              </Link>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">{featuredOffers.map(card)}</div>
+          </div>
+        </section>
+      )}
 
       {/* ============================ NEW ARRIVALS ============================ */}
       <section className="ds-container pb-12 sm:pb-16">

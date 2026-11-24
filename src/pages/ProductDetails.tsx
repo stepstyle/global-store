@@ -15,7 +15,8 @@ import { Product, ReviewDoc, AppUser, ProductVariant } from '../types';
 import SEO from '../components/SEO';
 import { ProductDetailSkeleton } from '../components/Skeleton';
 import { reviewsApi } from '../services/reviews';
-import { saleInfo } from '../services/priceDisplay';
+import { saleInfo, formatJod } from '../services/priceDisplay';
+import { similarProducts } from '../services/recommendations';
 
 const safeStr = (v: any) => String(v ?? '').trim();
 
@@ -409,11 +410,9 @@ const ProductDetails: React.FC = () => {
 
   const isLiked = useMemo(() => (product ? wishlist.has(product.id) : false), [wishlist, product]);
 
-  const relatedProducts = useMemo(() => {
-    return product
-      ? products.filter((p) => p.category === product.category && p.id !== product.id).slice(0, 4)
-      : [];
-  }, [products, product]);
+  // "similar products": shared category / sub-categories / tags (rarer tags count more), buyable only, never this
+  // product (services/recommendations.ts); computed from the products already loaded, no extra request
+  const relatedProducts = useMemo(() => similarProducts(product, products, 8), [products, product]);
 
   const addToCartWithQty = useCallback(
     (p: Product, q: number) => {
@@ -700,11 +699,16 @@ const ProductDetails: React.FC = () => {
                   </div>
                 )}
 
-                <div className="flex items-baseline gap-4 mb-6">
-                  {/* السعر */}
-                  <span className="font-heading text-4xl font-bold text-ink-900">{formatMoneyJOD(displayPrice)}</span>
-                  {/* 🚀 السعر القديم يظهر الآن دائماً وبثقة تامة! */}
-                  {displayOriginalPrice && <span className="text-lg font-bold text-slate-400 line-through">{formatMoneyJOD(displayOriginalPrice)}</span>}
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2 mb-6" data-testid="product-price-block">
+                  {/* السعر — a real discount only (an original price above THIS price, entered by the admin) */}
+                  <span className={`font-heading text-4xl font-bold ${pdSale.onSale ? 'text-rose-700' : 'text-ink-900'}`} data-testid="product-price">{formatMoneyJOD(displayPrice)}</span>
+                  {displayOriginalPrice && <span className="text-lg font-bold text-slate-400 line-through" data-testid="product-original-price">{formatMoneyJOD(displayOriginalPrice)}</span>}
+                  {pdSale.onSale && (
+                    <span className="inline-flex items-center gap-2 self-center">
+                      <span className="rounded-full bg-rose-600 text-white text-[12px] font-bold px-2.5 py-1" data-testid="product-sale-badge">{language === 'ar' ? <>خصم <bdi dir="ltr">{pdSale.percent}%</bdi></> : `${pdSale.percent}% off`}</span>
+                      <span className="rounded-full bg-rose-50 text-rose-700 ring-1 ring-rose-100 text-[12px] font-bold px-2.5 py-1 tabular-nums" data-testid="product-save">{language === 'ar' ? `وفّر ${formatJod(pdSale.save)} د.أ` : `Save ${formatJod(pdSale.save)} JOD`}</span>
+                    </span>
+                  )}
                 </div>
                 <div className="flex flex-col sm:flex-row gap-4">
                   <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-2xl p-1.5 w-full sm:w-36 shadow-inner">
@@ -875,8 +879,9 @@ const ProductDetails: React.FC = () => {
 
         {relatedProducts.length > 0 && (
           <div className="mb-12">
-            <h2 className="text-2xl font-black mb-6 text-slate-900 flex items-center gap-2"><span className="w-1.5 h-6 bg-yellow-400 rounded-full inline-block"></span>{tt('similarProducts', 'منتجات مشابهة', 'Similar Products')}</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <h2 className="font-heading text-2xl font-bold mb-1 text-ink-900 flex items-center gap-2"><span className="w-1.5 h-6 bg-gold-400 rounded-full inline-block"></span>{language === 'ar' ? 'قد يعجبك أيضًا' : 'You may also like'}</h2>
+            <p className="text-sm text-ink-500 mb-6">{language === 'ar' ? 'منتجات متوفرة من نفس القسم والاهتمامات' : 'In-stock products from the same department and interests'}</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5" data-testid="similar-products">
               {relatedProducts.map((p) => (
                 <ProductCard key={p.id} product={p} onAddToCart={addToCart} onToggleWishlist={toggleWishlist} onQuickView={openQuickView} isLiked={wishlist.has(p.id)} />
               ))}

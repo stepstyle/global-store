@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
+  BadgePercent,
   ShoppingBag,
   Search,
   Menu,
@@ -461,7 +462,7 @@ const Header: React.FC = () => {
 
           {/* full menu from xl (1280px): at 1024-1279 (iPad Pro landscape/portrait 1032) logo + 5 menus + actions do not
               fit and pushed the actions off-screen (horizontal overflow); the drawer menu is used below xl */}
-          <nav ref={desktopNavRef} className="hidden xl:flex items-center justify-center flex-1 min-w-0 space-s-2 px-4">
+          <nav ref={desktopNavRef} className="hidden xl:flex items-center justify-center flex-1 min-w-0 space-s-1 2xl:space-s-2 px-2 2xl:px-4" data-testid="desktop-nav">
             
             <Link to="/" onClick={handleHomeClick} className={`text-sm font-bold transition-colors duration-300 relative py-2 px-3 rounded-lg group flex items-center gap-2 ${isActivePath('/') ? 'text-slate-900 bg-paper-200 text-ink-900' : 'text-slate-900 hover:bg-paper-200 hover:text-slate-950 hover:shadow-sm'}`}>
               <Home size={18} />
@@ -529,16 +530,22 @@ const Header: React.FC = () => {
                 )}
               </div>
             ))}
+
+            {/* offers: products with a REAL discount only (pages/Offers.tsx) */}
+            <Link to="/offers" data-testid="nav-offers" className={`text-sm font-bold transition-colors duration-300 py-2 px-3 rounded-lg flex items-center gap-1.5 shrink-0 ${isActivePath('/offers') ? 'bg-rose-50 text-rose-700' : 'text-rose-700 hover:bg-rose-50'}`}>
+              <BadgePercent size={17} />
+              <span>{L('العروض', 'Offers')}</span>
+            </Link>
           </nav>
 
           <div className="flex items-center gap-3 shrink-0">
-            <div ref={searchRef} className="relative group hidden xl:block">
+            <div ref={searchRef} className="relative group hidden 2xl:block">
               <form onSubmit={handleSearch}>
                 <div className="relative">
                   <input
                     type="search"
                     placeholder={t('search')}
-                    className="w-72 2xl:w-80 ps-4 pe-10 py-2.5 bg-paper border border-ink-900/10 rounded-full text-sm text-slate-800 placeholder:text-slate-400 shadow-sm outline-none transition-all duration-300 focus:bg-white"
+                    className="w-60 ps-4 pe-10 py-2.5 bg-paper border border-ink-900/10 rounded-full text-sm text-slate-800 placeholder:text-slate-400 shadow-sm outline-none transition-all duration-300 focus:bg-white"
                     value={searchQuery}
                     onChange={(e) => { setSearchQuery(e.target.value); setShowSuggestions(true); }}
                     onFocus={() => setShowSuggestions(true)}
@@ -578,12 +585,13 @@ const Header: React.FC = () => {
               )}
             </div>
 
-            <div className="hidden xl:block w-px h-8 bg-slate-800/10 mx-1"></div>
+            <div className="hidden 2xl:block w-px h-8 bg-slate-800/10 mx-1"></div>
 
             <div className="flex items-center gap-2 sm:gap-3">
               <button 
                 onClick={() => setIsMobileSearchOpen(true)} 
-                className="xl:hidden p-2 text-slate-900 hover:bg-paper-200 rounded-full transition-colors active:scale-95" 
+                aria-label={t('search')}
+                className="2xl:hidden p-2 text-slate-900 hover:bg-paper-200 rounded-full transition-colors active:scale-95" 
                 title={t('search')}
               >
                 <Search size={22} strokeWidth={2.5} />
@@ -635,7 +643,7 @@ const Header: React.FC = () => {
                 )}
               </div>
 
-              <button onClick={() => setIsMenuOpen(true)} className="xl:hidden p-2text-slate-900 hover:bg-paper-200 rounded-full transition-colors active:scale-95">
+              <button onClick={() => setIsMenuOpen(true)} aria-label={L('القائمة', 'Menu')} className="xl:hidden p-2 text-slate-900 hover:bg-paper-200 rounded-full transition-colors active:scale-95">
                 <Menu size={28} strokeWidth={2.5} />
               </button>
             </div>
@@ -721,6 +729,10 @@ const Header: React.FC = () => {
             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar pb-24 space-y-2">
               <button onClick={(e) => { setIsMenuOpen(false); handleHomeClick(e); }} className="w-full flex items-center gap-3 p-4 rounded-2xl bg-slate-50 hover:bg-sky-50 text-slate-800 font-bold transition-colors">
                 <Home size={20} className="text-sky-500" /> {t('home')}
+              </button>
+
+              <button onClick={() => goTo('/offers')} data-testid="mobile-nav-offers" className="w-full flex items-center gap-3 p-4 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold transition-colors">
+                <BadgePercent size={20} /> {L('العروض والتخفيضات', 'Offers & discounts')}
               </button>
 
               {MEGA_MENU_DATA.map((menu) => {

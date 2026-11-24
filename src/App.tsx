@@ -29,6 +29,7 @@ import Account from './pages/Account';
 import { WHEEL_ENABLED } from './services/wheel';
 const Home = React.lazy(() => import('./pages/Home'));
 const Shop = React.lazy(() => import('./pages/Shop'));
+const Offers = React.lazy(() => import('./pages/Offers'));
 const Cart = React.lazy(() => import('./pages/Cart'));
 const Wishlist = React.lazy(() => import('./pages/Wishlist'));
 const ProductDetails = React.lazy(() => import('./pages/ProductDetails'));
@@ -399,6 +400,7 @@ const App: React.FC = () => {
 <Route path="/admin/product/edit" element={<AdminAddProduct />} />
                 <Route path="/account" element={<Account />} />
                 <Route path="/shop" element={<Shop />} />
+                <Route path="/offers" element={<Offers />} />
                 <Route path="/cart" element={<Cart />} />
                 <Route path="/wishlist" element={<Wishlist />} />
                 <Route path="/login" element={<Login />} />

@@ -3,6 +3,7 @@ import React, { memo, useCallback, useMemo, useState, useEffect } from 'react';
 import { Trash2, Minus, Plus } from 'lucide-react';
 import LazyImage from './LazyImage';
 import { ProductVariant } from '../types';
+import type { SaleInfo } from '../services/priceDisplay';
 
 type CartItem = {
   id: string;
@@ -12,6 +13,8 @@ type CartItem = {
   image?: string;
   category?: string;
   selectedVariant?: ProductVariant; // 🚀 إضافة دعم الخيار المختار
+  /** a REAL discount on this line's live price (display only) */
+  sale?: SaleInfo;
 };
 
 const clampQty = (n: number) => {
@@ -166,7 +169,9 @@ const CartItemCard: React.FC<Props> = ({ item, title, formatMoney, onRemove, onS
         <div className="flex items-end justify-between gap-3 mt-4">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-0.5">{t('price') ?? 'السعر'}</p>
-            <p className="font-black text-sky-600 text-base">{formatMoney(price)}</p>
+            {item.sale?.onSale && <p className="text-[11px] font-bold text-slate-400 line-through tabular-nums" data-testid="cart-line-original">{formatMoney(item.sale.original)}</p>}
+            <p className={`font-black text-base ${item.sale?.onSale ? 'text-rose-700' : 'text-sky-600'}`} data-testid="cart-line-price" data-price={price}>{formatMoney(price)}</p>
+            {item.sale?.onSale && <span className="mt-1 inline-flex rounded-full bg-rose-50 text-rose-700 ring-1 ring-rose-100 px-2 py-0.5 text-[10px] font-bold" data-testid="cart-line-sale" dir="ltr">-{item.sale.percent}%</span>}
           </div>
 
           {/* ✅ Qty controls */}

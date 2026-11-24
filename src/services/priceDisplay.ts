@@ -9,7 +9,8 @@ const money = (v: unknown): number | null => {
   return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.round(n * 1000) / 1000 : null;
 };
 
-export type SaleInfo = { onSale: false } | { onSale: true; original: number; percent: number };
+// save: what the customer saves per unit (original - price, in fils precision)
+export type SaleInfo = { onSale: false } | { onSale: true; original: number; percent: number; save: number };
 
 export function saleInfo(price: unknown, originalPrice: unknown): SaleInfo {
   const p = money(price);
@@ -18,7 +19,7 @@ export function saleInfo(price: unknown, originalPrice: unknown): SaleInfo {
   const percent = Math.round((1 - p / o) * 100);
   // a 0% "discount" (rounding of a tiny difference) is not shown as a sale; neither is a nonsensical 100%
   if (percent < 1 || percent > 95) return { onSale: false };
-  return { onSale: true, original: o, percent };
+  return { onSale: true, original: o, percent, save: Math.round((o - p) * 1000) / 1000 };
 }
 
 /** JOD with up to 3 decimals (fils), trailing zeros removed: 2 -> "2", 2.5 -> "2.5", 1.255 -> "1.255". */
@@ -57,4 +58,34 @@ export function availableStock(product: { stock?: unknown; variants?: VariantLik
 export function hasPriceRange(product: { variants?: VariantLike[] | null }): boolean {
   const ps = (Array.isArray(product.variants) ? product.variants : []).map((v) => money(v?.price)).filter((x): x is number => x !== null);
   return new Set(ps).size > 1;
+}
+
+// ------------------------------------------------------------------ a cart line priced from the LIVE catalogue
+type LiveVariant = VariantLike & { id?: unknown };
+type LiveProduct = { id?: unknown; price?: unknown; originalPrice?: unknown; stock?: unknown; variants?: LiveVariant[] | null };
+
+/**
+ * The price / original price / stock of a cart line from the CURRENT catalogue (the products the site just loaded),
+ * never from what was stored in this browser when the item was added: the variant is looked up by its id in the live
+ * product. Falls back to the stored values only when the product / variant is not in the catalogue any more (the
+ * order Worker then refuses the line itself). The order Worker computes the real price anyway; this keeps the cart,
+ * the checkout and the server on the SAME number (no surprise "price changed").
+ */
+export function liveCartLine(item: { id?: unknown; price?: unknown; stock?: unknown; selectedVariant?: LiveVariant | null }, products: LiveProduct[] | null | undefined) {
+  const real = (Array.isArray(products) ? products : []).find((p) => p && p.id === item.id) || null;
+  const stored = item.selectedVariant || null;
+  const live = stored && real && Array.isArray(real.variants) ? real.variants.find((v) => v && v.id !== undefined && v.id === stored.id) || null : null;
+  const v = live || stored;
+  const price = v ? money(v.price) : real ? money(real.price) : money(item.price);
+  const rawStock = v ? v.stock : real ? real.stock : item.stock;
+  const stock = rawStock === undefined || rawStock === null || rawStock === '' ? undefined : Number(rawStock);
+  // the original price that belongs to THIS price (same rule as the product page): the variant's own, or the product's
+  // when the line is sold at the product price
+  const original = v ? (money(v.originalPrice) ?? (real && price !== null && price === money(real.price) ? money(real.originalPrice) : null)) : real ? money(real.originalPrice) : null;
+  return {
+    price: price ?? 0,
+    stock: stock !== undefined && Number.isFinite(stock) ? stock : undefined,
+    sale: saleInfo(price, original),
+    selectedVariant: live ? { ...stored, ...live } : stored,
+  };
 }

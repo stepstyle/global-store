@@ -17,7 +17,7 @@ const SET_VAL = `const setVal = (el, v) => {
 const STICKY = `document.querySelector('[data-testid=checkout-sticky-action]')`;
 const OUTCOME = `(location.hash.startsWith('#/order-success/') ? 'success' : (document.querySelector('[data-testid=submit-result]')?.dataset.status || ''))`;
 // the app's routes (src/App.tsx) — an internal link to anything else is a dead link
-const ROUTES = ['/', '/product/', '/admin', '/account', '/shop', '/cart', '/wishlist', '/login', '/tracking', '/checkout', '/order-success/', '/my-orders', '/about', '/contact', '/privacy', '/admin-secure'];
+const ROUTES = ['/', '/offers', '/product/', '/admin', '/account', '/shop', '/cart', '/wishlist', '/login', '/tracking', '/checkout', '/order-success/', '/my-orders', '/about', '/contact', '/privacy', '/admin-secure'];
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844, mobile: true, dpr: 2 },
   { name: 'desktop', width: 1366, height: 900, mobile: false, dpr: 1 },

@@ -11,8 +11,8 @@ test('a sale is shown only when the original price is strictly higher', () => {
   assert.deepEqual(saleInfo(2, 0), { onSale: false });
   assert.deepEqual(saleInfo(2, 'abc'), { onSale: false });
   assert.deepEqual(saleInfo(2, 2.004), { onSale: false }, 'a 0% rounding difference is not a sale');
-  assert.deepEqual(saleInfo(24, 28), { onSale: true, original: 28, percent: 14 });
-  assert.deepEqual(saleInfo('3.5', '5'), { onSale: true, original: 5, percent: 30 });
+  assert.deepEqual(saleInfo(24, 28), { onSale: true, original: 28, percent: 14, save: 4 });
+  assert.deepEqual(saleInfo('3.5', '5'), { onSale: true, original: 5, percent: 30, save: 1.5 });
   assert.deepEqual(saleInfo(0.01, 5), { onSale: false }, '>95% looks like a data error: not shown');
 });
 
