@@ -18,6 +18,8 @@ const SET_VAL = `const setVal = (el, v) => {
 // the checkout's own bottom action button (by test id: a position-based selector also matched the cookie bar's
 // "decline" button once the bar appeared, so a later "confirm" click silently declined cookies instead)
 const STICKY = `document.querySelector('[data-testid=checkout-sticky-action]')`;
+// the REQUIRED agreement box at step 3 is ticked by the customer (as a person would) before confirming; no-op elsewhere
+const AGREE = "(() => { const b = document.querySelector('[data-testid=checkout-agreement-box]'); if (b && !b.checked) b.click(); return true; })();";
 const OUTCOME = `(location.hash.startsWith('#/order-success/') ? 'success' : (document.querySelector('[data-testid=submit-result]')?.dataset.status || ''))`;
 const CART_LEN = `JSON.parse(localStorage.getItem('anta_cart') || '[]').length`;
 
@@ -79,13 +81,13 @@ async function fillToPayment(tab, phoneLocal, name = 'زبون اختبار مح
     return true; })()`);
   await sleep(150);
   await tab.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('input[placeholder^="اسم الشارع"]'), 'شارع الاختبار 1'); return true; })()`);
-  await tab.evaluate(`${STICKY}.click(); true`);
+  await tab.evaluate(`${AGREE} ${STICKY}.click(); true`);
   await tab.waitFor(`document.body.innerText.includes('توصيل عادي')`, 10_000, 'step 2');
-  await tab.evaluate(`${STICKY}.click(); true`);
+  await tab.evaluate(`${AGREE} ${STICKY}.click(); true`);
   await tab.waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('CliQ'))`, 10_000, 'step 3');
 }
 
-const confirm = (tab) => tab.evaluate(`${STICKY}.click(); true`);
+const confirm = (tab) => tab.evaluate(`${AGREE} ${STICKY}.click(); true`);
 // a browser without Web Locks and without IndexedDB (some iPhone in-app browsers / older iOS / blocked storage)
 const NO_LOCKS_NO_IDB = "Object.defineProperty(Navigator.prototype, 'locks', { get: () => undefined, configurable: true }); try { Object.defineProperty(window, 'indexedDB', { get: () => undefined, configurable: true }); } catch {} try { Object.defineProperty(Window.prototype, 'indexedDB', { get: () => undefined, configurable: true }); } catch {}";
 
@@ -193,7 +195,7 @@ export function buildUiScenarios(ctx) {
       ['U05', 'DOUBLE CLICK on confirm -> one order, one stock deduction', async (tab) => {
         await openCheckout(tab, ctx.base);
         await fillToPayment(tab, '0791000005');
-        await tab.evaluate(`(() => { const b = ${STICKY}; b.click(); b.click(); b.click(); return true; })()`);
+        await tab.evaluate(`(() => { ${AGREE} const b = ${STICKY}; b.click(); b.click(); b.click(); return true; })()`);
         assert.equal(await waitOutcome(tab), 'success');
         await sleep(1500);
         assert.equal(await countOrdersByPhone('+962791000005'), 1);
@@ -485,7 +487,7 @@ export function buildUiScenarios(ctx) {
         await openCheckout(tab, ctx.base);
         assert.equal(await tab.evaluate(`navigator.locks === undefined && window.indexedDB === undefined`), true, 'both really absent');
         await fillToPayment(tab, '0791000027');
-        await tab.evaluate(`(() => { ${STICKY}.click(); ${STICKY}.click(); return true; })()`); // double tap
+        await tab.evaluate(`(() => { ${AGREE} ${STICKY}.click(); ${STICKY}.click(); return true; })()`); // double tap
         assert.equal(await waitOutcome(tab), 'success');
         assert.equal(await tab.evaluate(`JSON.parse(sessionStorage.getItem('__e2e_creates') || '[]').length`), 1, 'ONE create request');
         assert.equal(await countOrdersByPhone('+962791000027'), 1, 'one order');
@@ -635,13 +637,13 @@ export function buildUiScenarios(ctx) {
           setVal([...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'zarqa')), 'zarqa');
           return true; })()`);
         await sleep(150);
-        await tab.evaluate(`${STICKY}.click(); true`);
+        await tab.evaluate(`${AGREE} ${STICKY}.click(); true`);
         await tab.waitFor(`document.body.innerText.includes('الاسم طويل جدًا')`, 10_000, 'name limit message');
         // the general pop-up message is VISIBLE (restored), shown ONCE (StrictMode), and can be closed
         const TOASTS = (text) => `[...document.querySelectorAll('[data-testid=toast]')].filter((n) => n.innerText.includes(${JSON.stringify(text)})).length`;
         await tab.waitFor(`${TOASTS('يرجى تصحيح')} === 1`, 10_000, 'one visible error toast');
         assert.equal(await tab.evaluate(`document.querySelector('[data-testid=toast]').getAttribute('role')`), 'alert');
-        await tab.evaluate(`${STICKY}.click(); true`); // the same mistake again: still ONE message
+        await tab.evaluate(`${AGREE} ${STICKY}.click(); true`); // the same mistake again: still ONE message
         await sleep(400);
         assert.equal(await tab.evaluate(TOASTS('يرجى تصحيح')), 1, 'not repeated');
         await tab.evaluate(`document.querySelector('[data-testid=toast-close]').click(); true`);
@@ -1046,7 +1048,7 @@ export function buildUiScenarios(ctx) {
           assert.equal(await tab.evaluate(`JSON.parse(sessionStorage.getItem('__e2e_creates') || '[]').length`), 0, 'nothing sent while unknown');
           assert.deepEqual(await tab.evaluate(ATTEMPTS), [], 'no number while unknown');
           await sleep(9_000); // the session is restored now
-          await tab.evaluate(`document.querySelector('[data-testid=identity-submit-retry]').click(); true`);
+          await tab.evaluate(`${AGREE} document.querySelector('[data-testid=identity-submit-retry]').click(); true`);
           await tab.waitFor(`location.hash.startsWith('#/order-success/')`, 40_000, 'retry succeeded');
           const orderId = await tab.evaluate(`location.hash.split('/').pop()`);
           const order = await get(`orders/${orderId}`);

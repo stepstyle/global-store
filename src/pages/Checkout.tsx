@@ -409,9 +409,10 @@ const Checkout: React.FC = () => {
     billingSameAsShipping: true,
   });
 
-  // the order terms are agreed by sending the order, stated right next to the action (data-testid checkout-agreement);
-  // there is no pre-ticked box pretending to be a choice. Recorded with the order as acceptedStorePolicies.
-  const [acceptPolicies] = useState(true);
+  // REQUIRED agreement to the order terms + store policies: never pre-ticked, the customer ticks it; nothing is sent
+  // without it (checked in handlePlaceOrder). Recorded with the order as acceptedStorePolicies.
+  const [acceptPolicies, setAcceptPolicies] = useState(false);
+  const agreementRef = useRef<HTMLInputElement | null>(null);
   const [acceptDeliveryPolicy, setAcceptDeliveryPolicy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -428,6 +429,7 @@ const Checkout: React.FC = () => {
     if (saved.paymentMethod === 'cod' || saved.paymentMethod === 'cliq') setPaymentMethod(saved.paymentMethod as PaymentMethod);
     if (typeof saved.cliqRef === 'string') setCliqRef(saved.cliqRef);
     if (typeof saved.acceptDeliveryPolicy === 'boolean') setAcceptDeliveryPolicy(saved.acceptDeliveryPolicy);
+    if (saved.acceptPolicies === true) setAcceptPolicies(true); // ticked by the customer before leaving for Google
     setStep(3);
     // nothing is sent automatically: the customer reviews, passes the security check and confirms
     void finishGoogleRedirect().then(async (g) => {
@@ -620,10 +622,7 @@ const Checkout: React.FC = () => {
       nextErr.phoneLocal = tt('phoneInvalid', 'يرجى إدخال رقم أردني صحيح (يبدأ بـ 079, 078, 077)', 'Please enter a valid Jordanian number (079, 078, 077).');
     }
 
-    if (!acceptPolicies) {
-      nextErr.acceptPolicies = tt('acceptPoliciesRequired', 'يجب الموافقة على سياسات المتجر لإتمام الطلب', 'You must accept the store policies to place the order.');
-    }
-
+    // (the required agreement is checked at the confirm step, next to its box — not here, or step 1 could not be left)
     setErrors(nextErr);
     return Object.keys(nextErr).length === 0;
   };
@@ -793,6 +792,16 @@ const Checkout: React.FC = () => {
     if (!selectedShipping) {
       showToast(tt('shippingRequired', 'يرجى اختيار طريقة التوصيل', 'Please select a shipping method.'), 'error');
       changeStep(2);
+      return;
+    }
+
+    // the required agreement: nothing is sent (no Google window, no request) until the customer ticks it
+    if (!acceptPolicies) {
+      setErrors((prev) => ({ ...prev, acceptPolicies: tr('لإرسال الطلب، فعّل مربع الموافقة على شروط الطلب وسياسات المتجر.', 'To send the order, tick the box agreeing to the order terms and store policies.') }));
+      setTimeout(() => {
+        agreementRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        agreementRef.current?.focus({ preventScroll: true });
+      }, 30);
       return;
     }
 
@@ -1486,7 +1495,7 @@ const Checkout: React.FC = () => {
                           className="rounded-xl border border-current px-4 py-2.5 text-sm font-black"
                           onClick={() => {
                             // the page is left: keep what the customer typed (this tab, 30 min, read once on return)
-                            saveCheckoutResume({ formData, email, dialCode, shippingMethodId, paymentMethod, cliqRef, acceptDeliveryPolicy });
+                            saveCheckoutResume({ formData, email, dialCode, shippingMethodId, paymentMethod, cliqRef, acceptDeliveryPolicy, acceptPolicies });
                             void googleRedirect().then((o) => { if (o !== 'ok') { setGoogleIssue(o); setSubmitBlocked(googleMessage(o, isAR)); } });
                           }}
                         >
@@ -1558,14 +1567,39 @@ const Checkout: React.FC = () => {
                   );
                 })()}
 
-                {/* the required agreement: stated next to the action (no pre-ticked box), recorded with the order */}
-                <p className="mt-8 text-xs font-bold leading-6 text-slate-500" data-testid="checkout-agreement">
-                  {isAR ? (
-                    <>بإرسال الطلب توافق على شروطه الموضّحة في هذه الصفحة (الأسعار، التوصيل، طريقة الدفع) وعلى <ReactRouterDOM.Link to="/privacy" className="underline text-slate-700">سياسة الخصوصية</ReactRouterDOM.Link>.</>
-                  ) : (
-                    <>By sending the order you agree to its terms shown on this page (prices, delivery, payment method) and to the <ReactRouterDOM.Link to="/privacy" className="underline text-slate-700">privacy policy</ReactRouterDOM.Link>.</>
+                {/* the REQUIRED agreement, right above the action: unticked until the customer ticks it. The link is the
+                    site's real policies page (/privacy = returns, privacy, delivery, payment), opened in a new tab so the
+                    checkout (and what was typed) stays as it is. */}
+                <div className="mt-8" data-testid="checkout-agreement">
+                  <label
+                    className={`flex items-start gap-3 rounded-2xl border p-4 cursor-pointer transition-colors ${errors.acceptPolicies ? 'border-red-300 bg-red-50' : acceptPolicies ? 'border-emerald-200 bg-emerald-50/60' : 'border-slate-200 bg-white'}`}
+                  >
+                    <input
+                      ref={agreementRef}
+                      type="checkbox"
+                      data-testid="checkout-agreement-box"
+                      checked={acceptPolicies}
+                      aria-invalid={!!errors.acceptPolicies}
+                      aria-describedby={errors.acceptPolicies ? 'checkout-agreement-error' : undefined}
+                      onChange={(e) => {
+                        setAcceptPolicies(e.target.checked);
+                        setErrors((prev) => { const next = { ...prev }; delete next.acceptPolicies; return next; });
+                      }}
+                      className="mt-0.5 h-6 w-6 shrink-0 accent-sky-600"
+                    />
+                    <span className="min-w-0 text-sm font-bold leading-6 text-slate-800">
+                      {isAR ? (
+                        <>أوافق على شروط الطلب الموضّحة في هذه الصفحة (الأسعار، التوصيل، طريقة الدفع) وعلى <a href="#/privacy" target="_blank" rel="noopener" className="underline text-sky-700" data-testid="checkout-policies-link">سياسات المتجر والخصوصية</a> (الإرجاع والاستبدال، الخصوصية، التوصيل، الدفع).</>
+                      ) : (
+                        <>I agree to the order terms shown on this page (prices, delivery, payment method) and to the <a href="#/privacy" target="_blank" rel="noopener" className="underline text-sky-700" data-testid="checkout-policies-link">store policies &amp; privacy</a> (returns, privacy, delivery, payment).</>
+                      )}
+                      <span className="ms-2 inline-block rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-black text-red-600 align-middle">{tr('مطلوب', 'Required')}</span>
+                    </span>
+                  </label>
+                  {errors.acceptPolicies && (
+                    <p id="checkout-agreement-error" className="mt-2 ms-1 text-xs font-black text-red-600" role="alert" data-testid="checkout-agreement-error">{errors.acceptPolicies}</p>
                   )}
-                </p>
+                </div>
                 <div className="mt-4 pt-6 border-t border-slate-100 flex flex-col-reverse sm:flex-row justify-between items-center gap-4">
                   <button onClick={() => changeStep(2)} disabled={isProcessing} className="text-sm font-bold text-slate-500 hover:text-slate-900 transition-colors w-full sm:w-auto py-3">
                     {tt('backToShipping', 'الرجوع لخيارات التوصيل', 'Back to Delivery')}

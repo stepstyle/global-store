@@ -19,6 +19,8 @@ const SET_VAL = `const setVal = (el, v) => {
   el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
 };`;
 const STICKY = `document.querySelector('[data-testid=checkout-sticky-action]')`;
+// the REQUIRED agreement box at step 3 is ticked by the customer (as a person would) before confirming; no-op elsewhere
+const AGREE = "(() => { const b = document.querySelector('[data-testid=checkout-agreement-box]'); if (b && !b.checked) b.click(); return true; })();";
 const OUTCOME = `(location.hash.startsWith('#/order-success/') ? 'success' : (document.querySelector('[data-testid=submit-result]')?.dataset.status || (document.querySelector('[data-testid=submit-blocked]') ? 'blocked:' + (document.querySelector('[data-testid=submit-blocked]').dataset.google || '') : '')))`;
 const TOASTS = `[...document.querySelectorAll('[data-testid=toast-message]')].map((t) => t.innerText).join('\\n---\\n')`;
 const STUB_CONFIRM = `(() => { window.__confirms = []; window.confirm = (m) => { window.__confirms.push(String(m)); return true; }; return true; })()`;
@@ -118,14 +120,14 @@ export function buildWheelScenarios(ctx) {
       return true; })()`);
     await sleep(150);
     await t.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('input[placeholder^="اسم الشارع"]'), 'شارع الاختبار 1'); return true; })()`);
-    await t.evaluate(`${STICKY}.click(); true`);
+    await t.evaluate(`${AGREE} ${STICKY}.click(); true`);
     await t.waitFor(`document.body.innerText.includes('توصيل عادي')`, 10_000, 'step 2');
-    await t.evaluate(`${STICKY}.click(); true`);
+    await t.evaluate(`${AGREE} ${STICKY}.click(); true`);
     await t.waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('CliQ'))`, 10_000, 'step 3');
   };
   // a REAL user gesture (as a tap): browsers open the Google window only from one
   const gesture = (t, expr) => t.send('Runtime.evaluate', { expression: expr, userGesture: true, awaitPromise: true, returnByValue: true });
-  const clickConfirm = (t) => gesture(t, `${STICKY}.click(); true`);
+  const clickConfirm = (t) => gesture(t, `${AGREE} ${STICKY}.click(); true`);
   const outcome = (t) => t.waitFor(`(() => { const o = ${OUTCOME}; return o && o !== 'busy' && o !== 'sending' ? o : ''; })()`, 40_000, 'order outcome');
   const openDashboardOrder = async (t, orderId) => {
     await signIn(t, ctx.admin.email, ctx.admin.password);
@@ -270,7 +272,7 @@ export function buildWheelScenarios(ctx) {
       assert.match(await t.evaluate(`document.querySelector('[data-testid=summary-wheel-discount]')?.innerText || ''`), /خصم جائزة الدولاب/);
       await shot(t, 'wu02-final-confirmation');
       // "final confirmation", pressed three times: ONE order
-      await t.evaluate(`(() => { const b = ${STICKY}; b.click(); b.click(); b.click(); return true; })()`);
+      await t.evaluate(`(() => { ${AGREE} const b = ${STICKY}; b.click(); b.click(); b.click(); return true; })()`);
       assert.equal(await outcome(t), 'success');
       assert.equal(await ctx.popupOpen(), false, 'no Google window with a valid session');
       const orderId = await t.evaluate(`location.hash.split('/').pop()`);
@@ -315,7 +317,7 @@ export function buildWheelScenarios(ctx) {
       await fillToPayment(t, '0795100003');
       assert.match(await t.evaluate(`document.querySelector('[data-testid=summary-wheel-discount]')?.innerText || ''`), /خصم جائزة الدولاب/);
       await shot(t, 'wu03-applies');
-      await t.evaluate(`(() => { const b = ${STICKY}; b.click(); b.click(); b.click(); return true; })()`);
+      await t.evaluate(`(() => { ${AGREE} const b = ${STICKY}; b.click(); b.click(); b.click(); return true; })()`);
       assert.equal(await outcome(t), 'success');
       const o2 = await t.evaluate(`location.hash.split('/').pop()`);
       const L = await get(`orderLedger/${o2}`);

@@ -15,6 +15,8 @@ const SET_VAL = `const setVal = (el, v) => {
   el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
 };`;
 const STICKY = `document.querySelector('[data-testid=checkout-sticky-action]')`;
+// the REQUIRED agreement box at step 3 is ticked by the customer (as a person would) before confirming; no-op elsewhere
+const AGREE = "(() => { const b = document.querySelector('[data-testid=checkout-agreement-box]'); if (b && !b.checked) b.click(); return true; })();";
 const OUTCOME = `(location.hash.startsWith('#/order-success/') ? 'success' : (document.querySelector('[data-testid=submit-result]')?.dataset.status || ''))`;
 // the app's routes (src/App.tsx) — an internal link to anything else is a dead link
 const ROUTES = ['/', '/offers', '/product/', '/admin', '/account', '/shop', '/cart', '/wishlist', '/login', '/tracking', '/checkout', '/order-success/', '/my-orders', '/about', '/contact', '/privacy', '/admin-secure'];
@@ -138,13 +140,13 @@ export async function runVisualScenarios(ctx) {
           await sleep(150);
           await t.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('input[placeholder^="اسم الشارع"]'), 'شارع الفحص 1'); return true; })()`);
           await shot(t, 'phone-checkout-step1-filled');
-          await t.evaluate(`${STICKY}.click(); true`);
+          await t.evaluate(`${AGREE} ${STICKY}.click(); true`);
           await t.waitFor(`document.body.innerText.includes('توصيل عادي')`, 10_000, 'step 2');
           await shot(t, 'phone-checkout-step2');
-          await t.evaluate(`${STICKY}.click(); true`);
+          await t.evaluate(`${AGREE} ${STICKY}.click(); true`);
           await t.waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('CliQ'))`, 10_000, 'step 3');
           await shot(t, 'phone-checkout-step3');
-          await t.evaluate(`${STICKY}.click(); true`);
+          await t.evaluate(`${AGREE} ${STICKY}.click(); true`);
           const out = await t.waitFor(OUTCOME, 40_000, 'order outcome');
           await sleep(1200);
           await shot(t, 'phone-order-success');

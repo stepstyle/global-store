@@ -20,6 +20,8 @@ const SET_VAL = `const setVal = (el, v) => {
   el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
 };`;
 const STICKY = `document.querySelector('[data-testid=checkout-sticky-action]')`; // by test id, never by position
+// the REQUIRED agreement box at step 3 is ticked by the customer (as a person would) before confirming; no-op elsewhere
+const AGREE = "(() => { const b = document.querySelector('[data-testid=checkout-agreement-box]'); if (b && !b.checked) b.click(); return true; })();";
 const OUTCOME = `(location.hash.startsWith('#/order-success/') ? 'success' : (document.querySelector('[data-testid=submit-result]')?.dataset.status || ''))`;
 const CART_LEN = `JSON.parse(localStorage.getItem('anta_cart') || '[]').length`;
 const TOASTS = `[...document.querySelectorAll('[data-testid=toast-message]')].map((t) => t.innerText).join('\\n---\\n')`;
@@ -83,11 +85,11 @@ export function buildDeliveryScenarios(ctx) {
       return true; })()`);
     await sleep(150);
     await tab.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('input[placeholder^="اسم الشارع"]'), 'شارع الاختبار 1'); return true; })()`);
-    await tab.evaluate(`${STICKY}.click(); true`);
+    await tab.evaluate(`${AGREE} ${STICKY}.click(); true`);
     await tab.waitFor(`document.body.innerText.includes('توصيل عادي')`, 10_000, 'step 2');
-    await tab.evaluate(`${STICKY}.click(); true`);
+    await tab.evaluate(`${AGREE} ${STICKY}.click(); true`);
     await tab.waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('CliQ'))`, 10_000, 'step 3');
-    await tab.evaluate(`${STICKY}.click(); true`);
+    await tab.evaluate(`${AGREE} ${STICKY}.click(); true`);
     return tab.waitFor(OUTCOME, 40_000, 'order outcome');
   };
   const CART_SIMPLE = [{ id: 'p-simple', name: 'دفتر', price: 2.5, stock: 10, category: 'Stationery', image: '', quantity: 2 }];

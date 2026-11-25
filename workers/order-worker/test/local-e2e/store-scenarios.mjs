@@ -15,6 +15,8 @@ const SET_VAL = `const setVal = (el, v) => {
   el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
 };`;
 const STICKY = `document.querySelector('[data-testid=checkout-sticky-action]')`;
+// the REQUIRED agreement box at step 3 is ticked by the customer (as a person would) before confirming; no-op elsewhere
+const AGREE = "(() => { const b = document.querySelector('[data-testid=checkout-agreement-box]'); if (b && !b.checked) b.click(); return true; })();";
 const OUTCOME = `(location.hash.startsWith('#/order-success/') ? 'success' : (document.querySelector('[data-testid=submit-result]')?.dataset.status || ''))`;
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844, mobile: true, dpr: 2 },
@@ -263,12 +265,12 @@ export async function runStoreScenarios(ctx) {
           return true; })()`);
         await sleep(150);
         await t.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('input[placeholder^="اسم الشارع"]'), 'شارع العروض 1'); return true; })()`);
-        await t.evaluate(`${STICKY}.click(); true`);
+        await t.evaluate(`${AGREE} ${STICKY}.click(); true`);
         await t.waitFor(`document.body.innerText.includes('توصيل عادي')`, 10_000, 'step 2');
         must(!(await t.evaluate(`!!document.querySelector('[data-testid=checkout-suggestions]')`)), 'suggestions still shown after the first step');
-        await t.evaluate(`${STICKY}.click(); true`);
+        await t.evaluate(`${AGREE} ${STICKY}.click(); true`);
         await t.waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('CliQ'))`, 10_000, 'step 3');
-        await t.evaluate(`${STICKY}.click(); true`);
+        await t.evaluate(`${AGREE} ${STICKY}.click(); true`);
         const out = await t.waitFor(OUTCOME, 40_000, 'order outcome');
         must(out === 'success', `order outcome ${out} (the server refused the prices?)`);
         const orderId = await t.evaluate(`decodeURIComponent(location.hash.split('/').pop() || '')`);
@@ -281,6 +283,62 @@ export async function runStoreScenarios(ctx) {
         const line = o.items.find((i) => (i.productId || i.id) === 'sc-playmat');
         must(Math.abs(Number(line.price) - 16) < 1e-9, `play mat charged ${line.price} (live price 16)`);
         await shot(t, `after-${tag}-order-success`);
+        return `order ${orderId}`;
+      });
+
+      // ---------------------------------------------------------------- the REQUIRED agreement box (no pre-tick, no send without it)
+      if (!process.env.E2E_CATALOG_FILE) await check(`ST-${tag}-agreement`, `agreement on ${tag}: both boxes start UNticked; confirm without the required one -> NOTHING sent, a clear message, the box focused; the link is the real policies page (new tab); ticked -> the order goes through`, async () => {
+        await go('/checkout', { key: `a${tag}`, items: cartItems.slice(0, 1) });
+        await t.waitFor(`!!document.querySelector('input[placeholder="0791234567"]')`, 40_000, 'checkout form');
+        // count create-order requests leaving THIS page
+        await t.evaluate(`(() => { window.__creates = 0; const f = window.fetch.bind(window); window.fetch = (u, i) => { if (/create-order/.test(String(u && u.url || u))) window.__creates++; return f(u, i); }; return true; })()`);
+        const phone = vp.mobile ? '0791230011' : '0791230012';
+        await t.evaluate(`(() => { ${SET_VAL}
+          setVal(document.querySelector('input[placeholder^="name@example.com"]'), 'agree@example.com');
+          setVal(document.querySelector('input[placeholder="الاسم الأول والأخير"]'), 'زبون فحص الموافقة');
+          setVal(document.querySelector('input[placeholder="0791234567"]'), '${phone}');
+          setVal([...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'zarqa')), 'zarqa');
+          return true; })()`);
+        await sleep(150);
+        await t.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('input[placeholder^="اسم الشارع"]'), 'شارع الموافقة 1'); return true; })()`);
+        await t.evaluate(`${STICKY}.click(); true`); // step 1 -> 2 WITHOUT the box (it is not on this step)
+        await t.waitFor(`document.body.innerText.includes('توصيل عادي')`, 10_000, 'step 2 reached without any agreement');
+        await t.evaluate(`${STICKY}.click(); true`);
+        await t.waitFor(`!!document.querySelector('[data-testid=checkout-agreement-box]')`, 10_000, 'step 3 with the box');
+        const boxes = await t.evaluate(`[...document.querySelectorAll('input[type=checkbox]')].filter((c) => c.offsetParent !== null).map((c) => ({ id: c.dataset.testid || c.closest('label')?.innerText.slice(0, 30), on: c.checked }))`);
+        must(boxes.length >= 2 && boxes.every((b) => !b.on), `a box is pre-ticked: ${JSON.stringify(boxes)}`);
+        // the link: the site's real policies page, in a new tab (the checkout stays)
+        const link = await t.evaluate(`(() => { const a = document.querySelector('[data-testid=checkout-policies-link]'); return a ? { href: a.getAttribute('href'), target: a.target } : null; })()`);
+        must(link && link.href === '#/privacy' && link.target === '_blank', `policies link ${JSON.stringify(link)}`);
+        // phones: the only primary action is the bar; desktop: the in-page button
+        const btn = vp.mobile ? STICKY : `document.querySelector('[data-testid=checkout-confirm]')`;
+        must(await t.evaluate(`${btn}.offsetParent !== null`), 'the confirm button for this screen is not visible');
+        if (vp.mobile) must(await t.evaluate(`document.querySelector('[data-testid=checkout-confirm]').offsetParent === null`), 'two primary buttons on the phone');
+        // confirm WITHOUT the box: nothing sent
+        await t.evaluate(`${btn}.click(); true`);
+        await t.waitFor(`!!document.querySelector('[data-testid=checkout-agreement-error]')`, 5_000, 'agreement message');
+        await sleep(1_500);
+        must((await t.evaluate(`window.__creates`)) === 0, 'an order was sent without the agreement');
+        must(await t.evaluate(`location.hash === '#/checkout'`), 'left the checkout');
+        must(await t.evaluate(`document.activeElement?.dataset?.testid === 'checkout-agreement-box'`), 'the box is not focused');
+        must(/فعّل مربع الموافقة/.test(await t.evaluate(`document.querySelector('[data-testid=checkout-agreement-error]').innerText`)), 'message text');
+        must((await t.evaluate(overflow)) <= 1, 'horizontal overflow');
+        await shot(t, `after-${tag}-agreement-required`);
+        // tick it (as the customer) -> the message goes, the order goes through ONCE
+        await t.evaluate(`document.querySelector('[data-testid=checkout-agreement-box]').click(); true`);
+        must(!(await t.evaluate(`!!document.querySelector('[data-testid=checkout-agreement-error]')`)), 'message stays after ticking');
+        await shot(t, `after-${tag}-agreement-ticked`);
+        await t.evaluate(`${btn}.click(); true`);
+        const out = await t.waitFor(OUTCOME, 40_000, 'order outcome');
+        must(out === 'success', `order outcome ${out}`);
+        must((await t.evaluate(`window.__creates`)) === 1, 'not exactly one create request');
+        const orderId = await t.evaluate(`decodeURIComponent(location.hash.split('/').pop() || '')`);
+        const o = await ctx.get(`orders/${orderId}`);
+        must(o?.consents?.acceptedStorePolicies === true, `agreement not recorded: ${JSON.stringify(o?.consents)}`);
+        must(o?.consents?.saveInfo === false, 'optional consent recorded as given');
+        // the policies page itself exists and has content
+        await t.evaluate(`location.hash = '#/privacy'; true`);
+        await t.waitFor(`/السياسات والخصوصية/.test(document.body.innerText) && /الإرجاع والاستبدال/.test(document.body.innerText)`, 15_000, 'policies page');
         return `order ${orderId}`;
       });
 
