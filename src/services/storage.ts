@@ -1,6 +1,8 @@
 // src/services/storage.ts
 import { Product, Order, User } from '../types';
-import { db as firestore, auth, isFirebaseInitialized } from './firebase';
+import { db as firestore, auth, isFirebaseInitialized, firestoreLite } from './firebase';
+
+import { hasSpecialValue } from './plainData';
 
 import {
   collection,
@@ -221,6 +223,19 @@ export const db = {
   products: {
     getAll: async (): Promise<Product[]> => {
       if (firebaseReady()) {
+        // the fast path: ONE REST request (Firestore Lite, see firebase.ts). Any problem (chunk not loaded, network,
+        // a special Firestore value the full SDK must keep, e.g. a Timestamp an admin save would write back) -> the
+        // usual full-SDK read below, unchanged
+        try {
+          const lite = await firestoreLite();
+          if (lite) {
+            const snap = await lite.m.getDocs(lite.m.collection(lite.db, 'products'));
+            const list = snap.docs.map((d) => ({ ...(d.data() as any), id: d.id } as Product));
+            if (!list.some(hasSpecialValue)) return list;
+          }
+        } catch (e) {
+          if (import.meta.env.DEV) console.warn('catalogue: Lite read failed, using the full SDK', e);
+        }
         try {
           const snapshot = await getDocs(collection(firestore, 'products'));
           if (snapshot.empty) return [];

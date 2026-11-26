@@ -78,3 +78,31 @@ input:focus, select:focus, textarea:focus {
 @media (max-width: 1023.98px) {
   html.has-bottom-action-bar footer { padding-bottom: calc(5rem + env(safe-area-inset-bottom)); }
 }
+
+/* Prize wheel result (components/wheel/WheelResultDialog): a soft pop-in, a short confetti burst for a WIN only.
+   Transforms + opacity only (compositor, no layout); everything is still with "reduce motion". */
+@keyframes wr-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes wr-pop { 0% { opacity: 0; transform: translateY(12px) scale(.94); } 100% { opacity: 1; transform: none; } }
+@keyframes wr-badge { 0% { transform: scale(.6); } 60% { transform: scale(1.08); } 100% { transform: scale(1); } }
+@keyframes wr-fall {
+  0% { opacity: 1; transform: translate3d(0, -12px, 0) rotate(var(--wr-rot, 0deg)); }
+  100% { opacity: 0; transform: translate3d(var(--wr-drift, 0px), 340px, 0) rotate(calc(var(--wr-rot, 0deg) + 420deg)); }
+}
+.wr-backdrop { animation: wr-fade .18s ease-out both; }
+.wr-card { animation: wr-pop .26s cubic-bezier(.2,.8,.2,1) both; }
+.wr-badge { animation: wr-badge .5s cubic-bezier(.2,.8,.2,1) .08s both; }
+.wr-bit { opacity: 0; animation: wr-fall 1.4s cubic-bezier(.25,.6,.4,1) forwards; will-change: transform, opacity; }
+@media (prefers-reduced-motion: reduce) {
+  .wr-backdrop, .wr-card, .wr-badge { animation: none; }
+  .wr-confetti { display: none; }
+}
+
+/* Product images: a calm shimmer while a photo loads (the box keeps its size, nothing moves); still with "reduce motion" */
+@keyframes img-shimmer { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+.img-shimmer {
+  background-color: #F3EDE1;
+  background-image: linear-gradient(100deg, rgba(255,255,255,0) 30%, rgba(255,255,255,.55) 50%, rgba(255,255,255,0) 70%);
+  background-size: 200% 100%;
+  animation: img-shimmer 1.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .img-shimmer { animation: none; } }

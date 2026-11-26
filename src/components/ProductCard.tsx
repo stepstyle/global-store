@@ -113,14 +113,10 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
   const categoryLabel = useMemo(() => String(product.category ?? '').trim(), [product.category]);
   const [hovered, setHovered] = useState(false);
-
-  // 🖼️ تحميل الصورة الثانية (الخلفية) مسبقاً
-  useEffect(() => {
-    if (!hovered) return;
-    if (!image2) return;
-    const img = new Image();
-    img.src = image2;
-  }, [hovered, image2]);
+  // the second photo (shown on hover) is mounted at the FIRST hover only: before, every card downloaded it at once
+  // (hidden, opacity 0) — on phones, which never hover, that doubled the photos competing with the visible ones.
+  // (The old raw preload fetched the full-size original; the resized one is now loaded by LazyImage itself.)
+  const [hoverSeen, setHoverSeen] = useState(false);
 
   const [qty, setQty] = useState<number>(1);
   useEffect(() => {
@@ -211,7 +207,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
         disableLift ? 'overflow-visible' : 'overflow-hidden hover:-translate-y-1',
       ].join(' ')}
       data-product-id={product.id}
-      onMouseEnter={() => setHovered(true)}
+      onMouseEnter={() => { setHovered(true); setHoverSeen(true); }}
       onMouseLeave={() => setHovered(false)}
     >
       {/* image on a warm paper stage */}
@@ -234,7 +230,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
           ) : (
             <div className="w-full h-full flex items-center justify-center text-ink-300 text-sm font-bold">{L('لا توجد صورة', 'No Image')}</div>
           )}
-          {image2 && (
+          {image2 && hoverSeen && (
             <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-paper-100 ${product.imageFit === 'cover' ? '' : 'p-4 sm:p-6'}`}>
               <div className="w-full h-full relative" style={imgStyle}>
                 <LazyImage src={image2} alt={productTitle} containerClassName="w-full h-full" className={`w-full h-full mix-blend-multiply pointer-events-none ${imgFit}`} loading="lazy" fetchPriority="low" cloudinarySize={460} expectedDisplayWidth={280} aspectRatioHint="1 / 1" />

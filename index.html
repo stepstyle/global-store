@@ -19,6 +19,10 @@
       content="متجر شامل للقرطاسية والألعاب والهدايا في الأردن. تسوق الآن بأفضل تجربة سريعة وآمنة."
     />
 
+    <!-- the product photos (Cloudinary, plain image requests: NO crossorigin, or the connection is not reused) and the
+         catalogue read (Firestore REST, a CORS request): connections opened while the app's script still downloads -->
+    <link rel="preconnect" href="https://res.cloudinary.com" />
+    <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

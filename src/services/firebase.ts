@@ -10,6 +10,8 @@ declare const __DEPLOY_ENV__: 'production' | 'sandbox' | 'local-test';
 let app: FirebaseApp | undefined;
 let db: Firestore | null = null;
 let auth: Auth | null = null;
+/** the target Firebase was initialised with (production / emulator / staging): the Lite catalogue read uses the same */
+let activeTarget: FirebaseTarget | null = null;
 
 export let isFirebaseInitialized = false;
 /** a valid config was found but initialising Firebase FAILED: a signed-in customer cannot be recognised -> identity unknown */
@@ -130,6 +132,7 @@ const initWithTarget = (target: FirebaseTarget) => {
   }
 
   isFirebaseInitialized = true;
+  activeTarget = target;
   if (import.meta.env.DEV) console.log(`🔥 Firebase initialized (${target.kind}: ${target.config.projectId})`);
 };
 
@@ -214,6 +217,37 @@ export const initFirebase = () => {
 
 // ✅ initialize immediately (client-side safe)
 initFirebase();
+
+// ---------------------------------------------------------------- the public catalogue read: Firestore Lite (REST)
+// The full SDK reads through a WebChannel stream: several round trips before the first document (measured on the live
+// site: ~6 s from its start to the products, before any product photo can be asked for). The catalogue is a one-shot
+// PUBLIC read (rules: products `allow read: if true`), so it goes through Firestore Lite: ONE HTTPS request, same data,
+// same project / emulator, no cache (always the server's current prices and stock). Everything else (orders, auth,
+// admin writes, transactions) stays on the full SDK. Loaded as its own chunk, started right away (in parallel with the
+// first render).
+// It runs on a SEPARATE app instance (same project / options) WITHOUT Auth: Firestore attached to the main app waits for
+// Auth to be ready before its first request, and on phones Auth first loads Google's sign-in frame (api.js + iframe) —
+// measured locally: the catalogue request started only after that frame, 10–20 s later on a throttled phone. A public
+// read needs no sign-in token, so it never waits for it. (Sign-in, orders and the dashboard keep the main app.)
+type LiteMod = typeof import('firebase/firestore/lite');
+let litePromise: Promise<{ m: LiteMod; db: import('firebase/firestore/lite').Firestore }> | null = null;
+const CATALOGUE_APP = 'catalogue-public-read';
+export const firestoreLite = (): Promise<{ m: LiteMod; db: import('firebase/firestore/lite').Firestore }> | null => {
+  if (!app || !isFirebaseInitialized || !activeTarget) return null;
+  if (!litePromise) {
+    const options = app.options;
+    const target = activeTarget;
+    litePromise = import('firebase/firestore/lite').then((m) => {
+      const existing = getApps().find((x) => x.name === CATALOGUE_APP);
+      const ldb = m.getFirestore(existing || initializeApp(options, CATALOGUE_APP));
+      if (target.kind === 'emulator') m.connectFirestoreEmulator(ldb, target.firestore.host, target.firestore.port);
+      return { m, db: ldb };
+    });
+    litePromise.catch(() => { litePromise = null; });
+  }
+  return litePromise;
+};
+if (isBrowser()) void firestoreLite()?.catch(() => {});
 
 /** ✅ Safe getters */
 export const getFirestoreDb = (): Firestore | null => db;

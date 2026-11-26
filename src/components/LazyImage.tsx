@@ -139,7 +139,7 @@ const preconnectOnce = (origin: string) => {
     const link = document.createElement('link');
     link.rel = 'preconnect';
     link.href = origin;
-    link.crossOrigin = 'anonymous';
+    // no crossOrigin: <img> requests are not CORS requests; a 'crossorigin' preconnect opens a connection they never use
     document.head.appendChild(link);
 
     PRECONNECT_DONE.add(origin);
@@ -162,7 +162,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
   alt = '',
   className = '',
   containerClassName = '',
-  placeholderClassName = 'bg-slate-200/60', // تم التحديث ليتطابق مع الـ Skeletons
+  placeholderClassName = 'img-shimmer', // a calm shimmer in the paper tone while the photo loads (index.css)
   fallbackSrc,
   fetchPriority = 'auto',
   style,
@@ -195,6 +195,9 @@ const LazyImage: React.FC<LazyImageProps> = ({
   const [inView, setInView] = useState<boolean>(derivedEager);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [hasError, setHasError] = useState<boolean>(false);
+  // a resized Cloudinary address that fails (a transformation error, a CDN hiccup) is tried ONCE more as the stored
+  // original before the 'no image' state: a photo is never lost because of the resizing
+  const [rawRetry, setRawRetry] = useState<boolean>(false);
 
   // ✅ webp supported (cached globally)
   const [webpSupported, setWebpSupported] = useState(false);
@@ -206,6 +209,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
   useEffect(() => {
     setIsLoaded(false);
     setHasError(false);
+    setRawRetry(false);
     setInView(derivedEager);
   }, [normalizedSrc, derivedEager]);
 
@@ -319,7 +323,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
       style={{ ...clsStyle }}
     >
       {!hasError && !isLoaded && (
-        <div className={`absolute inset-0 ${placeholderClassName} animate-pulse`} aria-hidden="true" />
+        <div className={`absolute inset-0 ${placeholderClassName}`} aria-hidden="true" data-img-placeholder="1" />
       )}
 
       {noSrc ? (
@@ -343,9 +347,9 @@ const LazyImage: React.FC<LazyImageProps> = ({
         </div>
       ) : inView ? (
         <img
-          src={resolvedSrc}
-          srcSet={srcSet}
-          sizes={srcSet ? resolvedSizes : undefined}
+          src={rawRetry ? finalSrc : resolvedSrc}
+          srcSet={rawRetry ? undefined : srcSet}
+          sizes={!rawRetry && srcSet ? resolvedSizes : undefined}
           alt={alt}
           loading={finalLoading}
           decoding={decoding}
@@ -355,6 +359,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
             onLoad?.(e);
           }}
           onError={(e) => {
+            if (!rawRetry && isCloudinary && finalSrc !== resolvedSrc) { setRawRetry(true); return; }
             setHasError(true);
             onError?.(e);
           }}

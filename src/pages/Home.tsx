@@ -1,5 +1,5 @@
 // src/pages/Home.tsx — "Scholar" redesign: ink navy hero with real products, departments, curated rails.
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Search, ArrowLeft, ArrowRight, Truck, ShieldCheck, Wallet, Headset, Sparkles, MessageCircle, Facebook, Instagram, MapPin,
@@ -8,6 +8,7 @@ import {
 import { offerProducts } from '../services/recommendations';
 
 import ProductCard from '../components/ProductCard';
+import LazyImage from '../components/LazyImage';
 import { useCart } from '../App';
 import SEO from '../components/SEO';
 import { ProductSkeletonGrid } from '../components/Skeleton';
@@ -46,6 +47,22 @@ const toMillis = (v: any): number => {
 };
 const firstImage = (p: any) => (Array.isArray(p?.images) && p.images[0]) || p?.image || '';
 
+// the hero's picks of the last visit (comfort only: id, names and the first photo — never a price or stock)
+const HERO_CACHE_KEY = 'anta_hero_picks_v1';
+// the same widths as the product cards' srcset (identical Cloudinary addresses -> CDN / browser cache hits)
+const HERO_WIDTHS = [240, 320, 480, 640, 800];
+const readHeroCache = (): any[] => {
+  try {
+    const v = JSON.parse(localStorage.getItem(HERO_CACHE_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((p) => p && typeof p.id === 'string' && typeof p.image === 'string' && /^https:\/\//.test(p.image)).slice(0, 3) : [];
+  } catch { return []; }
+};
+const writeHeroCache = (picks: any[]) => {
+  try {
+    localStorage.setItem(HERO_CACHE_KEY, JSON.stringify(picks.slice(0, 3).map((p) => ({ id: String(p.id), name: String(p.name || ''), nameEn: String(p.nameEn || ''), image: firstImage(p) }))));
+  } catch { /* private mode: no cache */ }
+};
+
 const SectionHead: React.FC<{ eyebrow: string; title: string; to?: string; cta?: string; isRtl: boolean }> = ({ eyebrow, title, to, cta, isRtl }) => (
   <div className="flex items-end justify-between gap-4 mb-6 sm:mb-8">
     <div>
@@ -81,26 +98,39 @@ const Home: React.FC = () => {
   }, [list]);
 
   const latest = useMemo(() => [...list].sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt)), [list]);
+  // the rails below the hero render one step LATER (deferred): when the catalogue arrives, the hero (3 photos) is
+  // committed first and its photos are requested at once; the ~30 product cards follow in a background render
+  // (measured on a slow phone: the cards rendered with the hero delayed its photo requests by seconds)
+  const railList = useDeferredValue(list);
+  const railLatest = useMemo(() => (railList === list ? latest : [...railList].sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt))), [railList, list, latest]);
   const newArrivals = useMemo(() => {
-    const flagged = latest.filter((p) => p.isNew);
-    return (flagged.length >= 4 ? flagged : latest).slice(0, 8);
-  }, [latest]);
-  const stationery = useMemo(() => latest.filter((p) => p.category === 'Stationery').slice(0, 8), [latest]);
-  const toys = useMemo(() => latest.filter((p) => p.category === 'Games').slice(0, 4), [latest]);
+    const flagged = railLatest.filter((p) => p.isNew);
+    return (flagged.length >= 4 ? flagged : railLatest).slice(0, 8);
+  }, [railLatest]);
+  const stationery = useMemo(() => railLatest.filter((p) => p.category === 'Stationery').slice(0, 8), [railLatest]);
+  const toys = useMemo(() => railLatest.filter((p) => p.category === 'Games').slice(0, 4), [railLatest]);
   const heroPicks = useMemo(() => {
     const byCat = (c: string) => latest.find((p) => p.category === c && firstImage(p));
     const picks = [byCat('Games'), byCat('Stationery'), byCat('BabyGear')].filter(Boolean);
     for (const p of latest) if (picks.length < 3 && firstImage(p) && !picks.includes(p)) picks.push(p);
     return picks.slice(0, 3);
   }, [latest]);
+  // a returning visitor: the hero's three products of the last visit are shown AT ONCE (photos from the browser cache)
+  // while the catalogue loads; replaced by the live picks as soon as they arrive. Name + photo only: the PRICE is shown
+  // from the live catalogue only (never an old price)
+  const [cachedPicks] = useState<any[]>(() => readHeroCache());
+  useEffect(() => { if (heroPicks.length) writeHeroCache(heroPicks); }, [heroPicks]);
+  const shownPicks: any[] = heroPicks.length ? heroPicks : cachedPicks;
 
   // featured offers: REAL discounts only (original price above the selling price), biggest first, buyable now
-  const offers = useMemo(() => offerProducts(list), [list]);
+  const offers = useMemo(() => offerProducts(railList), [railList]);
   const featuredOffers = useMemo(() => [...offers].sort((a, b) => b.percent - a.percent || b.save - a.save || (a.p.id < b.p.id ? -1 : 1)).slice(0, 8).map((o) => o.p), [offers]);
   const maxOffer = useMemo(() => offers.reduce((m, o) => Math.max(m, o.percent), 0), [offers]);
 
-  const card = (p: any, i: number) => (
-    <ProductCard key={p.id} product={p} onAddToCart={addToCart} onToggleWishlist={toggleWishlist} onQuickView={openQuickView} isLiked={wishlist.has(p.id)} priority={i < 2} />
+  const card = (p: any) => (
+    // the rails are BELOW the hero: their photos load lazily (just before they scroll into view) and never compete with
+    // the hero's three photos, the ones seen at once
+    <ProductCard key={p.id} product={p} onAddToCart={addToCart} onToggleWishlist={toggleWishlist} onQuickView={openQuickView} isLiked={wishlist.has(p.id)} priority={false} />
   );
 
   return (
@@ -158,15 +188,33 @@ const Home: React.FC = () => {
           </div>
 
           {/* real products: one large card + two stacked — a grid, so no card covers another card's photo or price */}
-          <div className="relative min-w-0 grid grid-cols-[1.35fr_1fr] grid-rows-2 gap-3 sm:gap-4 h-[210px] sm:h-[400px] lg:h-[440px] xl:h-[480px]">
-            {heroPicks.map((p, i) => {
+          {/* fixed heights: the three boxes keep their size from the first paint (placeholder, photo, error) — no shift */}
+          <div className="relative min-w-0 grid grid-cols-[1.35fr_1fr] grid-rows-2 gap-3 sm:gap-4 h-[210px] sm:h-[400px] lg:h-[440px] xl:h-[480px]" data-testid="hero-picks">
+            {/* placeholders only while the catalogue is on its way (none at all if no product has a photo) */}
+            {!shownPicks.length && !list.length && [0, 1, 2].map((i) => (
+              <div key={i} aria-hidden="true" data-testid="hero-pick-skeleton" className={`relative min-w-0 min-h-0 ${i === 0 ? 'row-span-2' : ''} rounded-[1.5rem] sm:rounded-[1.75rem] img-shimmer shadow-lift ring-1 ring-white/20`} />
+            ))}
+            {shownPicks.map((p, i) => {
               const pos = ['row-span-2', '', ''][i];
               return (
-                <Link key={p.id} to={`/product/${p.id}`} className={`relative min-w-0 min-h-0 ${pos} rounded-[1.5rem] sm:rounded-[1.75rem] bg-paper-100 shadow-lift ring-1 ring-white/20 overflow-hidden group transition-transform duration-500 hover:scale-[1.02]`}>
-                  <img src={firstImage(p)} alt={p.name} className="w-full h-full object-contain p-3 sm:p-4 pb-11 sm:pb-12 mix-blend-multiply" loading={i === 0 ? 'eager' : 'lazy'} />
+                <Link key={p.id} to={`/product/${p.id}`} className={`relative min-w-0 min-h-0 ${pos} rounded-[1.5rem] sm:rounded-[1.75rem] bg-paper-100 shadow-lift ring-1 ring-white/20 overflow-hidden group transition-transform duration-500 hover:scale-[1.02]`} data-testid="hero-pick" data-from-cache={heroPicks.length ? '0' : '1'}>
+                  {/* visible at once: requested first (eager, high priority, never lazy) and resized by Cloudinary to the
+                      box (srcset / sizes: ~200 px wide on a phone, ~330 px on a computer, x the screen density) — the
+                      SAME addresses as the product cards, so the CDN and the browser cache serve them again */}
+                  <LazyImage
+                    src={firstImage(p)} alt={p.name}
+                    containerClassName="w-full h-full"
+                    className="object-contain p-3 sm:p-4 pb-11 sm:pb-12 mix-blend-multiply"
+                    eager fetchPriority="high"
+                    responsiveWidths={HERO_WIDTHS}
+                    sizes={i === 0 ? '(min-width: 1024px) 330px, 56vw' : '(min-width: 1024px) 245px, 41vw'}
+                    expectedDisplayWidth={i === 0 ? 330 : 245}
+                  />
                   <div className="absolute bottom-2 sm:bottom-2.5 inset-x-2 sm:inset-x-2.5 rounded-xl bg-white/90 backdrop-blur px-2.5 sm:px-3 py-1.5 flex items-center justify-between gap-2 text-ink-900">
                     <span className="text-[11.5px] font-semibold truncate">{isRtl ? p.name : p.nameEn || p.name}</span>
-                    <span className="text-[12px] font-bold text-gold-600 shrink-0">{p.price} {L('د.أ', 'JOD')}</span>
+                    {heroPicks.length
+                      ? <span className="text-[12px] font-bold text-gold-600 shrink-0">{p.price} {L('د.أ', 'JOD')}</span>
+                      : <span className="h-3 w-10 shrink-0 rounded-full img-shimmer" aria-hidden="true" />}
                   </div>
                 </Link>
               );
@@ -246,7 +294,7 @@ const Home: React.FC = () => {
       {/* ============================ NEW ARRIVALS ============================ */}
       <section className="ds-container pb-12 sm:pb-16">
         <SectionHead eyebrow={L('وصل حديثًا', 'Just in')} title={L('أحدث ما أضفناه للمكتبة', 'Newest in the library')} to="/shop" cta={L('عرض الكل', 'View all')} isRtl={isRtl} />
-        {isLoading && !list.length ? (
+        {(isLoading && !list.length) || (list.length > 0 && !railList.length) ? (
           <ProductSkeletonGrid count={8} />
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">{newArrivals.map(card)}</div>
