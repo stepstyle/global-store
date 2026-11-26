@@ -287,7 +287,7 @@ export async function runStoreScenarios(ctx) {
       });
 
       // ---------------------------------------------------------------- the REQUIRED agreement box (no pre-tick, no send without it)
-      if (!process.env.E2E_CATALOG_FILE) await check(`ST-${tag}-agreement`, `agreement on ${tag}: both boxes start UNticked; confirm without the required one -> NOTHING sent, a clear message, the box focused; the link is the real policies page (new tab); ticked -> the order goes through`, async () => {
+      if (!process.env.E2E_CATALOG_FILE) await check(`ST-${tag}-agreement`, `agreement on ${tag}: ONE box only (the required agreement), UNticked; confirm without the required one -> NOTHING sent, a clear message, the box focused; the link is the real policies page (new tab); ticked -> the order goes through`, async () => {
         await go('/checkout', { key: `a${tag}`, items: cartItems.slice(0, 1) });
         await t.waitFor(`!!document.querySelector('input[placeholder="0791234567"]')`, 40_000, 'checkout form');
         // count create-order requests leaving THIS page
@@ -306,7 +306,7 @@ export async function runStoreScenarios(ctx) {
         await t.evaluate(`${STICKY}.click(); true`);
         await t.waitFor(`!!document.querySelector('[data-testid=checkout-agreement-box]')`, 10_000, 'step 3 with the box');
         const boxes = await t.evaluate(`[...document.querySelectorAll('input[type=checkbox]')].filter((c) => c.offsetParent !== null).map((c) => ({ id: c.dataset.testid || c.closest('label')?.innerText.slice(0, 30), on: c.checked }))`);
-        must(boxes.length >= 2 && boxes.every((b) => !b.on), `a box is pre-ticked: ${JSON.stringify(boxes)}`);
+        must(boxes.length === 1 && boxes[0].id === 'checkout-agreement-box' && !boxes[0].on, `exactly one UNticked box (the agreement) expected: ${JSON.stringify(boxes)}`);
         // the link: the site's real policies page, in a new tab (the checkout stays)
         const link = await t.evaluate(`(() => { const a = document.querySelector('[data-testid=checkout-policies-link]'); return a ? { href: a.getAttribute('href'), target: a.target } : null; })()`);
         must(link && link.href === '#/privacy' && link.target === '_blank', `policies link ${JSON.stringify(link)}`);
@@ -335,7 +335,7 @@ export async function runStoreScenarios(ctx) {
         const orderId = await t.evaluate(`decodeURIComponent(location.hash.split('/').pop() || '')`);
         const o = await ctx.get(`orders/${orderId}`);
         must(o?.consents?.acceptedStorePolicies === true, `agreement not recorded: ${JSON.stringify(o?.consents)}`);
-        must(o?.consents?.saveInfo === false, 'optional consent recorded as given');
+        must(o?.consents?.saveInfo === false && o?.consents?.acceptedDeliveryPolicy === false, `a consent without a box recorded as given: ${JSON.stringify(o?.consents)}`);
         // the policies page itself exists and has content
         await t.evaluate(`location.hash = '#/privacy'; true`);
         await t.waitFor(`/السياسات والخصوصية/.test(document.body.innerText) && /الإرجاع والاستبدال/.test(document.body.innerText)`, 15_000, 'policies page');

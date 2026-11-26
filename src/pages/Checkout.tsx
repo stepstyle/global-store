@@ -405,15 +405,15 @@ const Checkout: React.FC = () => {
     streetAddress: '', 
     postalCode: '',
     phoneLocal: '',
-    saveInfo: false, // optional consent: never pre-selected
     billingSameAsShipping: true,
   });
 
   // REQUIRED agreement to the order terms + store policies: never pre-ticked, the customer ticks it; nothing is sent
-  // without it (checked in handlePlaceOrder). Recorded with the order as acceptedStorePolicies.
+  // without it (checked in handlePlaceOrder). Recorded with the order as acceptedStorePolicies. It is the ONLY box:
+  // "keep my details for next orders" had no function behind it (nothing ever reused them) and "I read the delivery
+  // time and cost" repeated what the delivery step shows — both removed; their consents are sent as false, never true.
   const [acceptPolicies, setAcceptPolicies] = useState(false);
   const agreementRef = useRef<HTMLInputElement | null>(null);
-  const [acceptDeliveryPolicy, setAcceptDeliveryPolicy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // back from the Google PAGE (fallback when the popup was blocked): the details typed before leaving are restored
@@ -428,7 +428,6 @@ const Checkout: React.FC = () => {
     if (saved.shippingMethodId === 'standard' || saved.shippingMethodId === 'fast') setShippingMethodId(saved.shippingMethodId);
     if (saved.paymentMethod === 'cod' || saved.paymentMethod === 'cliq') setPaymentMethod(saved.paymentMethod as PaymentMethod);
     if (typeof saved.cliqRef === 'string') setCliqRef(saved.cliqRef);
-    if (typeof saved.acceptDeliveryPolicy === 'boolean') setAcceptDeliveryPolicy(saved.acceptDeliveryPolicy);
     if (saved.acceptPolicies === true) setAcceptPolicies(true); // ticked by the customer before leaving for Google
     setStep(3);
     // nothing is sent automatically: the customer reviews, passes the security check and confirms
@@ -693,14 +692,15 @@ const Checkout: React.FC = () => {
         customerEmail: safeTrim(email) || safeTrim(user?.email || '') || safeTrim(getFirebaseAuth()?.currentUser?.email || ''),
         consents: {
           acceptedStorePolicies: !!acceptPolicies,
-          acceptedDeliveryPolicy: !!acceptDeliveryPolicy,
-          saveInfo: !!formData.saveInfo,
+          // no box for these any more: never sent as given
+          acceptedDeliveryPolicy: false,
+          saveInfo: false,
           billingSameAsShipping: !!formData.billingSameAsShipping,
         },
         note: safeTrim(orderNote) || undefined,
         paymentDetails: paymentMethod === 'cliq' ? { cliqReference: safeTrim(cliqRef), isPaid: false } : undefined,
         address: { fullName: normalizeName(formData.fullName) || 'Guest', city: shippingCityName, street: shippingStreet, phone: shippingPhoneE164 },
-        addressMeta: { country: JO_COUNTRY.nameEn, countryCode: JO_COUNTRY.code, citySlug: formData.citySlug, ammanAreaId: formData.ammanAreaId, saveInfo: !!formData.saveInfo, phoneDial: dialCode, phoneLocal: safeTrim(formData.phoneLocal) },
+        addressMeta: { country: JO_COUNTRY.nameEn, countryCode: JO_COUNTRY.code, citySlug: formData.citySlug, ammanAreaId: formData.ammanAreaId, saveInfo: false, phoneDial: dialCode, phoneLocal: safeTrim(formData.phoneLocal) },
       };
       return newOrder;
   };
@@ -1495,7 +1495,7 @@ const Checkout: React.FC = () => {
                           className="rounded-xl border border-current px-4 py-2.5 text-sm font-black"
                           onClick={() => {
                             // the page is left: keep what the customer typed (this tab, 30 min, read once on return)
-                            saveCheckoutResume({ formData, email, dialCode, shippingMethodId, paymentMethod, cliqRef, acceptDeliveryPolicy, acceptPolicies });
+                            saveCheckoutResume({ formData, email, dialCode, shippingMethodId, paymentMethod, cliqRef, acceptPolicies });
                             void googleRedirect().then((o) => { if (o !== 'ok') { setGoogleIssue(o); setSubmitBlocked(googleMessage(o, isAR)); } });
                           }}
                         >
@@ -1785,50 +1785,6 @@ const Checkout: React.FC = () => {
                 />
               </div>
 
-              <div className="mt-6 rounded-[2rem] border border-slate-100 bg-slate-50/70 p-4 sm:p-5">
-                <div className="mb-4">
-                  <h4 className="text-sm font-black text-slate-900">{tr('خيارات اختيارية', 'Optional choices')}</h4>
-                  <p className="mt-1 text-xs font-bold text-slate-500">
-                    {tr('لا يؤثر أيٌّ منها على طلبك؛ تُسجَّل اختياراتك مع الطلب.', 'None of these affects your order; your choices are recorded with it.')}
-                  </p>
-                </div>
-
-                <div className="space-y-3">
-                  <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:bg-slate-50 transition-all cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={formData.saveInfo}
-                      onChange={(e) => setField('saveInfo', e.target.checked)}
-                      className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-black text-slate-800">{tr('أوافق على احتفاظ المكتبة ببيانات التوصيل لطلباتي القادمة', 'I agree that the shop keeps my delivery details for my next orders')}</span>
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">{tr('اختياري', 'Optional')}</span>
-                      </div>
-                      <p className="mt-1 text-xs font-bold text-slate-500">
-                        {tr('غير مفعّل إلا إذا اخترته أنت.', 'Off unless you choose it.')}
-                      </p>
-                    </div>
-                  </label>
-
-                  <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:bg-slate-50 transition-all cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={acceptDeliveryPolicy}
-                      onChange={(e) => setAcceptDeliveryPolicy(e.target.checked)}
-                      className="mt-1 h-5 w-5 shrink-0 accent-sky-500"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-black text-slate-800">{tr('اطلعت على مدة التوصيل وتكلفته الموضّحة في خطوة التوصيل', 'I have read the delivery time and cost shown in the delivery step')}</span>
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">{tr('اختياري', 'Optional')}</span>
-                      </div>
-                    </div>
-                  </label>
-
-                </div>
-              </div>
               {/* a statement that can be checked, not a promise ("100% secure" is not something anyone can verify) */}
               <div className="mt-6 flex items-start justify-center gap-2 text-xs font-bold leading-5 text-slate-500 bg-white border border-slate-100 px-4 py-3 rounded-2xl" data-testid="checkout-security-note">
                 <Shield size={16} className="text-emerald-500 shrink-0 mt-0.5" />
