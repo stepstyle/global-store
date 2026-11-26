@@ -1,6 +1,6 @@
 // src/pages/ProductDetails.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import {
   Star, ShoppingCart, Heart, Share2, Truck, RefreshCw, Bell, X, Trash2,
   EyeOff, Eye, MessageSquare, Minus, Plus, Shield, Play, Volume2, VolumeX, ImageOff, Loader2, CheckCircle2, MessageCircle
@@ -555,6 +555,15 @@ const ProductDetails: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50/50 py-4 lg:py-12 relative">
       <SEO title={productTitle} description={displayDesc} image={heroPoster || ''} type="product" />
+
+      {/* opened from a suggestion in checkout: one tap back (the details typed there are kept, services/checkoutDraft.ts) */}
+      {(location.state as any)?.from === 'checkout' && (
+        <div className="max-w-7xl mx-auto px-4 mb-3 lg:mb-5">
+          <Link to="/checkout" data-testid="back-to-checkout" className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-ink-900 px-5 text-[14px] font-black text-white shadow-soft hover:bg-ink-800">
+            <span aria-hidden="true">{isAR ? '→' : '←'}</span>{tr('العودة لإتمام الطلب — بياناتك محفوظة', 'Back to checkout — your details are kept')}
+          </Link>
+        </div>
+      )}
 
       {showNotifyModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

@@ -133,6 +133,9 @@ async function driverFor(port, t, { resize }) {
   };
   await send('Page.enable');
   await send('Runtime.enable');
+  // every full page load is a NEW visit for the suites (the customer types the details again): the checkout draft of an
+  // earlier load in this tab is cleared, except with ?keepdraft (the store suite's draft checks)
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: "try { if (!/[?&]keepdraft=/.test(location.search)) sessionStorage.removeItem('anta_checkout_draft_v1'); } catch (e) {}" });
   if (resize) await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   // newer headless shells give a page no focus: element.focus() would fire no focus event (dropdowns stay closed)
   await send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});

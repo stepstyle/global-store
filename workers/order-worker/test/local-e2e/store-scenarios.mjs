@@ -116,8 +116,10 @@ export async function runStoreScenarios(ctx) {
       await t.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__stErrs = []; addEventListener('error', (e) => window.__stErrs.push(String(e.message).slice(0, 160))); addEventListener('unhandledrejection', (e) => window.__stErrs.push('rejection ' + String(e.reason && (e.reason.message || e.reason)).slice(0, 160))); localStorage.setItem('language', 'ar');` });
       const go = async (hash, cart = null) => {
         await t.send('Storage.clearDataForOrigin', { origin: ctx.base, storageTypes: 'local_storage' });
+        // a new visit: no checkout draft of an earlier scenario in this tab (sessionStorage)
+        await t.evaluate(`(() => { try { sessionStorage.clear(); } catch {} return true; })()`).catch(() => {});
         if (cart) await t.send('Page.addScriptToEvaluateOnNewDocument', { source: `if (location.search.includes('seed=${cart.key}')) localStorage.setItem('anta_cart', ${JSON.stringify(JSON.stringify(cart.items))});` });
-        await t.navigate(`${ctx.base}/?${cart ? `seed=${cart.key}&` : ''}r=${Date.now()}#${hash}`);
+        await t.navigate(`${ctx.base}/?keepdraft=1&${cart ? `seed=${cart.key}&` : ''}r=${Date.now()}#${hash}`);
         await t.waitFor(`document.readyState === 'complete' && document.querySelectorAll('[data-product-id]').length > 0 || document.body.innerText.includes('سلة')`, 40_000, `${hash} rendered`);
         await sleep(1500);
       };
@@ -340,6 +342,76 @@ export async function runStoreScenarios(ctx) {
         await t.evaluate(`location.hash = '#/privacy'; true`);
         await t.waitFor(`/السياسات والخصوصية/.test(document.body.innerText) && /الإرجاع والاستبدال/.test(document.body.innerText)`, 15_000, 'policies page');
         return `order ${orderId}`;
+      });
+
+      // ---------------------------------------------------------------- checkout draft: typed details survive a visit to a product
+      if (!process.env.E2E_CATALOG_FILE) await check(`ST-${tag}-draft`, `checkout draft on ${tag}: details typed -> a SUGGESTED product opened ("back to checkout" shown) -> a product added there -> back: name / phone / e-mail / governorate / street restored, total RECOMPUTED; steps 1->2->3 keep it; a refresh at step 3 keeps step + details, the agreement is NOT restored; confirmed -> ONE order, the draft is gone, consents honest, stock untouched at creation`, async () => {
+        await go('/checkout', { key: `d${tag}`, items: cartItems.slice(0, 1) });
+        await t.waitFor(`!!document.querySelector('input[placeholder="0791234567"]')`, 40_000, 'checkout form');
+        const phone = vp.mobile ? '0791230021' : '0791230022';
+        const typed = { name: `زبون المسودة ${tag}`, phone, email: `draft-${tag}@example.com`, street: `شارع المسودة ${tag} 7` };
+        const fields = () => t.evaluate(`({ name: document.querySelector('input[placeholder="الاسم الأول والأخير"]')?.value, phone: document.querySelector('input[placeholder="0791234567"]')?.value, email: document.querySelector('input[placeholder^="name@example.com"]')?.value, street: document.querySelector('input[placeholder^="اسم الشارع"]')?.value, city: [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'zarqa'))?.value })`);
+        const sameAsTyped = (f) => f.name === typed.name && f.phone === typed.phone && f.email === typed.email && f.street === typed.street && f.city === 'zarqa';
+        await t.evaluate(`(() => { ${SET_VAL}
+          setVal(document.querySelector('input[placeholder^="name@example.com"]'), ${JSON.stringify(typed.email)});
+          setVal(document.querySelector('input[placeholder="الاسم الأول والأخير"]'), ${JSON.stringify(typed.name)});
+          setVal(document.querySelector('input[placeholder="0791234567"]'), ${JSON.stringify(typed.phone)});
+          setVal([...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'zarqa')), 'zarqa');
+          return true; })()`);
+        await sleep(150);
+        await t.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('input[placeholder^="اسم الشارع"]'), ${JSON.stringify(typed.street)}); return true; })()`);
+        await sleep(300);
+        await shot(t, `draft-${tag}-1-typed`);
+        const totalBefore = await t.evaluate(`document.querySelector('[data-testid=checkout-sticky-total]').textContent`);
+        const stored = await t.evaluate(`sessionStorage.getItem('anta_checkout_draft_v1') || ''`);
+        must(stored.includes(typed.phone) && stored.includes('zarqa'), `draft not saved while typing: ${stored.slice(0, 160)}`);
+        must(!/accept|consent|turnstile|token|cliqRef/i.test(stored), `the draft holds more than the details: ${stored}`);
+        // a suggested product (in-app link from the checkout's "قد تحتاج أيضًا", shown on step 1)
+        await t.waitFor(`!!document.querySelector('[data-testid=checkout-suggestions] a[href*="/product/"]')`, 15_000, 'checkout suggestions');
+        const sugId = await t.evaluate(`(() => { const a = document.querySelector('[data-testid=checkout-suggestions] a[href*="/product/"]'); const id = a.getAttribute('href').split('/').pop(); a.click(); return id; })()`);
+        await t.waitFor(`!!document.querySelector('[data-testid=product-price-block]')`, 20_000, 'product page');
+        must(await t.evaluate(`!!document.querySelector('[data-testid=back-to-checkout]')`), 'no "back to checkout" on the product page');
+        await shot(t, `draft-${tag}-2-product`);
+        const added = await t.evaluate(`(() => { const b = [...document.querySelectorAll('button')].find((x) => /أضف للسلة/.test(x.textContent) && !x.disabled && !x.closest('[data-testid=similar-products]')); if (!b) return false; b.click(); return true; })()`);
+        await sleep(1200);
+        await t.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+        await sleep(400);
+        await t.evaluate(`document.querySelector('[data-testid=back-to-checkout]').click(); true`);
+        await t.waitFor(`!!document.querySelector('input[placeholder="0791234567"]')`, 20_000, 'back on checkout');
+        await sleep(800);
+        const back = await fields();
+        must(sameAsTyped(back), `details lost after the product page: ${JSON.stringify(back)}`);
+        const after = await t.evaluate(`({ total: document.querySelector('[data-testid=checkout-sticky-total]').textContent, items: JSON.parse(localStorage.getItem('anta_cart') || '[]').length })`);
+        must(!added || (after.items === 2 && after.total !== totalBefore), `total not recomputed with the new item: ${totalBefore} -> ${after.total} (${after.items} items)`);
+        await shot(t, `draft-${tag}-3-back-restored`);
+        // the three steps: nothing lost
+        await t.evaluate(`${STICKY}.click(); true`);
+        await t.waitFor(`document.body.innerText.includes('توصيل عادي')`, 10_000, 'step 2');
+        await t.evaluate(`${STICKY}.click(); true`);
+        await t.waitFor(`!!document.querySelector('[data-testid=checkout-agreement-box]')`, 10_000, 'step 3');
+        await t.evaluate(`document.querySelector('[data-testid=checkout-agreement-box]').click(); true`); // ticked, then a refresh
+        // a refresh at step 3: same step, details kept, the agreement NOT restored (ticked again by the customer)
+        await t.reload();
+        await t.waitFor(`!!document.querySelector('[data-testid=checkout-sticky-total]')`, 30_000, 'checkout after refresh');
+        await sleep(1000);
+        const r = await t.evaluate(`({ step: document.querySelector('[data-testid=checkout-sticky-action]')?.dataset.step, box: document.querySelector('[data-testid=checkout-agreement-box]')?.checked ?? null })`);
+        must(r.step === '3' && r.box === false, `after refresh: ${JSON.stringify(r)} (step 3, agreement unticked expected)`);
+        await shot(t, `draft-${tag}-4-refresh-step3`);
+        // confirm: ONE order with the typed details, the draft is gone
+        await t.evaluate(`(() => { window.__creates = 0; const f = window.fetch.bind(window); window.fetch = (u, i) => { if (/create-order/.test(String(u && u.url || u))) window.__creates++; return f(u, i); }; return true; })()`);
+        const stockBefore = (await ctx.get('products/sc-notebook'))?.stock;
+        const btn = vp.mobile ? STICKY : `document.querySelector('[data-testid=checkout-confirm]')`;
+        await t.evaluate(`${AGREE} ${btn}.click(); true`);
+        const out = await t.waitFor(OUTCOME, 40_000, 'order outcome');
+        must(out === 'success', `order outcome ${out}`);
+        must((await t.evaluate(`window.__creates`)) === 1, 'not exactly one create request');
+        const orderId = await t.evaluate(`decodeURIComponent(location.hash.split('/').pop() || '')`);
+        must(await t.evaluate(`sessionStorage.getItem('anta_checkout_draft_v1') === null`), 'the draft was kept after the order');
+        const o = await ctx.get(`orders/${orderId}`);
+        must(JSON.stringify(o || {}).includes(typed.street), 'order without the typed address');
+        must(o?.consents?.acceptedStorePolicies === true && o?.consents?.saveInfo === false && o?.consents?.acceptedDeliveryPolicy === false, `consents ${JSON.stringify(o?.consents)}`);
+        must((await ctx.get('products/sc-notebook'))?.stock === stockBefore, 'stock changed at order creation (policy: on delivery)');
+        return `order ${orderId}${added ? ` (+${sugId})` : ''}`;
       });
 
       // ---------------------------------------------------------------- desktop widths: the bar with the new link fits

@@ -55,6 +55,7 @@ import {
 import PrizeCountdown from '../components/wheel/PrizeCountdown';
 import SecondOrderStatus from '../components/wheel/SecondOrderStatus';
 import { googleMessage, saveCheckoutResume, takeCheckoutResume, type GoogleOutcome } from '../services/googleGate';
+import { readCheckoutDraft, saveCheckoutDraft, clearCheckoutDraft, type CheckoutDraft } from '../services/checkoutDraft';
 import { currentGoogleUid, finishGoogleRedirect, googlePopup, googleRedirect } from '../services/googleAuth';
 
 // Owner's rule: every order is confirmed by a Google account (signed in BEFORE sending; the Worker checks the signed
@@ -204,9 +205,27 @@ const Checkout: React.FC = () => {
     }
   };
 
-  const [step, setStep] = useState(1);
-  const [shippingMethodId, setShippingMethodId] = useState<string>('standard');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cod');
+  // the draft of an earlier visit to checkout (same tab: a suggested product, the cart, a reload…) restores what the
+  // customer typed BEFORE the first paint — read once. Agreement, security check and CliQ reference are never in it.
+  // ONLY for the same person: the draft names its owner ('guest' or the account); another identity never sees it.
+  //   same owner now           -> restored at once
+  //   an account's draft while the sign-in is still being restored (full reload) -> held, restored once confirmed
+  //   anything else            -> discarded
+  const [draftInit] = useState<{ now: CheckoutDraft | null; later: CheckoutDraft | null }>(() => {
+    const d = readCheckoutDraft();
+    if (!d) return { now: null, later: null };
+    const cur = getFirebaseAuth()?.currentUser?.uid || null;
+    if (d.owner === (cur || 'guest')) return { now: d, later: null };
+    if (!cur && d.owner !== 'guest') return { now: null, later: d };
+    clearCheckoutDraft();
+    return { now: null, later: null };
+  });
+  const draft = draftInit.now;
+  const [draftOwnerChecked, setDraftOwnerChecked] = useState(() => !draftInit.now && !draftInit.later);
+  const draftStepOk = !!draft && !!(draft.fullName.trim() && draft.phoneLocal && draft.citySlug && draft.streetAddress.trim());
+  const [step, setStep] = useState<number>(() => (draftStepOk && draft ? draft.step : 1));
+  const [shippingMethodId, setShippingMethodId] = useState<string>(() => draft?.shippingMethodId || 'standard');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() => (draft?.paymentMethod as PaymentMethod) || 'cod');
   const [isProcessing, setIsProcessing] = useState(false);
 
   // ---- order submission (Worker v2 is the only writer of the order) ----
@@ -385,28 +404,28 @@ const Checkout: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  const [email, setEmail] = useState<string>(() => safeTrim(user?.email || ''));
+  const [email, setEmail] = useState<string>(() => safeTrim(draft?.email || '') || safeTrim(user?.email || ''));
   useEffect(() => {
     const uEmail = safeTrim(user?.email || '');
     if (uEmail && !safeTrim(email)) setEmail(uEmail);
   }, [user?.email]);
 
-  const [dialCode, setDialCode] = useState<string>(() => '+962');
+  const [dialCode, setDialCode] = useState<string>(() => draft?.dialCode || '+962');
   const [cliqRef, setCliqRef] = useState('');
 
   const [areaSearchQuery, setAreaSearchQuery] = useState('');
   const [isAreaDropdownOpen, setIsAreaDropdownOpen] = useState(false);
 
-  const [formData, setFormData] = useState({
-    fullName: '',
+  const [formData, setFormData] = useState(() => ({
+    fullName: draft?.fullName || '',
     country: JO_COUNTRY.nameEn,
-    citySlug: '',
-    ammanAreaId: '', 
-    streetAddress: '', 
-    postalCode: '',
-    phoneLocal: '',
+    citySlug: draft?.citySlug || '',
+    ammanAreaId: draft?.ammanAreaId || '',
+    streetAddress: draft?.streetAddress || '',
+    postalCode: draft?.postalCode || '',
+    phoneLocal: draft?.phoneLocal || '',
     billingSameAsShipping: true,
-  });
+  }));
 
   // REQUIRED agreement to the order terms + store policies: never pre-ticked, the customer ticks it; nothing is sent
   // without it (checked in handlePlaceOrder). Recorded with the order as acceptedStorePolicies. It is the ONLY box:
@@ -415,6 +434,51 @@ const Checkout: React.FC = () => {
   const [acceptPolicies, setAcceptPolicies] = useState(false);
   const agreementRef = useRef<HTMLInputElement | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // the draft follows every change (this tab only; see services/checkoutDraft.ts); never again once the order is placed
+  const draftDone = useRef(false);
+  useEffect(() => {
+    if (draftDone.current || !draftOwnerChecked) return;
+    saveCheckoutDraft({
+      fullName: formData.fullName, phoneLocal: formData.phoneLocal, dialCode, email, citySlug: formData.citySlug,
+      ammanAreaId: formData.ammanAreaId, streetAddress: formData.streetAddress, postalCode: formData.postalCode,
+      shippingMethodId: shippingMethodId === 'fast' ? 'fast' : 'standard', paymentMethod: paymentMethod === 'cliq' ? 'cliq' : 'cod',
+      step: step === 3 ? 3 : step === 2 ? 2 : 1,
+      // the person on this form: signing in here (Google at "confirm") keeps their own draft
+      owner: getFirebaseAuth()?.currentUser?.uid || 'guest',
+    });
+  }, [formData, dialCode, email, shippingMethodId, paymentMethod, step, user?.id, draftOwnerChecked]);
+
+  // once the identity is known (after a reload the sign-in is restored a moment later): a draft shown for someone
+  // else is wiped at once; an account's held draft is restored for that account only (if nothing was typed meanwhile)
+  useEffect(() => {
+    if (draftOwnerChecked) return undefined;
+    let stop = false;
+    void currentIdentity().then((id) => {
+      if (stop) return;
+      const shown = draftInit.now;
+      const held = draftInit.later;
+      if (id && shown && shown.owner !== id) {
+        setFormData((p) => ({ ...p, fullName: '', citySlug: '', ammanAreaId: '', streetAddress: '', postalCode: '', phoneLocal: '' }));
+        setEmail(safeTrim(user?.email || ''));
+        setStep(1);
+        clearCheckoutDraft();
+      } else if (id && held && held.owner === id) {
+        const okStep = !!(held.fullName.trim() && held.phoneLocal && held.citySlug && held.streetAddress.trim());
+        setFormData((p) => (p.fullName || p.phoneLocal || p.streetAddress ? p : { ...p, fullName: held.fullName, citySlug: held.citySlug, ammanAreaId: held.ammanAreaId, streetAddress: held.streetAddress, postalCode: held.postalCode, phoneLocal: held.phoneLocal }));
+        if (held.email) setEmail((e) => e || held.email);
+        setDialCode(held.dialCode);
+        setShippingMethodId(held.shippingMethodId);
+        setPaymentMethod(held.paymentMethod as PaymentMethod);
+        if (okStep) setStep((cur) => (cur === 1 ? held.step : cur));
+      } else if (id && held) {
+        clearCheckoutDraft();
+      }
+      setDraftOwnerChecked(true);
+    });
+    return () => { stop = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // back from the Google PAGE (fallback when the popup was blocked): the details typed before leaving are restored
   // once; nothing is sent automatically — the customer reviews and confirms again
@@ -720,6 +784,9 @@ const Checkout: React.FC = () => {
       setSubmitResult(null);
       clearCart();
       if (typeof clearOrderNote === 'function') clearOrderNote();
+      // the order is placed: the typed details are not kept for the next visit
+      clearCheckoutDraft();
+      draftDone.current = true;
       // not tt('alertSet', …): that translation key means 'alert registered' and would show the wrong text
       showToast(tr('تم تأكيد طلبك بنجاح', 'Your order is confirmed.'), 'success');
       navigate(`/order-success/${r.orderId}`, { replace: true });
@@ -1674,7 +1741,7 @@ const Checkout: React.FC = () => {
 
               {step === 1 && checkoutSuggestions.length > 0 && (
                 <div className="mb-6 -mt-2">
-                  <SuggestionRail products={checkoutSuggestions} title={tr('قد تحتاج أيضًا', 'You may also need')} compact testId="checkout-suggestions" />
+                  <SuggestionRail products={checkoutSuggestions} title={tr('قد تحتاج أيضًا', 'You may also need')} compact testId="checkout-suggestions" fromCheckout />
                 </div>
               )}
 
