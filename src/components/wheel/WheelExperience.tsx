@@ -21,6 +21,7 @@ import WheelDial from './WheelDial';
 import { siteKeyFrom } from '../../services/turnstile';
 import { useTurnstile } from '../useTurnstile';
 import PrizeCountdown from './PrizeCountdown';
+import WheelResultDialog from './WheelResultDialog';
 import SecondOrderStatus, { secondOrderEndReason } from './SecondOrderStatus';
 
 const { Link } = ReactRouterDOM as any;
@@ -32,33 +33,24 @@ const TURNSTILE_SITE_KEY = siteKeyFrom(import.meta.env.VITE_TURNSTILE_SITE_KEY);
 const STATUS_AR: Record<string, string> = { waiting: 'محفوظة — تبدأ الأيام الخمسة عند تسليم طلبك الأول', issued: 'أولية — تُثبَّت عند تأكيد طلب مؤهَّل', reserved: 'بانتظار تأكيد الطلب', consumed: 'مستحقة ومستخدمة', expired: 'منتهية أو ملغاة', none: 'حظ أوفر' };
 const STATUS_EN: Record<string, string> = { waiting: 'Kept — the 5 days start when your first order is delivered', issued: 'Provisional — confirmed with a qualifying order', reserved: 'Waiting for the order to be confirmed', consumed: 'Earned and used', expired: 'Expired or cancelled', none: 'Better luck' };
 
-function Confetti() {
-  const bits = useMemo(() => Array.from({ length: 26 }, (_, i) => ({ left: (i * 37) % 100, delay: (i % 9) * 0.07, hue: i % 3 })), []);
-  return (
-    <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden" data-testid="wheel-confetti">
-      <style>{`@keyframes ws-fall{0%{transform:translateY(-10%) rotate(0);opacity:1}100%{transform:translateY(420px) rotate(540deg);opacity:0}}@media (prefers-reduced-motion: reduce){.ws-bit{display:none}}`}</style>
-      {bits.map((b, i) => (
-        <span key={i} className="ws-bit absolute top-0 h-2 w-1.5 rounded-sm" style={{ left: `${b.left}%`, background: ['#D4A645', '#5786C1', '#ECD59A'][b.hue], animation: `ws-fall 1.6s ease-out ${b.delay}s forwards` }} />
-      ))}
-    </div>
-  );
-}
-
 export default function WheelExperience({ variant = 'page', onClose, onClosed, initial = null }: { variant?: 'popup' | 'page'; onClose?: () => void; onClosed?: () => void; initial?: WheelPublic | null }) {
-  const { user, language } = useCart() as any;
+  const { user, language, cart } = useCart() as any;
   const isAR = language !== 'en';
   const L = (ar: string, en: string) => (isAR ? ar : en);
   const workerUrl = BACKEND_ENABLED ? String(import.meta.env.VITE_WORKER_URL || '') : '';
   const deps = useMemo<SubmitDeps>(() => ({ fetch: (url, init) => window.fetch(url, init as RequestInit) as any }), []);
   const reduced = useRef(typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
 
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'closed' | 'unavailable'>('loading');
+  // the campaign answer the popup already has is used for the FIRST render: the wheel is drawn in the very first frame
+  // (no 'loading' sheet that then grows — measured on the live site: the popup jumped from 220 to 713 px on phones)
+  const initialOpen = !!initial && initial.campaign === 'open' && initial.slots.length >= 2;
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'closed' | 'unavailable'>(initialOpen ? 'ready' : 'loading');
   // why the wheel could not be loaded (shown with a retry button)
   const [loadFail, setLoadFail] = useState<WheelUnavailable | null>(null);
   // the campaign answer the popup already has: used for the FIRST load (no second request -> no long "loading")
   const initialRef = useRef<WheelPublic | null>(initial);
-  const [slots, setSlots] = useState<WheelSlot[]>([]);
-  const [terms, setTerms] = useState('');
+  const [slots, setSlots] = useState<WheelSlot[]>(initialOpen && initial ? initial.slots : []);
+  const [terms, setTerms] = useState(initialOpen && initial ? initial.terms : '');
   const [st, setSt] = useState<WheelState | null>(null);
   // this browser's guest result (not signed in): the wheel is "used" — shown again, never drawn again
   const [guestSpun, setGuestSpun] = useState(false);
@@ -68,8 +60,14 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed, i
   const [duration, setDuration] = useState(0);
   const [result, setResult] = useState<WheelSpin | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
+  // the result window: opened ONCE per drawn result, only after the wheel has stopped on it (never for a result that is
+  // merely shown again — reopened popup, refresh: that one stays in the result box below the wheel)
+  const [celebrate, setCelebrate] = useState<WheelSpin | null>(null);
+  const celebrated = useRef(new Set<string>());
+  // a spin is in progress (request + animation): set synchronously, read by the background loads
+  const spinning = useRef(false);
   // the prize window (minutes, from the Worker) and a re-render when the shown prize's time is up
-  const [holdMin, setHoldMin] = useState(DEFAULT_HOLD_MINUTES);
+  const [holdMin, setHoldMin] = useState(initialOpen && initial ? initial.prizeHoldMinutes : DEFAULT_HOLD_MINUTES);
   const [, setExpiredTick] = useState(0);
   const onExpire = useCallback(() => setExpiredTick((n) => n + 1), []);
   const alive = useRef(true);
@@ -101,7 +99,9 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed, i
   /** the result already stored for this browser's ticket: shown in place, the wheel resting on its segment */
   const showGuest = useCallback(async (list: WheelSlot[]) => {
     const g = await fetchGuestResult(workerUrl, deps);
-    if (!alive.current || !g || g === 'unavailable') return;
+    // a spin running / just finished in this view owns the result and the wheel: a background (re)load never jumps the
+    // wheel to the stored segment or shows the result before the animation has ended
+    if (!alive.current || spinning.current || !g || g === 'unavailable') return;
     const spin = guestAsSpin(g);
     setGuestSpun(true);
     setResult(spin);
@@ -111,7 +111,6 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed, i
 
   const load = useCallback(async () => {
     const given = initialRef.current;
-    initialRef.current = null;
     const p = given ? { kind: 'ok' as const, value: given } : await fetchWheelPublic(workerUrl, deps);
     if (!alive.current) return;
     if (p.kind !== 'ok') {
@@ -129,7 +128,13 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed, i
     else { setSt(null); await showGuest(p.value.slots); }
   }, [workerUrl, deps, loadAccount, showGuest]);
 
-  useEffect(() => { void load(); }, [load, user?.id]);
+  // the answer handed over by the popup stays valid for this view (a component mounted twice does not ask again); a
+  // change of account (sign-in / sign-out) reads everything fresh
+  const firstUser = useRef(user?.id);
+  useEffect(() => {
+    if (user?.id !== firstUser.current) initialRef.current = null;
+    void load();
+  }, [load, user?.id]);
 
   const animateTo = async (r: WheelSpin) => {
     let list = slots;
@@ -150,7 +155,12 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed, i
     setHighlight(idx >= 0 ? r.prizeId : null);
     setResult(r);
     if (r.spinId && usablePrize(r)) choosePrize({ spinId: r.spinId, label: r.label });
+    const key = [r.spinId || 'guest', r.prizeId, r.expiresAt || ''].join('|');
+    if (!celebrated.current.has(key)) { celebrated.current.add(key); setCelebrate(r); }
   };
+  // closing the result keeps the prize (stored by the Worker; shown again in the box below and at checkout). In the
+  // popup, X / "continue shopping" also closes the wheel: the customer is back to shopping in one tap
+  const closeResult = useCallback(() => { setCelebrate(null); if (variant === 'popup') onClose?.(); }, [variant, onClose]);
 
   const accountSpin = async () => {
     const state = await loadAccount();
@@ -197,7 +207,8 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed, i
   };
 
   const onSpin = async () => {
-    if (busy || guestSpun) return;
+    if (busy || guestSpun || spinning.current) return;
+    spinning.current = true;
     setBusy(true);
     setMsg('');
     setResult(null);
@@ -206,6 +217,7 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed, i
       if (getFirebaseAuth()?.currentUser) await accountSpin();
       else await guestSpin();
     } finally {
+      spinning.current = false;
       if (alive.current) setBusy(false);
     }
   };
@@ -222,9 +234,15 @@ export default function WheelExperience({ variant = 'page', onClose, onClosed, i
 
   return (
     <div className="relative" dir={isAR ? 'rtl' : 'ltr'} data-testid="wheel-experience" data-phase={phase}>
-      {won && !reduced.current && <Confetti />}
-      {WHEEL_TEST_BUILD && <p className="mb-2 inline-block rounded-full bg-gold-100 px-3 py-1 text-[11px] font-black text-gold-800" data-testid="wheel-test-badge">{L('نسخة تجريبية — ليست حملة حقيقية', 'Test version — not a real campaign')}</p>}
-      <h2 className="font-heading text-2xl font-black text-ink-950" id="wheel-title">{L('دولاب الحظ', 'Lucky wheel')}</h2>
+      {celebrate && (
+        <WheelResultDialog
+          result={celebrate} won={usablePrize(celebrate) || prizeWaiting(celebrate)} icon={slots.find((s) => s.id === celebrate.prizeId)?.icon}
+          isAR={isAR} holdMin={holdMin} secondDays={secondH / 24} guest={!celebrate.spinId} hasCart={Array.isArray(cart) && cart.length > 0}
+          onClose={closeResult} onExpire={onExpire}
+        />
+      )}
+      {WHEEL_TEST_BUILD && <p className={`mb-2 inline-block rounded-full bg-gold-100 px-3 py-1 text-[11px] font-black text-gold-800 ${variant === 'popup' ? 'me-14' : ''}`} data-testid="wheel-test-badge">{L('نسخة تجريبية — ليست حملة حقيقية', 'Test version — not a real campaign')}</p>}
+      <h2 className={`font-heading text-2xl font-black text-ink-950 ${variant === 'popup' ? 'pe-14' : ''}`} id="wheel-title">{L('دولاب الحظ', 'Lucky wheel')}</h2>
       <p className="mt-1 text-sm font-medium text-ink-700">{L('لفّة ترحيبية واحدة الآن دون تسجيل، ولفّة جديدة مع كل طلب مؤهَّل جديد.', 'One welcome spin now, no sign-in needed, and a new spin with every new qualifying order.')}</p>
 
       {phase === 'loading' && (

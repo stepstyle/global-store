@@ -26,7 +26,8 @@ import { doc, getDoc, getFirestore } from 'firebase/firestore';
 
 // Lazy Load Pages
 import Account from './pages/Account';
-import { WHEEL_ENABLED } from './services/wheel';
+import { WHEEL_ENABLED, prefetchWheelPublic } from './services/wheel';
+import { BACKEND_ENABLED } from './config/deployEnv';
 const Home = React.lazy(() => import('./pages/Home'));
 const Shop = React.lazy(() => import('./pages/Shop'));
 const Offers = React.lazy(() => import('./pages/Offers'));
@@ -44,6 +45,11 @@ const AdminAddProduct = React.lazy(() => import('./pages/AdminAddProduct'));
 const WheelPage = WHEEL_ENABLED ? React.lazy(() => import('./pages/Wheel')) : null;
 // first-visit wheel popup: same condition (never in a production bundle's render tree)
 const WheelPopup = WHEEL_ENABLED ? React.lazy(() => import('./components/wheel/WheelPopup')) : null;
+// the wheel's campaign check starts NOW (one small GET), in parallel with the first render and the catalogue: the popup
+// opens as soon as the answer is there, never waiting for its own code / the products / their photos
+if (WHEEL_ENABLED && BACKEND_ENABLED && typeof window !== 'undefined') {
+  prefetchWheelPublic(String(import.meta.env.VITE_WORKER_URL || ''), { fetch: (url, init) => window.fetch(url, init as RequestInit) as any });
+}
 // DEV ONLY — AI Product Discovery lab. import.meta.env.DEV is the constant `false` in production builds, so Vite drops
 // this import (and the page chunk) from the published site.
 const AiDiscoveryLab = import.meta.env.DEV ? React.lazy(() => import('./pages/dev/AiDiscoveryLab')) : null;

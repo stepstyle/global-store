@@ -34,13 +34,20 @@ const ICON_RADIAL = 29;
 
 /** text width at font size 1 (canvas measure with the wheel's own font; a safe estimate without a DOM) */
 let measureCtx: CanvasRenderingContext2D | null | undefined;
+// each text is measured ONCE per font state (the layout search asks for the same strings hundreds of times: measured on a
+// slow phone it cost ~0.75 s of CPU while the popup opened); cleared when the web fonts become ready
+const widthCache = new Map<string, number>();
 function widthAt1(text: string): number {
+  const hit = widthCache.get(text);
+  if (hit !== undefined) return hit;
   if (measureCtx === undefined) {
     try { measureCtx = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null; } catch { measureCtx = null; }
   }
   if (!measureCtx) return text.length * 0.56;
   measureCtx.font = `${FONT_WEIGHT} 100px ${FONT_FAMILY}`;
-  return measureCtx.measureText(text).width / 100;
+  const w = measureCtx.measureText(text).width / 100;
+  widthCache.set(text, w);
+  return w;
 }
 
 /** usable width across the slice at radius r (side padding included) */
@@ -97,7 +104,7 @@ export default function WheelDial({ slots, rotation, durationMs, highlight }: { 
   useEffect(() => {
     let live = true;
     const f = typeof document !== 'undefined' ? (document as Document & { fonts?: FontFaceSet }).fonts : undefined;
-    f?.ready?.then(() => { if (live) setFontsTick((x) => x + 1); }).catch(() => {});
+    f?.ready?.then(() => { if (live) { widthCache.clear(); setFontsTick((x) => x + 1); } }).catch(() => {});
     return () => { live = false; };
   }, []);
   const layout = useMemo(() => {

@@ -149,6 +149,17 @@ export const fetchWheelPublic = (workerUrl: string, deps: SubmitDeps) =>
     campaign: String(b.campaign || ''), slots: slotsOf(b.slots), minOrderJod: nOrNull(b.minOrderJod), prizeHoldMinutes: nOrNull(b.prizeHoldMinutes) || DEFAULT_HOLD_MINUTES, terms: typeof b.terms === 'string' ? b.terms : '',
   }), { anonymous: true });
 
+// The campaign check of the popup, started as soon as the app's main script runs (App.tsx), not when the popup's own
+// code has loaded and rendered (on a busy phone that came seconds later): ONE request per page load, handed to the popup.
+let prefetchedPublic: Promise<WheelResult<WheelPublic>> | null = null;
+export function prefetchWheelPublic(workerUrl: string, deps: SubmitDeps): void {
+  if (!prefetchedPublic && workerUrl) prefetchedPublic = fetchWheelPublic(workerUrl, deps);
+}
+/** the early answer of this page load (the same one for a component mounted twice); null when none was started */
+export function takePrefetchedWheelPublic(): Promise<WheelResult<WheelPublic>> | null {
+  return prefetchedPublic;
+}
+
 export const fetchWheelState = (idToken: string | null, workerUrl: string, deps: SubmitDeps) =>
   call<WheelState>('/wheel/state', 'GET', idToken, workerUrl, deps, (b) => ({
     campaign: String(b.campaign || ''), minOrderJod: typeof b.minOrderJod === 'number' ? b.minOrderJod : null,
@@ -390,6 +401,11 @@ export function choosePrize(p: { spinId: string; label: string } | null): void {
     else sessionStorage.removeItem(PRIZE_KEY);
   } catch { /* private mode: the prize simply is not attached */ }
 }
+
+// where the popup never opens by itself and is closed if open: an order / payment / sign-in in progress, the admin,
+// the order confirmation and the wheel page itself
+export const QUIET_PATHS = [/^\/checkout/, /^\/admin/, /^\/login/, /^\/order-success/, /^\/wheel/];
+export const isQuietPath = (path: string) => QUIET_PATHS.some((re) => re.test(path));
 
 /** "popup already shown" — UX only (never a limit: the number of spins is decided by the Worker) */
 // ------------------------------------------------------------------ the first-visit popup, per CAMPAIGN

@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { guestPath } from '../../src/wheel-guest.js';
+import { buildPopupScenarios } from './wheel-popup-scenarios.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SET_VAL = `const setVal = (el, v) => {
@@ -536,13 +537,17 @@ export function buildWheelScenarios(ctx) {
       await shot(t, 'wu07-phone-popup', { full: false });
       await spinAndWait(t);
       assert.match(await waitResult(t), /توصيل مجاني/);
-      // nothing (cookie bar, assistant button) lies over the popup: both ends of the result card are the popup itself
-      await t.evaluate(`document.querySelector('[data-testid=wheel-won]').scrollIntoView({ block: 'center' }); true`);
+      // the result opens in its own window in the middle of the screen; nothing (cookie bar, assistant button) lies
+      // over it: its two sides and its centre are the window itself
+      await t.waitFor(`!!document.querySelector('[data-testid=wheel-result-dialog]')`, 10_000, 'result window');
       await sleep(400);
-      const cover = await t.evaluate(`(() => { const pop = document.querySelector('[data-testid=wheel-popup]'); const r = document.querySelector('[data-testid=wheel-won]').getBoundingClientRect(); const y = r.top + r.height / 2; const at = (x) => { const e = document.elementFromPoint(x, y); return !!e && pop.contains(e); }; return { left: at(r.left + 12), right: at(r.right - 12), cookie: document.documentElement.hasAttribute('data-cookie-bar') }; })()`);
-      assert.ok(cover.left && cover.right, `result card not covered on the phone ${JSON.stringify(cover)}`);
+      const cover = await t.evaluate(`(() => { const d = document.querySelector('[data-testid=wheel-result-dialog]'); const r = document.querySelector('[data-testid=wheel-result-card]').getBoundingClientRect(); const y = r.top + r.height / 2; const at = (x) => { const e = document.elementFromPoint(x, y); return !!e && d.contains(e); }; return { left: at(r.left + 12), right: at(r.right - 12), mid: at((r.left + r.right) / 2), title: d.querySelector('[data-testid=wheel-result-title]').innerText }; })()`);
+      assert.ok(cover.left && cover.right && cover.mid, `result window not covered on the phone ${JSON.stringify(cover)}`);
+      assert.equal(cover.title, 'ربحت توصيل مجاني');
       await shot(t, 'wu07-phone-won', { full: false });
-      await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
+      // "continue shopping": the window and the popup close, the prize stays (checkout below)
+      await t.evaluate(`document.querySelector('[data-testid=wheel-result-continue]').click(); true`);
+      await t.waitFor(`!document.querySelector('[data-testid=wheel-popup]')`, 5_000, 'back to shopping');
       await openCheckoutWith(t, CART_OK, email);
       await fillToPayment(t, '0795100007');
       await t.waitFor(`document.querySelector('[data-testid=checkout-wheel-gift]')?.dataset.state === 'applies'`, 20_000, 'free delivery applies');
@@ -752,47 +757,8 @@ export function buildWheelScenarios(ctx) {
       assert.equal(await t.evaluate(badge), ctx.wheelMode !== 'live', `badge shown only in a TEST build (mode ${ctx.wheelMode})`);
       await shot(t, `wu10-open-${ctx.wheelMode}`, { full: false });
     }],
-    ['WU11', 'AUTOMATIC POPUP, once per campaign, on the HOME page: a visitor landing on the shop gets the button only; reaching home -> the wheel opens by itself after a moment; moving between pages / reloading never reopens it; a NEW campaign opens it once again; the button opens the wheel AT ONCE (no second loading)', async (t) => {
-      const prizes = [{ id: 'disc-1', type: 'discount', label: 'خصم دينار', valueJod: 1, minOrderJod: 5, weight: 1, quantity: 5 }, ...NONES];
-      const fab = `!!document.querySelector('[data-testid=wheel-fab]')`;
-      const popup = `!!document.querySelector('[data-testid=wheel-popup]')`;
-      await ctx.setCampaign(prizes);
-      await viewport(t, 390, 844, true);
-      await fresh(t);
-      // lands on the shop: button only
-      await t.navigate(`${ctx.base}/?r=${Date.now()}#/shop`);
-      await t.waitFor(fab, 20_000, 'button on the shop');
-      await sleep(3_500);
-      assert.equal(await t.evaluate(popup), false, 'never by itself outside the home page');
-      // the button: the wheel at once (the campaign answer is handed over: no loading state)
-      await t.evaluate(`document.querySelector('[data-testid=wheel-fab]').click(); true`);
-      await sleep(250);
-      assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-dial]')`), true, 'the wheel is shown at once');
-      assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=wheel-loading]')`), false, 'no loading state');
-      await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
-      // to the home page (in-app navigation): opens by itself after a moment
-      const t0 = Date.now();
-      await t.evaluate(`location.hash = '#/'; true`);
-      await t.waitFor(popup, 10_000, 'opens by itself on home');
-      const ms = Date.now() - t0;
-      assert.ok(ms >= 1_000, `not instantly (${ms} ms): the page shows first`);
-      await shot(t, 'wu11-auto-open-phone', { full: false });
-      await t.evaluate(`document.querySelector('[data-testid=wheel-close]').click(); true`);
-      // moving around, reloading: never again for this campaign
-      for (const h of ['#/shop', '#/', '#/about', '#/']) {
-        await t.evaluate(`location.hash = '${h}'; true`);
-        await sleep(2_500);
-        assert.equal(await t.evaluate(popup), false, `not reopened on ${h}`);
-      }
-      await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
-      await t.waitFor(fab, 20_000, 'button after reload');
-      await sleep(3_000);
-      assert.equal(await t.evaluate(popup), false, 'not reopened after a reload');
-      // a NEW campaign (other terms): once again
-      await ctx.setCampaign(prizes, { terms: 'شروط حملة جديدة للاختبار' });
-      await t.navigate(`${ctx.base}/?r=${Date.now()}#/`);
-      await t.waitFor(popup, 20_000, 'a new campaign opens it once');
-    }],
+    // WU11-WU15: the automatic popup on any page + the result window (wheel-popup-scenarios.mjs)
+    ...buildPopupScenarios({ ctx, viewport, fresh, shot, spinAndWait, waitResult, openCheckoutWith, NONES, BIG, CART_OK, LANDING, noHScroll }),
   ];
 }
 
