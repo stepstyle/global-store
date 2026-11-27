@@ -17,6 +17,7 @@ import { ProductDetailSkeleton } from '../components/Skeleton';
 import { reviewsApi } from '../services/reviews';
 import { saleInfo, formatJod } from '../services/priceDisplay';
 import { similarProducts } from '../services/recommendations';
+import { earlyProduct, samePlainData } from '../services/productEarly';
 
 const safeStr = (v: any) => String(v ?? '').trim();
 
@@ -138,6 +139,8 @@ const StableProductImage = ({ src, alt, className = '', style }: { src: string; 
       src={src}
       alt={alt}
       loading="eager"
+      // the product's main photo is what the visitor came for: fetched before the thumbnails / similar products
+      fetchPriority="high"
       decoding="async"
       onError={() => setFailed(true)}
       className={`w-full h-full object-contain bg-white ${className}`}
@@ -251,7 +254,26 @@ const ProductDetails: React.FC = () => {
   const viewer = user as unknown as AppUser | null;
   const isAdmin = viewer?.role === 'admin';
 
-  const product = useMemo(() => products?.find((p) => p.id === id) || null, [products, id]);
+  const catalogueProduct = useMemo(() => products?.find((p) => p.id === id) || null, [products, id]);
+
+  // the product of an ad / shared link, read on its own (services/productEarly.ts): shown while the catalogue is
+  // still on its way. When the catalogue brings the SAME data, the early object is kept, so nothing the visitor chose
+  // (colour, quantity, photo) is reset; if the data changed meanwhile, the catalogue's (newer) copy is shown.
+  const catalogueEmpty = !products || products.length === 0;
+  const [early, setEarly] = useState<Product | null>(null);
+  useEffect(() => {
+    if (!catalogueEmpty || (early && early.id === id)) return;
+    const pending = earlyProduct(id);
+    if (!pending) return;
+    let alive = true;
+    void pending.then((p) => { if (alive && p && p.id === id) setEarly(p); });
+    return () => { alive = false; };
+  }, [id, catalogueEmpty, early]);
+  const product = useMemo(() => {
+    const e = early && early.id === id ? early : null;
+    if (catalogueProduct) return e && samePlainData(e, catalogueProduct) ? e : catalogueProduct;
+    return catalogueEmpty ? e : null;
+  }, [catalogueProduct, early, id, catalogueEmpty]);
 
   const [activeTab, setActiveTab] = useState<'desc' | 'reviews'>('desc');
   const [qty, setQty] = useState<number>(1);
@@ -541,7 +563,9 @@ const ProductDetails: React.FC = () => {
     setTimeout(() => scrollToTabs(), 50);
   };
 
-  if (isLoading || !products || products.length === 0) return <ProductDetailSkeleton />;
+  // the skeleton until THIS product is known (its own early read, or the catalogue); "not found" only once the
+  // catalogue has arrived
+  if (!product && (isLoading || catalogueEmpty)) return <ProductDetailSkeleton />;
 
   if (!product) {
     return (

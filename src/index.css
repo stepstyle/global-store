@@ -97,12 +97,29 @@ input:focus, select:focus, textarea:focus {
   .wr-confetti { display: none; }
 }
 
-/* Product images: a calm shimmer while a photo loads (the box keeps its size, nothing moves); still with "reduce motion" */
-@keyframes img-shimmer { from { background-position: 150% 0; } to { background-position: -50% 0; } }
-.img-shimmer {
-  background-color: #F3EDE1;
-  background-image: linear-gradient(100deg, rgba(255,255,255,0) 30%, rgba(255,255,255,.55) 50%, rgba(255,255,255,0) 70%);
-  background-size: 200% 100%;
-  animation: img-shimmer 1.4s linear infinite;
+/* Product images: a calm shimmer while a photo loads (the box keeps its size, nothing moves); still with "reduce motion".
+   The light band is a layer that MOVES (transform), drawn once: the old version re-painted every shimmering box on
+   every frame (measured on a slow phone: ~500 paints a second, the page busy ~90% for as long as a photo below the
+   fold was not loaded). Same colours, same band, same path (left to right over 1.4 s).
+   In the components layer, so a box's own `absolute` / `relative` class still decides its position. */
+@keyframes img-shimmer { from { transform: translateX(-75%); } to { transform: translateX(25%); } }
+@layer components {
+  .img-shimmer {
+    position: relative;
+    overflow: hidden;
+    background-color: #F3EDE1;
+  }
+  .img-shimmer::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 200%;
+    background-image: linear-gradient(100deg, rgba(255,255,255,0) 30%, rgba(255,255,255,.55) 50%, rgba(255,255,255,0) 70%);
+    animation: img-shimmer 1.4s linear infinite;
+    will-change: transform;
+    pointer-events: none;
+  }
 }
-@media (prefers-reduced-motion: reduce) { .img-shimmer { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .img-shimmer::after { animation: none; } }

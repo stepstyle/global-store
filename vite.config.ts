@@ -4,6 +4,8 @@ import path from 'path';
 import { resolveDeployEnv, stripTracking, SANDBOX_ENV_PREFIX } from './scripts/deploy-env.mjs';
 import { firebaseEnvGuard, STAGING_ENV_DIR } from './tools/firebase-env-guard.ts';
 import { wheelEarlyScript } from './scripts/wheel-early.mjs';
+import { productEarlyScript, publicFirebaseIds } from './scripts/product-early.mjs';
+import { readFileSync } from 'fs';
 
 export default defineConfig(({ mode }) => {
   // `vite --mode staging` (npm run dev:staging) reads env files ONLY from env/staging/ — never the repository root
@@ -31,6 +33,16 @@ export default defineConfig(({ mode }) => {
     transformIndexHtml: (html) => (wheelEarly ? html.replace('<meta charset="UTF-8" />', `<meta charset="UTF-8" />
     ${wheelEarly}`) : html),
   });
+  // an ad / shared link to a product: that product is asked for from the page's first lines too (production builds
+  // only; the public project id + web key are read from src/services/firebase.ts exactly like scripts/check-guard.mjs)
+  const productEarly = isLive
+    ? productEarlyScript({ deployEnv, ids: publicFirebaseIds(readFileSync(path.resolve(__dirname, 'src/services/firebase.ts'), 'utf8')) })
+    : '';
+  const productEarlyHtml = (): Plugin => ({
+    name: 'product-early-read',
+    transformIndexHtml: (html) => (productEarly ? html.replace('<meta charset="UTF-8" />', `<meta charset="UTF-8" />
+    ${productEarly}`) : html),
+  });
 
   return {
     base: '/', // ✅ مهم
@@ -42,6 +54,8 @@ export default defineConfig(({ mode }) => {
       firebaseEnvGuard({ root: __dirname, loadEnv }),
       react(),
       sandboxHtml(),
+      // both insert right after <meta charset>: the product one first, so the wheel's request stays the page's FIRST
+      productEarlyHtml(),
       wheelEarlyHtml(),
     ],
     define: { __DEPLOY_ENV__: JSON.stringify(deployEnv), __WHEEL_MODE__: JSON.stringify(wheelMode) },

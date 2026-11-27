@@ -446,6 +446,87 @@ export async function runStoreScenarios(ctx) {
       await t.close();
     }
   }
+  // ---------------------------------------------------------------- an ad link straight to a product page
+  // The product is read on its own (services/productEarly.ts) and shown BEFORE the catalogue: here the catalogue read
+  // (:runQuery) is HELD in the page on purpose. The product must be complete and buyable meanwhile; what the visitor
+  // chose (colour, quantity) must survive the catalogue's arrival; an unknown id must not say "not found" too early.
+  {
+    const t = await ctx.openTab();
+    const HOLD = `(() => { const of = window.fetch; window.__held = []; window.__heldCount = 0;
+      window.fetch = function (u, o) { const url = String((u && u.url) || u);
+        if (url.includes(':runQuery') && !window.__released) { window.__heldCount++; return new Promise((res, rej) => window.__held.push(() => of.call(window, u, o).then((r) => { r.clone().text().then(() => { window.__catalogueDone = (window.__catalogueDone || 0) + 1; }, () => {}); res(r); }, rej))); }
+        return of.apply(window, arguments); };
+      window.__releaseCatalogue = () => { window.__released = true; window.__held.splice(0).forEach((f) => f()); return true; }; })();`;
+    let hookId = null;
+    try {
+      await t.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+      hookId = (await t.send('Page.addScriptToEvaluateOnNewDocument', { source: HOLD + ` window.__stErrs = []; addEventListener('error', (e) => window.__stErrs.push(String(e.message).slice(0, 160))); localStorage.setItem('language', 'ar');` })).identifier;
+      const open = async (hash) => {
+        await t.send('Storage.clearDataForOrigin', { origin: ctx.base, storageTypes: 'local_storage' });
+        await t.evaluate(`(() => { try { sessionStorage.clear(); } catch {} return true; })()`).catch(() => {});
+        await t.navigate(`${ctx.base}/?keepdraft=1&r=${Date.now()}#${hash}`);
+      };
+      const AREA = `document.querySelector('[data-testid=product-price-block]')?.parentElement`;
+      const BUY = `[...(${AREA}?.querySelectorAll('button') || [])].find((b) => b.querySelector('svg.lucide-shopping-cart, svg.lucide-bell'))`;
+      const QTY = `(${AREA}?.querySelector('input')?.value || '')`;
+
+      await check('ST-early-product', 'ad link straight to a product (catalogue read HELD): name, price, colours and "add to cart" shown without the catalogue; the chosen colour + quantity survive its arrival; added to the cart correctly', async () => {
+        await open('/product/p-variants');
+        await t.waitFor(`!!document.querySelector('[data-testid=product-price]') && window.__heldCount > 0 && !window.__released`, 30_000, 'product shown while the catalogue is held');
+        const v = await t.evaluate(`({ name: document.querySelector('main h1')?.textContent?.trim(), price: document.querySelector('[data-testid=product-price]')?.textContent || '', buy: (() => { const b = ${BUY}; return b ? (b.disabled ? 'disabled' : b.querySelector('svg.lucide-bell') ? 'notify' : 'add') : 'none'; })(), similar: document.querySelectorAll('[data-testid=similar-products] [data-product-id]').length, held: window.__heldCount })`);
+        must(v.name === 'قلم', `name ${v.name}`);
+        must(/[3٣]/.test(v.price), `price ${v.price}`);
+        must(v.buy === 'add', `buy button: ${v.buy} (the first colour has stock 5)`);
+        must(v.similar === 0, 'similar products need the catalogue (still held)');
+        // the visitor chooses: quantity 3 (the first colour, red, has 5)
+        for (let i = 0; i < 2; i++) await t.evaluate(`[...(${AREA}.querySelectorAll('button'))].find((b) => b.querySelector('svg.lucide-plus')).click(); true`);
+        await t.waitFor(`${QTY} === '3'`, 5_000, 'quantity 3');
+        await shot(t, 'early-product-before-catalogue');
+        // the catalogue arrives: nothing the visitor chose is reset
+        await t.evaluate(`window.__releaseCatalogue()`);
+        await t.waitFor(`window.__catalogueDone > 0`, 30_000, 'catalogue answer arrived');
+        await sleep(1500); // the app renders with the catalogue
+        must((await t.evaluate(QTY)) === '3', `quantity reset to ${await t.evaluate(QTY)} when the catalogue arrived`);
+        await t.evaluate(`${BUY}.click(); true`);
+        await t.waitFor(`(JSON.parse(localStorage.getItem('anta_cart') || '[]')).length > 0`, 10_000, 'added to the cart');
+        const cart = await t.evaluate(`JSON.parse(localStorage.getItem('anta_cart') || '[]').map((i) => ({ id: i.id, q: i.quantity, v: i.selectedVariant && i.selectedVariant.id, price: i.selectedVariant ? i.selectedVariant.price : i.price }))`);
+        must(cart.length === 1 && cart[0].id === 'p-variants' && cart[0].q === 3 && cart[0].v === 'var_red' && Number(cart[0].price) === 3, `cart ${JSON.stringify(cart)}`);
+        const e = await t.evaluate(errs);
+        must(!e.length, `errors: ${e.join(' | ')}`);
+        return '';
+      });
+
+      await check('ST-early-unknown', 'ad link to a product that does not exist (catalogue HELD): a loading view, never "not found" too early; "not found" once the catalogue arrived', async () => {
+        await open('/product/p-does-not-exist-123');
+        await t.waitFor(`window.__heldCount > 0`, 30_000, 'catalogue requested');
+        await sleep(2500);
+        must(!(await t.evaluate(`document.body.innerText.includes('المنتج غير موجود')`)), '"not found" shown before the catalogue arrived');
+        must(!(await t.evaluate(`!!document.querySelector('[data-testid=product-price]')`)), 'a product shown for an unknown id');
+        await t.evaluate(`window.__releaseCatalogue()`);
+        await t.waitFor(`document.body.innerText.includes('المنتج غير موجود')`, 30_000, '"not found" after the catalogue');
+        return '';
+      });
+
+      await check('ST-early-other-product', 'after the ad product, the visitor opens ANOTHER product while the catalogue is still held: a loading view (no wrong product); both right once it arrives', async () => {
+        await open('/product/p-simple');
+        await t.waitFor(`document.querySelector('main h1')?.textContent?.trim() === 'دفتر' && !window.__released`, 30_000, 'ad product shown early');
+        await t.evaluate(`location.hash = '#/product/p-empty-variants'; true`);
+        await sleep(1500);
+        const h = await t.evaluate(`document.querySelector('main h1')?.textContent?.trim() || ''`);
+        must(h !== 'دفتر', 'the previous product is still shown for another link');
+        must(!(await t.evaluate(`document.body.innerText.includes('المنتج غير موجود')`)), '"not found" before the catalogue');
+        await t.evaluate(`window.__releaseCatalogue()`);
+        await t.waitFor(`document.querySelector('main h1')?.textContent?.trim() === 'مسطرة'`, 30_000, 'the second product after the catalogue');
+        await t.evaluate(`history.back(); true`);
+        await t.waitFor(`document.querySelector('main h1')?.textContent?.trim() === 'دفتر'`, 15_000, 'back to the first one');
+        return '';
+      });
+    } finally {
+      if (hookId) await t.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: hookId }).catch(() => {});
+      await t.close();
+    }
+  }
+
   console.log(`[inner] store: ${results.filter((r) => r.ok).length}/${results.length} checks passed; screenshots in ${shots}`);
   return results;
 }

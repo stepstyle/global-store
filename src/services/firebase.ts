@@ -4,6 +4,7 @@ import { initializeFirestore, connectFirestoreEmulator, type Firestore } from 'f
 import { getAuth, connectAuthEmulator, type Auth } from 'firebase/auth';
 import { resolveFirebaseTarget, FirebaseTargetError, type FirebaseWebConfig, type FirebaseTarget } from './firebaseTarget';
 import { requireLive } from '../config/deployEnv';
+import { startEarlyProduct } from './productEarly';
 
 declare const __DEPLOY_ENV__: 'production' | 'sandbox' | 'local-test';
 
@@ -248,6 +249,18 @@ export const firestoreLite = (): Promise<{ m: LiteMod; db: import('firebase/fire
   return litePromise;
 };
 if (isBrowser()) void firestoreLite()?.catch(() => {});
+
+// An ad / shared link straight to a product: that ONE product is read now, on its own (services/productEarly.ts), so
+// its page can show before the whole catalogue arrives. Same project and target as the catalogue read above.
+if (isBrowser() && isFirebaseInitialized && activeTarget) {
+  const t = activeTarget;
+  startEarlyProduct(
+    t.kind === 'emulator'
+      ? { kind: 'emulator', projectId: t.config.projectId, host: t.firestore.host, port: t.firestore.port }
+      : { kind: 'cloud', projectId: t.config.projectId, apiKey: t.config.apiKey },
+    window.location.hash,
+  );
+}
 
 /** ✅ Safe getters */
 export const getFirestoreDb = (): Firestore | null => db;
