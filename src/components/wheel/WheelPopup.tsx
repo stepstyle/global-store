@@ -1,9 +1,10 @@
 // The wheel popup (wheel builds: VITE_WHEEL_MODE=test, or =live for the approved campaign).
 //  - ONE campaign check, started as soon as the app starts (it never waits for the products or their photos); nothing
 //    of the wheel is shown unless the Worker says the campaign is open (stopped / ended / unreachable = nothing)
-//  - opens BY ITSELF for a new visitor on ANY page (home, shop, a product, …), right after the answer, ONCE PER
-//    CAMPAIGN (a browser flag holding the campaign's fingerprint — comfort only: the number of spins is decided by the
-//    Worker). Moving between pages or reloading never reopens it; a new / changed campaign opens it once again
+//  - opens BY ITSELF for a new visitor on ANY page (home, shop, a product opened straight from an ad, …), as soon as
+//    the answer is there (no added wait), ready to spin, ONCE PER CAMPAIGN (a browser flag holding the campaign's
+//    fingerprint, written only once the popup is ON SCREEN — comfort only: the number of spins is decided by the
+//    Worker). Moving between pages or reloading never reopens it; a new campaign opens it once again (wheel.ts)
 //  - never over checkout / login / admin / order confirmation / the wheel page, and never on top of another open window
 //    (cart drawer, quick view…): it waits until the visitor is somewhere quiet, then opens (still once). Entering checkout
 //    while it is open closes it (the order flow is never covered)
@@ -17,7 +18,7 @@ import * as ReactRouterDOM from 'react-router-dom';
 import { useCart } from '../../App';
 import type { SubmitDeps } from '../../services/orderSubmit';
 import { BACKEND_ENABLED } from '../../config/deployEnv';
-import { fetchWheelPublic, takePrefetchedWheelPublic, campaignFingerprint, markPopupSeenFor, popupSeenFor, isQuietPath, type WheelPublic } from '../../services/wheel';
+import { fetchWheelPublic, takePrefetchedWheelPublic, campaignFingerprint, markPopupSeenFor, popupSeenFor, forgetPopupSeen, isQuietPath, type WheelPublic } from '../../services/wheel';
 import WheelExperience from './WheelExperience';
 
 const { useLocation } = ReactRouterDOM as any;
@@ -25,8 +26,8 @@ const { useLocation } = ReactRouterDOM as any;
 const FAB_HIDDEN_PATHS = [/^\/product\//, /^\/cart/];
 // the campaign check: at once (one tiny GET), then again after a failure (cold Worker / weak network)
 const RETRY_DELAYS_MS = [3000, 8000, 20000];
-// a short breath after the answer so the page under it has painted once (not a wait for images)
-export const AUTO_OPEN_MS = 250;
+// no added wait: the popup opens in the task right after the answer (0 = only lets the page commit what it rendered)
+export const AUTO_OPEN_MS = 0;
 // another window is open (cart drawer, quick view, a confirmation…): look again this often
 const BLOCKED_RECHECK_MS = 800;
 
@@ -49,6 +50,8 @@ export default function WheelPopup() {
   const [blockedTick, setBlockedTick] = useState(0);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const lastFocus = useRef<Element | null>(null);
+  // the fingerprint of a popup opened BY ITSELF, written as "seen" once it is actually on screen
+  const autoFp = useRef<string | null>(null);
   const workerUrl = BACKEND_ENABLED ? String(import.meta.env.VITE_WORKER_URL || '') : '';
   const deps = useMemo<SubmitDeps>(() => ({ fetch: (url, init) => window.fetch(url, init as RequestInit) as any }), []);
 
@@ -63,6 +66,9 @@ export default function WheelPopup() {
       if (stop) return;
       if (p.kind === 'ok') {
         const ok = p.value.campaign === 'open' && p.value.slots.length >= 2;
+        // the campaign is closed (ended / stopped / not started): the NEXT campaign may open by itself again, even with
+        // the same prizes (an older Worker sends no campaign id to tell them apart)
+        if (p.value.campaign !== 'open' && !p.value.campaignId) forgetPopupSeen();
         setPub(ok ? p.value : null);
         setAvailable(ok);
         return;
@@ -84,7 +90,7 @@ export default function WheelPopup() {
     if (popupSeenFor(fp)) return undefined;
     const t = window.setTimeout(() => {
       if (otherModalOpen()) { setBlockedTick((n) => n + 1); return; }
-      markPopupSeenFor(fp);
+      autoFp.current = fp;
       setOpen(true);
     }, blockedTick ? BLOCKED_RECHECK_MS : AUTO_OPEN_MS);
     return () => window.clearTimeout(t);
@@ -92,6 +98,14 @@ export default function WheelPopup() {
 
   // the order flow is never covered: going to checkout (or sign-in / admin) closes the popup
   useEffect(() => { if (quiet && open) setOpen(false); }, [quiet, open]);
+
+  // "seen" = the popup was really on screen (rendered and painted), never only decided: a popup that could not show
+  // (page left at once, an error) does not count, the visitor gets it on the next page
+  useEffect(() => {
+    if (!open || !autoFp.current) return;
+    markPopupSeenFor(autoFp.current);
+    autoFp.current = null;
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

@@ -92,9 +92,11 @@ export function buildWheelScenarios(ctx) {
     await p.evaluate(`document.querySelector('#sign-in').click(); true`);
     await until(async () => !(await ctx.popupOpen()), 20_000, 'Google window closed after sign-in');
   };
+  // the wheel, opened by the visitor from the small button — or already open BY ITSELF (a campaign this browser has not
+  // seen yet opens at once, with no delay: the button is then never shown under it)
   const openPopupFromFab = async (t) => {
-    await t.waitFor(`!!document.querySelector('[data-testid=wheel-fab]')`, 15_000, 'wheel button');
-    await t.evaluate(`document.querySelector('[data-testid=wheel-fab]').click(); true`);
+    await t.waitFor(`!!document.querySelector('[data-testid=wheel-fab]') || !!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-spin]')`, 15_000, 'wheel button (or the popup already open by itself)');
+    await t.evaluate(`(() => { if (!document.querySelector('[data-testid=wheel-popup]')) document.querySelector('[data-testid=wheel-fab]').click(); return true; })()`);
     await t.waitFor(`!!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-spin]')`, 20_000, 'popup with the wheel');
   };
   const spinAndWait = async (t) => {

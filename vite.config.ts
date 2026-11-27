@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { resolveDeployEnv, stripTracking, SANDBOX_ENV_PREFIX } from './scripts/deploy-env.mjs';
 import { firebaseEnvGuard, STAGING_ENV_DIR } from './tools/firebase-env-guard.ts';
+import { wheelEarlyScript } from './scripts/wheel-early.mjs';
 
 export default defineConfig(({ mode }) => {
   // `vite --mode staging` (npm run dev:staging) reads env files ONLY from env/staging/ — never the repository root
@@ -22,6 +23,14 @@ export default defineConfig(({ mode }) => {
     name: 'deploy-guard-sandbox-html',
     transformIndexHtml: (html) => (isLive ? html : stripTracking(html)),
   });
+  // prize wheel: the campaign check starts from the page's first lines, while the app's code still downloads (only a
+  // production build — or a local-test build against a LOCAL Worker — with the wheel on; never a sandbox build)
+  const wheelEarly = wheelEarlyScript({ wheelMode, deployEnv, workerUrl: viteEnv.VITE_WORKER_URL });
+  const wheelEarlyHtml = (): Plugin => ({
+    name: 'wheel-early-campaign-check',
+    transformIndexHtml: (html) => (wheelEarly ? html.replace('<meta charset="UTF-8" />', `<meta charset="UTF-8" />
+    ${wheelEarly}`) : html),
+  });
 
   return {
     base: '/', // ✅ مهم
@@ -33,6 +42,7 @@ export default defineConfig(({ mode }) => {
       firebaseEnvGuard({ root: __dirname, loadEnv }),
       react(),
       sandboxHtml(),
+      wheelEarlyHtml(),
     ],
     define: { __DEPLOY_ENV__: JSON.stringify(deployEnv), __WHEEL_MODE__: JSON.stringify(wheelMode) },
     // sandbox: no VITE_* value is exposed to the client bundle (local-test values are validated by firebaseEnvGuard)

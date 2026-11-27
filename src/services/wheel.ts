@@ -34,7 +34,9 @@ export type WheelSpin = {
   // ...the first order must be DELIVERED before this (its creation + 7 days); why an ended prize ended
   deliveryBy?: string | null; expiredReason?: string | null;
 };
-export type WheelPublic = { campaign: string; slots: WheelSlot[]; minOrderJod: number | null; prizeHoldMinutes: number; terms: string };
+/** campaignId / startsAt: sent by a Worker that knows them (newer Worker) — they tell a NEW campaign from the old one
+ *  even when its prizes are the same; absent = older Worker (the popup then uses the prizes' fingerprint) */
+export type WheelPublic = { campaign: string; slots: WheelSlot[]; minOrderJod: number | null; prizeHoldMinutes: number; terms: string; campaignId?: string | null; startsAt?: string | null };
 export type WheelState = { campaign: string; minOrderJod: number | null; terms: string; prizeHoldMinutes: number; chancesLeft: number; spins: WheelSpin[]; slots: WheelSlot[]; previousDelivered: boolean | null;
   // where the account stands for a second-order prize (Worker's reading): none | pending | one_delivered | past
   secondOrder: string | null; secondOrderHours: number };
@@ -147,13 +149,23 @@ const slotsOf = (v: unknown) => (Array.isArray(v) ? v.map(slotOf).filter(Boolean
 export const fetchWheelPublic = (workerUrl: string, deps: SubmitDeps) =>
   call<WheelPublic>('/wheel/public', 'GET', null, workerUrl, deps, (b) => ({
     campaign: String(b.campaign || ''), slots: slotsOf(b.slots), minOrderJod: nOrNull(b.minOrderJod), prizeHoldMinutes: nOrNull(b.prizeHoldMinutes) || DEFAULT_HOLD_MINUTES, terms: typeof b.terms === 'string' ? b.terms : '',
+    campaignId: typeof b.campaignId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(b.campaignId) ? b.campaignId : null,
+    startsAt: typeof b.startsAt === 'string' && b.startsAt.length <= 40 ? b.startsAt : null,
   }), { anonymous: true });
 
-// The campaign check of the popup, started as soon as the app's main script runs (App.tsx), not when the popup's own
-// code has loaded and rendered (on a busy phone that came seconds later): ONE request per page load, handed to the popup.
+// The campaign check of the popup, started as early as possible: a production page asks from a tiny script in
+// index.html, WHILE the app's code still downloads (window.__wheelPublicEarly, see vite.config.ts — on a phone the code
+// alone takes ~0.3 s on Wi-Fi and seconds on a slow network); otherwise as soon as the app's main script runs
+// (App.tsx). ONE request per page load, handed to the popup. A failed early request is simply asked again here.
 let prefetchedPublic: Promise<WheelResult<WheelPublic>> | null = null;
+type EarlyWindow = { __wheelPublicEarly?: Promise<Response | null> };
 export function prefetchWheelPublic(workerUrl: string, deps: SubmitDeps): void {
-  if (!prefetchedPublic && workerUrl) prefetchedPublic = fetchWheelPublic(workerUrl, deps);
+  if (prefetchedPublic || !workerUrl) return;
+  const early = typeof window !== 'undefined' ? (window as unknown as EarlyWindow).__wheelPublicEarly : undefined;
+  const viaEarly: SubmitDeps = early && typeof early.then === 'function'
+    ? { ...deps, fetch: (url, init) => early.then((r) => r || deps.fetch(url, init), () => deps.fetch(url, init)) as any }
+    : deps;
+  prefetchedPublic = fetchWheelPublic(workerUrl, viaEarly);
 }
 /** the early answer of this page load (the same one for a component mounted twice); null when none was started */
 export function takePrefetchedWheelPublic(): Promise<WheelResult<WheelPublic>> | null {
@@ -410,20 +422,36 @@ export const isQuietPath = (path: string) => QUIET_PATHS.some((re) => re.test(pa
 /** "popup already shown" — UX only (never a limit: the number of spins is decided by the Worker) */
 // ------------------------------------------------------------------ the first-visit popup, per CAMPAIGN
 // The popup opens by itself once per campaign (not once per browser for ever): the browser keeps the fingerprint of the
-// campaign it was shown for. A new / changed campaign (other segments, terms or minimum) opens it again, once.
+// campaign it was SHOWN for (written when the popup is on screen, never before). A new campaign opens it again, once:
+//   - other segments / terms / minimum = new (as before); and with a Worker that sends campaignId + startsAt, another
+//     campaign id or a new start date = new too, even with the very same prizes
+//   - an older Worker (no id): a campaign seen ENDED / STOPPED /
+//     NOT STARTED by this browser clears the flag (forgetPopupSeen), so the next campaign — even with the very same
+//     prizes — opens once again
+// Storage refused: the flag lives in memory for the page (opens once per page load, never on every route change).
 const POPUP_CAMPAIGN_KEY = 'anta_wheel_popup_campaign_v2';
-export function campaignFingerprint(p: Pick<WheelPublic, 'slots' | 'terms' | 'minOrderJod'>): string {
-  const src = JSON.stringify([p.slots.map((s) => [s.id, s.label, s.type]), p.terms || '', p.minOrderJod ?? null]);
+let popupSeenMemory: string | null = null;
+export function campaignFingerprint(p: Pick<WheelPublic, 'slots' | 'terms' | 'minOrderJod'> & Partial<Pick<WheelPublic, 'campaignId' | 'startsAt'>>): string {
+  const src = JSON.stringify([p.slots.map((s) => [s.id, s.label, s.type]), p.terms || '', p.minOrderJod ?? null, ...(p.campaignId ? [p.campaignId, p.startsAt || ''] : [])]);
   let h = 5381;
   for (let i = 0; i < src.length; i++) h = ((h * 33) ^ src.charCodeAt(i)) >>> 0;
   return `c${h.toString(36)}${src.length.toString(36)}`;
 }
 export function popupSeenFor(fp: string): boolean {
-  try { return localStorage.getItem(POPUP_CAMPAIGN_KEY) === fp; } catch { return true; }
+  if (popupSeenMemory === fp) return true;
+  try { return localStorage.getItem(POPUP_CAMPAIGN_KEY) === fp; } catch { return false; }
 }
 export function markPopupSeenFor(fp: string): void {
-  try { localStorage.setItem(POPUP_CAMPAIGN_KEY, fp); } catch { /* ignore */ }
+  popupSeenMemory = fp;
+  try { localStorage.setItem(POPUP_CAMPAIGN_KEY, fp); } catch { /* ignore: the memory copy is kept */ }
 }
+/** this browser saw the campaign closed (ended / stopped / not started): the next campaign may open by itself again */
+export function forgetPopupSeen(): void {
+  popupSeenMemory = null;
+  try { localStorage.removeItem(POPUP_CAMPAIGN_KEY); } catch { /* ignore */ }
+}
+/** for tests only */
+export function __resetPopupSeenMemory() { popupSeenMemory = null; }
 export function popupSeen(): boolean {
   try { return !!localStorage.getItem(POPUP_KEY); } catch { return true; }
 }

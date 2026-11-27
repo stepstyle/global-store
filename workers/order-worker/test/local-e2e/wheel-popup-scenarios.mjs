@@ -10,6 +10,10 @@
 //         segment the wheel stopped on, no scroll, not covered, 48 px X, confetti only when motion is allowed; shown ONCE
 //         (reopened popup: the result box only), the prize kept (checkout); animation frames measured
 //   WU15  "حظ أوفر" -> a kind window, no word of a prize, "متابعة التسوق" (phone + desktop)
+//   WU16  the visitor of an AD: straight onto a product (utm / fbclid, Facebook / Instagram in-app browser), empty
+//         storage -> the popup by itself, READY to spin, from the early check of the page (ONE request); a visitor who
+//         saw the previous campaign gets the NEW one (same prizes, new start) once; the same campaign paused and
+//         resumed does not reopen it; web storage REFUSED -> the page works and the popup opens once, not on every page
 import assert from 'node:assert/strict';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -303,6 +307,70 @@ export function buildPopupScenarios(h) {
         assert.equal(await t.evaluate(`!!document.querySelector('[data-testid=wheel-result-dialog]')`), false, 'no second window');
         await closePopup(t);
       }
+    }],
+
+    ['WU16', 'AD VISITOR: a product link with utm/fbclid opened in a Facebook / Instagram in-app browser (iPhone SE), empty storage -> the popup by itself, READY to spin (button enabled, no loading), ONE request; a visitor who saw the PREVIOUS campaign gets a NEW one with the same prizes (new start) once; the same campaign paused then resumed: not again; web storage REFUSED -> the page works, the popup opens once, not on the next pages', async (t) => {
+      await hook(t);
+      await ctx.setCampaign(PRIZES);
+      const ready = `(() => { const b = document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-spin]'); return !!b && !b.disabled && !!document.querySelector('[data-testid=wheel-popup] [data-testid=wheel-dial]'); })()`;
+      const AD = '&utm_source=facebook&utm_medium=paid&fbclid=IwAR0e2e';
+      const UAS = [
+        ['fb-ios', 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/22F76 [FBAN/FBIOS;FBAV/512.0.0.41.106;FBDV/iPhone15,2;FBMD/iPhone;FBSN/iOS;FBSV/18.5;FBLC/ar_AR]'],
+        ['ig-android', 'Mozilla/5.0 (Linux; Android 14; SM-A546E; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/155.0.0.0 Mobile Safari/537.36 Instagram 400.0.0.27.80 Android'],
+      ];
+      await viewport(t, 375, 667, true);
+      const times = [];
+      for (const [tag, ua] of UAS) {
+        await t.send('Emulation.setUserAgentOverride', { userAgent: ua });
+        await fresh(t);
+        await go(t, '#/product/p-simple', AD);
+        await t.waitFor(ready, 15_000, `ready to spin on the ad's product page (${tag})`);
+        const s = await t.evaluate(`({ seen: window.__wheelSeen, calls: window.__wheelPublicCalls, early: typeof window.__wheelPublicEarly !== 'undefined', hash: location.hash, product: !!document.querySelector('[data-testid=product-price-block]') || document.body.innerText.length > 100 })`);
+        assert.equal(s.calls, 1, `ONE campaign request (${tag}): ${s.calls}`);
+        assert.equal(s.early, true, 'the check started from the page itself (index.html), not after the app code');
+        assert.equal(s.seen.loading ?? null, null, 'no "loading" state');
+        assert.ok(s.hash.startsWith('#/product/p-simple'), `still on the product (${s.hash})`);
+        assert.ok(s.product, 'the product page is there under the popup');
+        times.push(`${tag}: ready at ${s.seen.popup} ms`);
+        await shot(t, `wu16-${tag}-ad-product`, { full: false });
+        await closePopup(t);
+      }
+      await t.send('Emulation.setUserAgentOverride', { userAgent: '' }).catch(() => {});
+      // a visitor of the previous campaign (flag kept): the same campaign paused then resumed -> NOT again
+      await ctx.setCampaign(PRIZES, { active: false });
+      await go(t, '#/shop');
+      await sleep(2_500);
+      assert.equal(await t.evaluate(popup), false, 'paused: nothing');
+      await ctx.setCampaign(PRIZES);
+      await go(t, '#/product/p-simple');
+      await sleep(3_000);
+      assert.equal(await t.evaluate(popup), false, 'the same campaign resumed: not again');
+      // …and a NEW campaign with the SAME prizes (a new start date) -> once
+      await ctx.setCampaign(PRIZES, { startsAt: '2026-02-01T00:00:00Z' });
+      await go(t, '#/product/p-simple', AD);
+      await t.waitFor(ready, 15_000, 'a new campaign with the same prizes opens it once');
+      await closePopup(t);
+      await go(t, '#/');
+      await sleep(2_500);
+      assert.equal(await t.evaluate(popup), false, 'and only once');
+      // web storage refused (cookies / site data blocked): the page works, the popup opens ONCE in this visit
+      const t2 = await ctx.openTab();
+      try {
+        await hook(t2);
+        await t2.send('Page.addScriptToEvaluateOnNewDocument', { source: "(() => { const boom = () => { throw new DOMException('The operation is insecure.', 'SecurityError'); }; for (const k of ['getItem', 'setItem', 'removeItem', 'clear', 'key']) Storage.prototype[k] = boom; })();" });
+        await viewport(t2, 375, 667, true);
+        await go(t2, '#/product/p-simple', AD);
+        await t2.waitFor(ready, 20_000, 'storage refused: the popup still opens');
+        assert.ok(await t2.evaluate(`document.body.innerText.length > 200`), 'the page is not blank');
+        await shot(t2, 'wu16-storage-refused', { full: false });
+        await closePopup(t2);
+        for (const hh of ['#/', '#/shop', '#/product/p-simple']) {
+          await t2.evaluate(`location.hash = '${hh}'; true`);
+          await sleep(1_200);
+          assert.equal(await t2.evaluate(popup), false, `storage refused: not reopened on ${hh}`);
+        }
+      } finally { await t2.close(); }
+      console.log(`    [WU16 times] ${times.join(' | ')}`);
     }],
   ];
 }
