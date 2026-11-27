@@ -308,6 +308,11 @@ export function loadConfig(env = {}) {
     wheelGuestPerIpDay: Math.max(0, Math.min(1000, num(env.WHEEL_GUEST_PER_IP_DAY, 10))),
     // a won, unused prize is valid this long from the spin (owner's rule: 60 minutes); see src/wheel.js prizeHoldMs
     wheelPrizeHoldMinutes: Math.max(5, Math.min(1440, num(env.WHEEL_PRIZE_HOLD_MINUTES, 60))),
+    // GET /wheel/public (what every new visitor asks first): the answer is kept this long in the Worker's memory
+    // (0..60 s, default 15) instead of 3 Firestore reads per visitor (1-3 s measured live). Display only: a spin always
+    // re-reads the campaign, pool and budget. An admin save clears it at once (in that isolate); 0 = off (local tests
+    // that rewrite the campaign straight in the emulator).
+    wheelPublicCacheMs: Math.max(0, Math.min(60, num(env.WHEEL_PUBLIC_CACHE_SECONDS, 15))) * 1000,
     // owner's exception: a 'second order' discount is usable this long after the account's FIRST delivery (5 days)
     wheelSecondOrderHours: Math.max(1, Math.min(2160, num(env.WHEEL_SECOND_ORDER_HOURS, 120))),
     // ...and its FIRST order (created in time) must be delivered within this many hours of its creation (7 days)
