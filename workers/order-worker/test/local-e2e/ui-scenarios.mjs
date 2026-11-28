@@ -604,8 +604,17 @@ export function buildUiScenarios(ctx) {
         await openReviews(tab, ctx.base, 'p-simple');
         await sleep(2_500); // the purchase check is async: give it time to (wrongly) open the form
         assert.equal(await tab.evaluate(REVIEW_FORM), false, 'no review before delivery');
-        // ... allowed after delivery
+        // ... nor when "delivered" is only TYPED into Firestore (owner's decision 2026-11-28: the Worker must have
+        // recorded the delivery itself — orderLedger.deliveredAt — status alone proves nothing) ...
         await ctx.setOrderStatus(orderId, 'delivered');
+        await openReviews(tab, ctx.base, 'p-simple');
+        await sleep(2_500);
+        assert.equal(await tab.evaluate(REVIEW_FORM), false, 'no review for a status typed in without the Worker\'s delivery record');
+        // ... allowed once the order Worker has recorded the delivery. This suite's Worker deducts stock at creation
+        // (on_creation, for the stock checks above), a policy whose orders the Worker's delivery path does not handle;
+        // so the record the Worker writes on delivery (src/fulfilment.js: deliveredAt / deliveredBy) is written here.
+        // The real delivery path is exercised by the reviews suite (RE01, RE10) and the emulator tests (RV24).
+        await ctx.recordWorkerDelivery(orderId);
         await openReviews(tab, ctx.base, 'p-simple');
         await tab.waitFor(REVIEW_FORM, 20_000, 'review form after delivery');
         // submit it: written by the Worker, ONE review per product per order (private key reviewKeys/{order}__{product})

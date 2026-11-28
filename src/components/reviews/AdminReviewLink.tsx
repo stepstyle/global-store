@@ -5,16 +5,21 @@
 import React, { useState } from 'react';
 import { Star, Copy, MessageCircle, Loader2, RefreshCw } from 'lucide-react';
 import { verifiedReviewDeps } from '../../services/reviews';
-import { createReviewLink, reviewInviteMessage, waPhone } from '../../services/verifiedReviews';
+import { createReviewLink, reviewInviteMessage, waPhone, LEGACY_ORDER_NO_LINK_AR } from '../../services/verifiedReviews';
 
 const CODES_AR: Record<string, string> = {
   NOT_DELIVERED: 'الرابط متاح بعد تعليم الطلب «تم التسليم» فقط.',
+  // the Worker's answer is final (its ledger), whatever the screen guessed from the order document
+  UNVERIFIED_ORDER: `${LEGACY_ORDER_NO_LINK_AR}.`,
+  DELIVERY_NOT_RECORDED: 'تسليم هذا الطلب غير مسجّل عبر نظام الطلبات، لا يمكن إنشاء رابط تقييم له.',
   NOTHING_TO_REVIEW: 'لا يوجد في هذا الطلب منتجات يمكن تقييمها (الهدايا لا تُقيَّم).',
   NOT_ADMIN: 'هذه الخاصية للأدمن فقط.',
   NOT_CONFIGURED: 'خادم الطلبات غير مضبوط في هذه النسخة.',
 };
 
-const AdminReviewLink: React.FC<{ orderId: string; phone?: string; fullName?: string }> = ({ orderId, phone, fullName }) => {
+// eligible: the screen's hint (looksVerifiedOrder). false -> the owner's message instead of the button. The Worker
+// still checks every request: a link for an old order is refused there even if this hint were wrong.
+const AdminReviewLink: React.FC<{ orderId: string; phone?: string; fullName?: string; eligible?: boolean }> = ({ orderId, phone, fullName, eligible = true }) => {
   const [busy, setBusy] = useState(false);
   const [link, setLink] = useState<{ url: string; expiresAt: string; reviewed: number; items: number } | null>(null);
   const [exists, setExists] = useState(false);
@@ -42,6 +47,16 @@ const AdminReviewLink: React.FC<{ orderId: string; phone?: string; fullName?: st
   const copy = async () => {
     try { await navigator.clipboard.writeText(message); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { setError('تعذّر النسخ، انسخ الرابط يدويًا.'); }
   };
+
+  if (!eligible) {
+    return (
+      <section className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4" data-testid="admin-review-link-ineligible" dir="rtl">
+        <h4 className="font-bold text-ink-900 flex items-center gap-2"><Star size={16} className="text-amber-600" aria-hidden="true" /> تقييم الزبون لمشترياته</h4>
+        <p className="mt-1 text-[13.5px] font-semibold text-amber-900">{LEGACY_ORDER_NO_LINK_AR}.</p>
+        <p className="mt-1 text-[12.5px] text-ink-600">علامة «شراء موثّق» للطلبات التي أنشأها نظام الطلبات وسجّل تسليمها فقط.</p>
+      </section>
+    );
+  }
 
   return (
     <section className="rounded-2xl border border-gold-200 bg-gold-50/50 p-4" data-testid="admin-review-link" dir="rtl">

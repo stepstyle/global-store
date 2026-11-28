@@ -51,6 +51,7 @@ import { WHEEL_ENABLED } from '../services/wheel';
 const WheelAdmin = WHEEL_ENABLED ? React.lazy(() => import('../components/wheel/WheelAdmin')) : null;
 const AdminReviewsPanel = React.lazy(() => import('../components/reviews/AdminReviewsPanel'));
 import AdminReviewLink from '../components/reviews/AdminReviewLink';
+import { looksVerifiedOrder } from '../services/verifiedReviews';
 
 const PAGE_SIZE = 100;
 
@@ -1659,7 +1660,7 @@ const AdminDashboard: React.FC = () => {
 
             {selectedOrderStatus === 'delivered' && (
               <div className="px-5 pb-4">
-                <AdminReviewLink key={safeText(selectedOrder?.id)} orderId={safeText(selectedOrder?.id)} phone={safeText(selectedOrder?.address?.phone)} fullName={safeText(selectedOrder?.address?.fullName)} />
+                <AdminReviewLink key={safeText(selectedOrder?.id)} orderId={safeText(selectedOrder?.id)} phone={safeText(selectedOrder?.address?.phone)} fullName={safeText(selectedOrder?.address?.fullName)} eligible={looksVerifiedOrder(selectedOrder)} />
               </div>
             )}
             <div className="p-5 border-t border-slate-100 bg-white rounded-b-3xl">

@@ -332,6 +332,51 @@ export async function runReviewScenarios(ctx) {
     must(!(await sinkHas('/review/')) && !(await sinkHas(tokenA)), 'no review link sent to anybody by the system');
   });
 
+  // ================================================================ owner's decision 2026-11-28: Worker orders only
+  await check('RE13', 'old order (browser-written, no Worker record) marked delivered: admin sees the owner\'s message, no link; Worker refuses; «طلباتي» and the product page offer no review', async () => {
+    const cust = await ctx.newCustomer('زبون قديم');
+    const legacy = showcaseOrder({ userId: cust.uid, name: 'طلب قديم', phone: '+962790000777' });
+    await ctx.put(`orders/${legacy.id}`, { ...legacy, status: 'delivered' }); // as the old site wrote orders: from the browser, no ledger
+    const state = async () => JSON.stringify([await ctx.get(`orders/${legacy.id}`), await ctx.get(`orderLedger/${legacy.id}`), await ctx.get(`reviewInvites/${legacy.id}`), await ctx.get('products/sc-notebook'), await ctx.get('products/sc-playmat')]);
+    const before = await state();
+    const r = await api(`/admin/orders/${legacy.id}/review-link`, {}, await authH(ctx.ownerUid));
+    must(r.status === 409 && r.body?.code === 'UNVERIFIED_ORDER', `Worker: ${JSON.stringify(r)}`);
+    const t = await ctx.openTab();
+    try {
+      await prepTab(t, VIEWPORTS[0]);
+      await signIn(t, ctx.admin.email, ctx.admin.password);
+      await t.evaluate(`if (location.hash !== '#/admin') location.hash = '#/admin'; true`);
+      await t.waitFor(`document.body.innerText.includes('إدارة الطلبات')`, 30_000, 'dashboard');
+      await t.evaluate(`[...document.querySelectorAll('h1 + div button')][2].click(); true`);
+      await t.waitFor(`[...document.querySelectorAll('tbody tr')].some((r) => r.innerText.includes(${JSON.stringify(legacy.id)}))`, 30_000, 'old order listed');
+      await t.evaluate(`[...[...document.querySelectorAll('tbody tr')].find((r) => r.innerText.includes(${JSON.stringify(legacy.id)})).querySelectorAll('button')].find((b) => b.textContent.trim() === 'تفاصيل').click(); true`);
+      await t.waitFor(`!!document.querySelector('[data-testid=admin-review-link-ineligible]')`, 15_000, 'the owner\'s message');
+      const txt = await t.evaluate(`document.querySelector('[data-testid=admin-review-link-ineligible]').innerText`);
+      must(txt.includes('طلب قديم غير موثّق بالنظام، لا يمكن إنشاء رابط تقييم له'), `message: ${txt}`);
+      must(!(await t.evaluate(`!!document.querySelector('[data-testid=admin-review-link-create]')`)), 'no "create review link" button');
+      await t.evaluate(`document.querySelector('[data-testid=admin-review-link-ineligible]').scrollIntoView({ block: 'center' }); true`);
+      await shot(t, '20-admin-old-order-no-link-phone');
+      must((await t.evaluate(ERRS)).length === 0, `JS errors (admin) ${JSON.stringify(await t.evaluate(ERRS))}`);
+      // the customer whose account the old order names: no review offered anywhere
+      await signIn(t, cust.email, cust.password);
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/my-orders`);
+      await t.waitFor(`document.body.innerText.includes(${JSON.stringify(legacy.id)})`, 40_000, 'old order in «طلباتي»');
+      await sleep(1500);
+      must(!(await t.evaluate(`!!document.querySelector('[data-testid=myorders-review]')`)), 'no "قيّم مشترياتك" for the old order');
+      await shot(t, '21-my-orders-old-order-no-review-phone');
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/product/sc-playmat?tab=reviews`);
+      await t.waitFor(`!!document.querySelector('[data-testid=review-how]')`, 40_000, 'reviews tab');
+      await sleep(2500);
+      must(!(await t.evaluate(`!!document.querySelector('[data-testid=review-form]')`)), 'no review form from the old order');
+      // the review page reached by hand (#/review/<old order>) answers the Worker's refusal, never a form
+      await t.navigate(`${ctx.base}/?r=${Date.now()}#/review/${legacy.id}`);
+      await t.waitFor(`!!document.querySelector('[data-testid=review-failure]') || !!document.querySelector('[data-testid=review-need-link]')`, 30_000, 'review page refusal');
+      must(!(await t.evaluate(`!!document.querySelector('[data-testid=review-items]')`)), 'no items to review');
+      must((await t.evaluate(ERRS)).length === 0, `JS errors (customer) ${JSON.stringify(await t.evaluate(ERRS))}`);
+    } finally { await t.close(); }
+    must((await state()) === before, 'old order, ledger, invite and products unchanged');
+  });
+
   writeFileSync(join(shots, 'results.json'), JSON.stringify(results, null, 1));
   const failed = results.filter((r) => !r.ok);
   console.log(`[reviews] ${results.length - failed.length}/${results.length} passed; screenshots in ${shots}`);

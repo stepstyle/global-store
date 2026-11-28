@@ -83,6 +83,8 @@ export function reviewErrorAr(code: string): string {
     case 'NOT_FOUND': return 'هذا الرابط غير صالح. تأكد من فتح الرابط كما وصلك، أو اطلب رابطًا جديدًا من المكتبة.';
     case 'LINK_EXPIRED': return 'انتهت صلاحية رابط التقييم. اطلب رابطًا جديدًا من المكتبة.';
     case 'NOT_DELIVERED': return 'يمكن التقييم بعد تأكيد تسليم الطلب.';
+    case 'UNVERIFIED_ORDER': return 'هذا الطلب غير موثّق بنظام الطلبات، فلا يمكن تقييمه بعلامة «شراء موثّق».';
+    case 'DELIVERY_NOT_RECORDED': return 'لم يُسجَّل تسليم هذا الطلب في نظام الطلبات بعد، فلا يمكن تقييمه الآن.';
     case 'ALREADY_REVIEWED': return 'تم تقييم هذا المنتج من هذا الطلب مسبقًا. شكرًا لك!';
     case 'PRODUCT_NOT_IN_ORDER': return 'هذا المنتج ليس ضمن هذا الطلب.';
     case 'PRODUCT_UNAVAILABLE': return 'هذا المنتج لم يعد معروضًا في المتجر.';
@@ -94,6 +96,20 @@ export function reviewErrorAr(code: string): string {
     default: return 'تعذّر حفظ التقييم الآن. أعد المحاولة بعد قليل.';
   }
 }
+
+/** the dashboard's / «طلباتي» hint, from the order document alone: created by the order Worker (source + its stock
+ *  record) and delivered through it (stock deducted on delivery / acceptance). ONLY for what the screen offers: the
+ *  Worker decides (src/reviews.js purchaseProof reads its own ledger, which no browser can read or write). */
+export function looksVerifiedOrder(o: unknown): boolean {
+  const x = (o && typeof o === 'object' ? o : {}) as { source?: unknown; status?: unknown; inventory?: { policy?: unknown; state?: unknown } | null };
+  return x.source === 'worker-v2'
+    && String(x.status || '').toLowerCase() === 'delivered'
+    && (x.inventory?.policy === 'on_delivery' || x.inventory?.policy === 'on_acceptance')
+    && x.inventory?.state === 'deducted';
+}
+
+/** the admin's exact message for an order that cannot get a review link (owner's wording, 2026-11-28) */
+export const LEGACY_ORDER_NO_LINK_AR = 'طلب قديم غير موثّق بالنظام، لا يمكن إنشاء رابط تقييم له';
 
 /** a review shown to visitors: published AND written by the Worker for a verified purchase */
 export const isPublicVerified = (r: { status?: unknown; verifiedPurchase?: unknown }) => (r?.status ?? 'published') === 'published' && r?.verifiedPurchase === true;

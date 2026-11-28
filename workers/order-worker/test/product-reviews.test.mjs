@@ -9,7 +9,7 @@ import { startMockServices, makeEnv, callWorker, clearDb, seedProducts, putDoc, 
 import { checkoutOrder, makeOrderId, line } from './fixtures.mjs';
 import { makeTestSigner } from './token-signer.mjs';
 import { clearKeyCache } from '../src/auth.js';
-import { cleanText, reviewableItems, normalizeReviewToken, newReviewToken, REVIEW_TOKEN_RE } from '../src/reviews.js';
+import { cleanText, reviewableItems, normalizeReviewToken, newReviewToken, hashReviewToken, purchaseProof, REVIEW_TOKEN_RE } from '../src/reviews.js';
 
 const OWNER = 'ownerUid00000000000000000001';
 const ADMIN = 'adminUid00000000000000000001';
@@ -320,9 +320,12 @@ test('RV11 an order whose userId was NOT verified by the Worker (written by a br
   await putDoc(`orders/${id}`, { ...checkoutOrder({ id, userId: ALICE }), status: 'delivered' });
   assert.equal((await state({ orderId: id }, await bearer(ALICE))).status, 404);
   assert.equal((await submit(ok5(id, undefined), await bearer(ALICE))).status, 404);
-  // the admin can still vouch for it with a link (the admin sees the order was delivered)
-  const tok = await linkFor(id);
-  assert.equal((await submit(ok5(id, tok))).status, 200);
+  // owner's decision 2026-11-28: "delivered" alone is no proof for an old order — not even the admin can get a link
+  const r = await makeLink(id);
+  assert.equal(r.status, 409, r.text);
+  assert.equal(r.body.code, 'UNVERIFIED_ORDER');
+  assert.equal(await count('reviewInvites'), 0);
+  assert.equal(await count('reviews'), 0);
 });
 
 test('RV12 not delivered yet: the owner is told NOT_DELIVERED, nothing is written', async () => {
@@ -478,4 +481,147 @@ test('RV18 Telegram acceptance (on_acceptance) of orders WHILE reviews are publi
   assert.equal(await productStock('p-hundred'), 84, '94 - 5 x 2, each deducted once');
   assert.equal(await reservedQty('p-hundred'), 0);
   assert.equal((await productRating('p-hundred')).count, 3);
+});
+
+// ------------------------------------------------------------------ owner's decision 2026-11-28: Worker orders only
+// "شراء موثّق" = an order the Worker CREATED (ledger mode 'created') and DELIVERED through its own status path
+// (ledger.deliveredAt), still delivered now. Every path (link, state, submit, eligible) applies the same proof, and a
+// refusal writes nothing: no invite, no review, no key; orders, ledgers and products (stock, price, stars) unchanged.
+const raw = (d) => Object.fromEntries(Object.entries(d).filter(([k]) => k !== '__raw'));
+async function snapshot(orderIds) {
+  const docs = {};
+  for (const id of orderIds) for (const p of [`orders/${id}`, `orderLedger/${id}`]) { const d = await getDecoded(p); docs[p] = d ? d.__raw.updateTime : null; }
+  for (const d of await adminDb().runQuery({ from: [{ collectionId: 'products' }] })) docs[d.name.split('/').pop()] = d.updateTime + JSON.stringify(d.fields);
+  return { docs, reviews: await count('reviews'), keys: await count('reviewKeys') };
+}
+/** an invite planted as if a link had been made earlier (e.g. before this protection): returns its token */
+async function plantInvite(id) {
+  const tok = newReviewToken();
+  await putDoc(`reviewInvites/${id}`, { tokenHash: await hashReviewToken(tok), createdAt: new Date(), createdBy: ADMIN, expiresAt: new Date(Date.now() + 30 * 86400e3), rotations: 0 });
+  return tok;
+}
+/** the same refusal code on every path for this order (link, state + submit with an EXISTING link, the owner's
+ *  account, eligible), and nothing written by any of them */
+async function refusedEverywhere(id, code, { uid } = {}) {
+  const r = await makeLink(id);
+  assert.equal(r.status, 409, `link: ${r.text}`);
+  assert.equal(r.body.code, code, 'link');
+  assert.equal(await getDecoded(`reviewInvites/${id}`), null, 'the refused link wrote no invite');
+  const tok = await plantInvite(id);
+  const inv = await getDecoded(`reviewInvites/${id}`);
+  const before = await snapshot([id]);
+  const rot = await makeLink(id, { rotate: true });
+  assert.equal(rot.body.code, code, 'a new link (rotate) for it is refused too');
+  const s = await state({ orderId: id, token: tok });
+  assert.equal(s.status, 409, `state: ${s.text}`);
+  assert.equal(s.body.code, code, 'state with an existing link');
+  const u = await submit(ok5(id, tok));
+  assert.equal(u.status, 409, `submit: ${u.text}`);
+  assert.equal(u.body.code, code, 'submit with an existing link');
+  if (uid) {
+    assert.equal((await state({ orderId: id }, await bearer(uid))).body.code, code, 'state as the owner');
+    assert.equal((await submit(ok5(id, undefined), await bearer(uid))).body.code, code, 'submit as the owner');
+    const e = await callWorker(env(), { method: 'POST', path: '/reviews/eligible', headers: { origin: ORIGIN, ...(await bearer(uid)) }, body: { productId: 'p-simple' } });
+    assert.equal(e.status, 200, e.text);
+    assert.ok(!e.body.orders.some((o) => o.orderId === id), 'not listed as eligible');
+  }
+  assert.deepEqual(await snapshot([id]), before, 'orders, ledger, products, reviews and keys unchanged');
+  assert.equal((await getDecoded(`reviewInvites/${id}`)).__raw.updateTime, inv.__raw.updateTime, 'the existing invite untouched');
+}
+
+test('RV19 pure: purchaseProof — Worker-created, delivered now, delivery recorded by the Worker', () => {
+  const now = Date.parse('2026-11-28T12:00:00Z');
+  const L = { mode: 'created', deliveredAt: new Date(now - 86400e3) };
+  const O = { status: 'delivered' };
+  assert.equal(purchaseProof(O, L, now), null);
+  assert.equal(purchaseProof(O, null, now), 'UNVERIFIED_ORDER', 'no ledger: an old browser-written order');
+  assert.equal(purchaseProof(O, { ...L, mode: 'adopted' }, now), 'UNVERIFIED_ORDER', 'browser-written, only adopted');
+  assert.equal(purchaseProof(O, { ...L, mode: 'reconciled' }, now), 'UNVERIFIED_ORDER');
+  assert.equal(purchaseProof(O, { deliveredAt: L.deliveredAt }, now), 'UNVERIFIED_ORDER', 'no mode');
+  assert.equal(purchaseProof({ status: 'shipped' }, L, now), 'NOT_DELIVERED', 'delivery recorded but no longer delivered');
+  assert.equal(purchaseProof({ status: 'cancelled' }, L, now), 'NOT_DELIVERED');
+  assert.equal(purchaseProof(O, { mode: 'created' }, now), 'DELIVERY_NOT_RECORDED', 'status typed in, never delivered by the Worker');
+  assert.equal(purchaseProof(O, { ...L, deliveredAt: '2026-11-27T00:00:00Z' }, now), 'DELIVERY_NOT_RECORDED', 'a string is not a recorded delivery');
+  assert.equal(purchaseProof(O, { ...L, deliveredAt: new Date(NaN) }, now), 'DELIVERY_NOT_RECORDED');
+  assert.equal(purchaseProof(O, { ...L, deliveredAt: new Date(now + 3600e3) }, now), 'DELIVERY_NOT_RECORDED', 'in the future');
+  assert.equal(purchaseProof(O, { ...L, deliveredAt: new Date(now + 60e3) }, now), null, 'a minute of clock skew is fine');
+});
+
+test('RV20 an OLD order (browser-written, no ledger) marked delivered: refused on every path, even with an existing link', async () => {
+  const id = makeOrderId();
+  await putDoc(`orders/${id}`, { ...checkoutOrder({ id }), status: 'delivered', deliveredAt: new Date() });
+  await refusedEverywhere(id, 'UNVERIFIED_ORDER');
+  // an old account order too (a userId the browser wrote): the account is not its verified owner (same 404 as before)
+  const id2 = makeOrderId();
+  await putDoc(`orders/${id2}`, { ...checkoutOrder({ id: id2, userId: ALICE }), status: 'delivered' });
+  const before = await snapshot([id2]);
+  assert.equal((await makeLink(id2)).body.code, 'UNVERIFIED_ORDER');
+  assert.equal((await state({ orderId: id2 }, await bearer(ALICE))).status, 404);
+  assert.deepEqual(await snapshot([id2]), before);
+});
+
+test('RV21 a Worker order with a ledger but WITHOUT deliveredAt (status typed in, not delivered by the Worker): refused', async () => {
+  const id = await newOrder({ uid: ALICE });
+  const o = await getDecoded(`orders/${id}`);
+  await putDoc(`orders/${id}`, { ...raw(o), status: 'delivered' }); // bypasses the Worker's delivery path
+  assert.equal((await getDecoded(`orderLedger/${id}`)).deliveredAt, undefined);
+  await refusedEverywhere(id, 'DELIVERY_NOT_RECORDED', { uid: ALICE });
+});
+
+test('RV22 a delivery recorded by the Worker but the order is no longer delivered: refused NOT_DELIVERED', async () => {
+  const id = await deliveredOrder({ uid: ALICE });
+  assert.ok((await getDecoded(`orderLedger/${id}`)).deliveredAt instanceof Date);
+  const o = await getDecoded(`orders/${id}`);
+  await putDoc(`orders/${id}`, { ...raw(o), status: 'shipped' });
+  await refusedEverywhere(id, 'NOT_DELIVERED', { uid: ALICE });
+});
+
+test('RV23 a ledger the Worker only ADOPTED (browser-written order), delivered with deliveredAt: still not a verified purchase', async () => {
+  const id = await deliveredOrder({ uid: ALICE });
+  const L = await getDecoded(`orderLedger/${id}`);
+  await putDoc(`orderLedger/${id}`, { ...raw(L), mode: 'adopted' });
+  await refusedEverywhere(id, 'UNVERIFIED_ORDER', { uid: ALICE });
+});
+
+test('RV24 an eligible Worker order: link, state, submit once per product; a repeat is refused; stock, price and order untouched', async () => {
+  const id = await deliveredOrder({ uid: ALICE });
+  const ledger = await getDecoded(`orderLedger/${id}`);
+  assert.equal(ledger.mode, 'created');
+  assert.ok(ledger.deliveredAt instanceof Date);
+  const orderBefore = (await getDecoded(`orders/${id}`)).__raw.updateTime;
+  const ledgerBefore = ledger.__raw.updateTime;
+  const stock = { simple: await productStock('p-simple'), variants: await productStock('p-variants') };
+  const price = (await getDecoded('products/p-simple')).price;
+  const tok = await linkFor(id);
+  const s = await state({ orderId: id, token: tok });
+  assert.equal(s.status, 200, s.text);
+  assert.deepEqual(s.body.items.map((i) => i.productId).sort(), ['p-simple', 'p-variants']);
+  assert.equal((await submit(ok5(id, tok))).status, 200);
+  const again = await submit(ok5(id, tok, 'p-simple', { rating: 1 }));
+  assert.equal(again.status, 409);
+  assert.equal(again.body.code, 'ALREADY_REVIEWED');
+  // the owner's account cannot review the same product of the same order a second way
+  assert.equal((await submit(ok5(id, undefined), await bearer(ALICE))).body.code, 'ALREADY_REVIEWED');
+  assert.equal((await submit(ok5(id, tok, 'p-variants'))).status, 200);
+  assert.equal((await submit(ok5(id, tok, 'p-other-not-in-order'))).body.code, 'PRODUCT_NOT_IN_ORDER');
+  assert.equal(await count('reviews'), 2);
+  assert.equal(await count('reviewKeys'), 2);
+  assert.equal((await getDecoded(`orders/${id}`)).__raw.updateTime, orderBefore, 'order untouched');
+  assert.equal((await getDecoded(`orderLedger/${id}`)).__raw.updateTime, ledgerBefore, 'ledger untouched');
+  assert.equal((await getDecoded(`orders/${id}`)).status, 'delivered');
+  assert.deepEqual({ simple: await productStock('p-simple'), variants: await productStock('p-variants') }, stock, 'stock untouched');
+  assert.equal((await getDecoded('products/p-simple')).price, price, 'price untouched');
+  assert.equal((await productRating('p-simple')).avg, 5);
+});
+
+test('RV25 a link made for a Worker order stops working when the order is returned after delivery (nothing written)', async () => {
+  const id = await deliveredOrder();
+  const tok = await linkFor(id);
+  await setStatus(id, 'cancelled', { confirmReturn: true });
+  const before = await snapshot([id]);
+  for (const r of [await state({ orderId: id, token: tok }), await submit(ok5(id, tok))]) {
+    assert.equal(r.status, 409);
+    assert.equal(r.body.code, 'NOT_DELIVERED');
+  }
+  assert.deepEqual(await snapshot([id]), before);
 });

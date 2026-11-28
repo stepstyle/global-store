@@ -8,7 +8,9 @@
 //   POST /admin/reviews/:id/moderate     admin: flag / hide (with a reason) / publish again — never "delete"
 //
 // Who may review an order:
-//   - the holder of the order's review link. The admin creates it (only for a delivered order) and sends it by hand.
+// Which orders: ONLY an order the Worker created itself and delivered through its own status path, still delivered
+// (purchaseProof below; the same check on every path). An old order written by a browser is never eligible.
+//   - the holder of the order's review link. The admin creates it (only for an eligible order) and sends it by hand.
 //     Token: 120 random bits (24 Crockford chars) generated HERE; only sha256("rvw1:" + token) is stored, in
 //     reviewInvites/{orderId} (no Firestore rule matches it: browsers can neither read nor write it). A new link
 //     replaces the old one (the old link stops working). Links expire (REVIEW_LINK_DAYS, default 90).
@@ -107,6 +109,27 @@ export function reviewableItems(order) {
   return [...byId.values()];
 }
 
+/** a recorded delivery may be at most this far in the future (clock skew between Workers); anything later is invalid */
+const DELIVERY_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+/**
+ * "Verified purchase" proof, the SAME for every path (link, state, submit, eligible): null when the order may carry a
+ * verified review, else the refusal code.
+ *   1. orderLedger/{id} exists and the Worker CREATED the order itself (mode 'created'; 'adopted' / 'reconciled' are
+ *      browser-written documents the Worker only took over). No browser, and no admin dashboard, can write the ledger.
+ *   2. the order is delivered NOW (a return or cancellation after delivery ends it)
+ *   3. the ledger records the delivery (deliveredAt): written only by the Worker's own status path (src/fulfilment.js),
+ *      never by a status typed into Firestore.
+ * Old orders written by a browser (no ledger) are never eligible, whatever their status says.
+ */
+export function purchaseProof(order, ledger, now) {
+  if (!ledger || ledger.mode !== 'created') return 'UNVERIFIED_ORDER';
+  if (order?.status !== 'delivered') return 'NOT_DELIVERED';
+  const t = ledger.deliveredAt instanceof Date ? ledger.deliveredAt.getTime() : NaN;
+  if (!Number.isFinite(t) || t > now + DELIVERY_CLOCK_SKEW_MS) return 'DELIVERY_NOT_RECORDED';
+  return null;
+}
+
 /** the account that owns an order, ONLY as recorded by the Worker (ledger owner, or a userId it verified) */
 function verifiedOwner(order, ledger) {
   if (!ledger) return null;
@@ -149,7 +172,8 @@ async function access(fs, { orderId, token, uid, now }) {
     if (verifiedOwner(order, ledger) !== uid) return { refusal: notFound() };
     via = 'account';
   }
-  if (order.status !== 'delivered') return { refusal: refuse(409, 'NOT_DELIVERED') };
+  const proof = purchaseProof(order, ledger, now);
+  if (proof) return { refusal: refuse(409, proof) };
   return { order, via };
 }
 
@@ -240,7 +264,7 @@ export async function submitReview(fs, cfg, { orderId, token, uid, productId, ra
 }
 
 /** POST /reviews/eligible — the signed-in customer's delivered, not yet reviewed orders that contain this product. */
-export async function eligibleOrders(fs, { uid, productId }) {
+export async function eligibleOrders(fs, { uid, productId, now = () => Date.now() }) {
   if (!PRODUCT_ID_RE.test(String(productId || ''))) return refuse(400, 'INVALID_ID');
   const docs = await fs.runQuery({
     from: [{ collectionId: 'orders' }],
@@ -256,19 +280,25 @@ export async function eligibleOrders(fs, { uid, productId }) {
     fs.batchGet(candidates.map((c) => `orderLedger/${c.id}`)),
     fs.batchGet(candidates.map((c) => reviewKeyPath(c.id, productId))),
   ]);
+  const t = now();
   const orders = candidates
-    .filter((c, k) => verifiedOwner(c.o, ledgers[k].exists ? decodeFields(ledgers[k].fields) : null) === uid && !keys[k].exists)
+    .filter((c, k) => {
+      const L = ledgers[k].exists ? decodeFields(ledgers[k].fields) : null;
+      return verifiedOwner(c.o, L) === uid && purchaseProof(c.o, L, t) === null && !keys[k].exists;
+    })
     .map((c) => ({ orderId: c.id, date: typeof c.o.date === 'string' ? c.o.date.slice(0, 10) : '', variants: reviewableItems(c.o).find((i) => i.productId === productId).variants }));
   return { status: 200, body: { ok: true, orders } };
 }
 
-/** POST /admin/orders/:id/review-link — admin only (checked by the caller). Only for a delivered order. */
+/** POST /admin/orders/:id/review-link — admin only (checked by the caller). Only for an order that passes
+ *  purchaseProof (created AND delivered by the Worker); an old browser-written order is refused UNVERIFIED_ORDER. */
 export async function createReviewLink(fs, cfg, { orderId, adminUid, rotate = false, origin, now = () => Date.now() }) {
   if (!ORDER_ID_RE.test(String(orderId || ''))) return refuse(400, 'INVALID_ID');
-  const [orderDoc, inviteDoc] = await fs.batchGet([`orders/${orderId}`, `reviewInvites/${orderId}`]);
+  const [orderDoc, ledgerDoc, inviteDoc] = await fs.batchGet([`orders/${orderId}`, `orderLedger/${orderId}`, `reviewInvites/${orderId}`]);
   if (!orderDoc.exists) return refuse(404, 'NOT_FOUND');
   const order = decodeFields(orderDoc.fields);
-  if (order.status !== 'delivered') return refuse(409, 'NOT_DELIVERED');
+  const proof = purchaseProof(order, ledgerDoc.exists ? decodeFields(ledgerDoc.fields) : null, now());
+  if (proof) return refuse(409, proof);
   const items = reviewableItems(order);
   if (!items.length) return refuse(409, 'NOTHING_TO_REVIEW');
   const prev = inviteDoc.exists ? decodeFields(inviteDoc.fields) : null;

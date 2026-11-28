@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   checkReviewInput, loadReviewOrder, submitReview, createReviewLink,
   moderateReview, eligibleOrders, isPublicVerified, waPhone, reviewInviteMessage, reviewErrorAr,
+  looksVerifiedOrder, LEGACY_ORDER_NO_LINK_AR,
 } from '../../src/services/verifiedReviews.ts';
 import { stashReviewToken, reviewTokenFor, forgetReviewToken } from '../../src/services/reviewLink.ts';
 
@@ -110,4 +111,27 @@ test('manual sending: wa.me phone + message with the link', () => {
   const m = reviewInviteMessage('https://dairsharaf.com/#/review/X/Y', 'سارة');
   assert.match(m, /مرحباً سارة/);
   assert.ok(m.endsWith('https://dairsharaf.com/#/review/X/Y'));
+});
+
+test('screen hint: only an order created AND delivered by the order Worker offers a review (the Worker decides)', () => {
+  const w = { source: 'worker-v2', status: 'delivered', inventory: { policy: 'on_delivery', state: 'deducted' } };
+  assert.equal(looksVerifiedOrder(w), true);
+  assert.equal(looksVerifiedOrder({ ...w, inventory: { policy: 'on_acceptance', state: 'deducted' } }), true);
+  assert.equal(looksVerifiedOrder({ ...w, status: 'Delivered' }), true);
+  // old browser-written orders, however "delivered" they look
+  assert.equal(looksVerifiedOrder({ status: 'delivered', userId: 'guest' }), false, 'no source, no stock record');
+  assert.equal(looksVerifiedOrder({ status: 'delivered', source: 'worker-v2' }), false, 'a source a browser could type, no stock record');
+  assert.equal(looksVerifiedOrder({ ...w, inventory: { policy: 'on_creation', state: 'deducted' } }), false);
+  // a Worker order whose status was typed in (stock still reserved: the Worker never delivered it)
+  assert.equal(looksVerifiedOrder({ ...w, inventory: { policy: 'on_delivery', state: 'reserved' } }), false);
+  assert.equal(looksVerifiedOrder({ ...w, status: 'shipped' }), false);
+  assert.equal(looksVerifiedOrder({ ...w, status: 'cancelled', inventory: { policy: 'on_delivery', state: 'restocked' } }), false);
+  for (const x of [null, undefined, 'x', 3, {}]) assert.equal(looksVerifiedOrder(x), false);
+});
+
+test('messages for an order the Worker refuses as not verified', () => {
+  assert.equal(LEGACY_ORDER_NO_LINK_AR, 'طلب قديم غير موثّق بالنظام، لا يمكن إنشاء رابط تقييم له');
+  assert.match(reviewErrorAr('UNVERIFIED_ORDER'), /غير موثّق/);
+  assert.match(reviewErrorAr('DELIVERY_NOT_RECORDED'), /لم يُسجَّل تسليم/);
+  assert.notEqual(reviewErrorAr('UNVERIFIED_ORDER'), reviewErrorAr('SOMETHING_ELSE'));
 });

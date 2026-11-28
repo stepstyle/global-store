@@ -517,6 +517,12 @@ async function runUiSuite() {
       const r = await fs.commit([{ update: { name: fs.name(`orders/${orderId}`), fields: encodeFields({ status, seenByAdmin: true }) }, updateMask: { fieldPaths: ['status', 'seenByAdmin'] } }]);
       if (!r.ok) throw new Error(`status update failed (${r.status})`);
     },
+    /** the delivery record the order Worker writes in ITS ledger when it delivers an order (src/fulfilment.js); the
+     *  ledger must already exist (created by the Worker at checkout) — this never creates one */
+    recordWorkerDelivery: async (orderId) => {
+      const r = await fs.commit([{ update: { name: fs.name(`orderLedger/${orderId}`), fields: encodeFields({ deliveredAt: new Date(), deliveredBy: { source: 'admin', uid: 'e2e' } }) }, updateMask: { fieldPaths: ['deliveredAt', 'deliveredBy'] }, currentDocument: { exists: true } }]);
+      if (!r.ok) throw new Error(`delivery record failed (${r.status})`);
+    },
     ledger: async (orderId) => {
       const d = await fs.get(`orderLedger/${orderId}`);
       return d.exists ? decodeFields(d.fields) : null;
@@ -654,6 +660,8 @@ async function runReviewsSuite() {
     openTab: () => openTab(PORTS.cdp),
     reseed: reseedReviews,
     get: async (path) => { const d = await fs.get(path); return d.exists ? decodeFields(d.fields) : null; },
+    // a raw document (an OLD order the browser wrote before the Worker existed), emulator only
+    put: (path, data) => put(path, data),
     idToken: (uid) => AUTH_SIGNER.idToken({ projectId: PROJECT_ID, uid }),
     sinkCalls: async () => (await (await fetch(`${URLS.sink}/calls`, { headers: { 'x-sink-auth': T.read } })).json()).calls || [],
     // a synthetic customer in the local Auth emulator only (verified e-mail, as the Login page requires)

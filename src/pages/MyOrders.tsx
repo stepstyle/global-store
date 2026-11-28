@@ -9,6 +9,7 @@ import * as ReactRouterDOM from 'react-router-dom';
 import LazyImage from '../components/LazyImage';
 import { OrderSkeleton } from '../components/Skeleton';
 import DeviceOrders from '../components/DeviceOrders';
+import { looksVerifiedOrder } from '../services/verifiedReviews';
 
 const { Link } = ReactRouterDOM as any;
 
@@ -276,8 +277,9 @@ const MyOrders: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* a delivered order: review its products (the order Worker checks ownership + delivery) */}
-                    {String(order.status || '').toLowerCase() === 'delivered' && (
+                    {/* an order created AND delivered by the order Worker: review its products (the Worker checks
+                        ownership + its own delivery record; an old order never gets "verified purchase") */}
+                    {looksVerifiedOrder(order) && (
                       <Link to={`/review/${encodeURIComponent(safeText(order.id))}`} className="shrink-0 w-full md:w-auto" data-testid="myorders-review">
                         <span className="w-full md:w-auto flex items-center justify-center gap-2 rounded-xl bg-gold-500 hover:bg-gold-600 text-white font-extrabold px-6 py-3.5 transition-all">
                           {tt('rateOrder', 'قيّم مشترياتك', 'Review your items')}
