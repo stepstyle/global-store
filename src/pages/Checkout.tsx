@@ -30,6 +30,7 @@ import {
 } from '../services/checkoutFlow';
 import { CLIQ } from '../config/contact';
 import { previewServerPricing } from '../services/pricePreview';
+import { AMMAN_AREAS, FAST_SURCHARGE, baseDeliveryFee } from '../services/deliveryFee';
 import { getFirebaseAuth, currentIdentity } from '../services/firebase';
 import { siteKeyFrom } from '../services/turnstile';
 import { useTurnstile } from '../components/useTurnstile';
@@ -128,25 +129,7 @@ const REGIONS = [
 
 const JO_GOVS = REGIONS.flatMap(r => r.govs);
 
-// 🚀 قائمة مناطق عمان الذكية
-const AMMAN_AREAS = [
-  { id: 'a1', nameAr: 'النزهة / طبربور / طارق / ضاحية الأمير حسن', nameEn: 'Nuzha / Tabarbour / Tariq / Dahiyet Al Amir Hassan', price: 1.5, isOutskirt: false },
-  { id: 'a2', nameAr: 'جبل الحسين / اللويبدة / العبدلي', nameEn: 'Jabal Hussein / Lweibdeh / Abdali', price: 2.0, isOutskirt: false },
-  { id: 'a3', nameAr: 'الهاشمي الشمالي والجنوبي / ماركا', nameEn: 'Hashimi / Marka', price: 2.0, isOutskirt: false },
-  { id: 'a4', nameAr: 'ضاحية الأقصى / الاستقلال', nameEn: 'Dahiyet Al Aqsa / Istiqlal', price: 1.5, isOutskirt: false },
-  { id: 'a5', nameAr: 'وسط البلد / الأشرفية / الوحدات', nameEn: 'Downtown / Ashrafieh / Wehdat', price: 2.5, isOutskirt: false },
-  { id: 'a6', nameAr: 'تلاع العلي / خلدا / أم السماق', nameEn: 'Tlaa Al Ali / Khalda / Um Al Summaq', price: 2.0, isOutskirt: false },
-  { id: 'a7', nameAr: 'الشميساني / عبدون / دير غبار / الصويفية', nameEn: 'Shmeisani / Abdoun / Sweifieh', price: 2.0, isOutskirt: false },
-  { id: 'a8', nameAr: 'الدوار السابع والثامن / البيادر', nameEn: '7th & 8th Circle / Bayader', price: 2.0, isOutskirt: false },
-  { id: 'a9', nameAr: 'الجبيهة / أبو نصير / شفا بدران', nameEn: 'Jubeiha / Abu Nuseir / Shafa Badran', price: 2.5, isOutskirt: false },
-  { id: 'a10', nameAr: 'دابوق / بدر الجديدة / الفحيص', nameEn: 'Dabouq / Badr Al Jadeedah', price: 2.5, isOutskirt: false },
-  { id: 'a11', nameAr: 'مرج الحمام / المقابلين / البنيات', nameEn: 'Marj Al Hamam / Muqabalain', price: 2.5, isOutskirt: false },
-  { id: 'a12', nameAr: 'سحاب / أبو علندا / اليادودة', nameEn: 'Sahab / Abu Alanda / Yadoudeh', price:2.5, isOutskirt: true },
-  { id: 'a13', nameAr: 'الجيزة / خريبة السوق / القسطل', nameEn: 'Jizah / Khreibet Souq', price: 2.5, isOutskirt: true },
-  { id: 'a14', nameAr: 'ناعور / طريق المطار', nameEn: 'Naour / Airport Road', price: 2.5, isOutskirt: true },
-  // 🛡️ الخيار البديل
-  { id: 'other', nameAr: 'منطقة أخرى (غير مذكورة في القائمة)', nameEn: 'Other Area (Not Listed)', price: 2.0, isOutskirt: true },
-];
+// Amman areas + delivery fees: services/deliveryFee.ts (the prices come from the order Worker's own table)
 
 type DialOption = { code: string; dial: string; flag: string; nameAr: string; nameEn: string };
 const DIAL_OPTIONS: DialOption[] = [
@@ -534,17 +517,9 @@ const Checkout: React.FC = () => {
     return AMMAN_AREAS.find(a => a.id === formData.ammanAreaId);
   }, [formData.ammanAreaId]);
 
-  const baseShippingCost = useMemo(() => {
-    const slug = formData.citySlug;
-    if (!slug) return 0;
-
-    if (slug === 'amman') {
-      const area = AMMAN_AREAS.find(a => a.id === formData.ammanAreaId);
-      if (!area) return 0;
-      return area.price;
-    }
-    return 3.0;
-  }, [formData.citySlug, formData.ammanAreaId]);
+  // the Worker's fee for this governorate / area; null until it can be known (shown as "decided after the area")
+  const deliveryFeeKnown = useMemo(() => baseDeliveryFee(formData.citySlug, formData.ammanAreaId), [formData.citySlug, formData.ammanAreaId]);
+  const baseShippingCost = deliveryFeeKnown ?? 0;
 
   const dynamicShippingMethods = useMemo(() => {
     const methods = [
@@ -566,7 +541,7 @@ const Checkout: React.FC = () => {
         nameEn: 'Fast Delivery (12 Hours)',
         durationAr: 'أولوية التجهيز (+ 1 دينار)',
         durationEn: 'Priority fulfillment (+ 1 JD)',
-        price: baseShippingCost + 1.0,
+        price: baseShippingCost + FAST_SURCHARGE,
         icon: Zap,
       });
     }
@@ -1824,9 +1799,16 @@ const Checkout: React.FC = () => {
 
                 <div className="flex justify-between text-sm font-bold text-slate-500">
                   <span>{tt('shipping', 'رسوم التوصيل', 'Shipping Fee')}</span>
-                  <span className="tabular-nums text-slate-700" data-testid="summary-shipping">
-                    {shippingWaived > 0 && <s className="me-2 text-slate-400">{formatMoney(baseShippingFee)}</s>}
-                    {formatMoney(shippingCost)}
+                  <span className="tabular-nums text-slate-700" data-testid="summary-shipping" data-known={deliveryFeeKnown === null ? 'no' : 'yes'}>
+                    {deliveryFeeKnown === null ? (
+                      // never "0.00" before the area is known: it reads as free delivery
+                      <span className="font-bold text-slate-500">{tr('يُحدَّد بعد اختيار المنطقة', 'Set once you choose your area')}</span>
+                    ) : (
+                      <>
+                        {shippingWaived > 0 && <s className="me-2 text-slate-400">{formatMoney(baseShippingFee)}</s>}
+                        {formatMoney(shippingCost)}
+                      </>
+                    )}
                   </span>
                 </div>
                 {shippingWaived > 0 && (

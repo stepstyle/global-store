@@ -288,6 +288,86 @@ export async function runStoreScenarios(ctx) {
         return `order ${orderId}`;
       });
 
+      // ---------------------------------------------------------------- Amman delivery fees (owner's decision 2026-11-28: the
+      // Worker's prices). Every other scenario uses Zarqa, which is how 7 Amman areas being refused PRICE_CHANGED went
+      // unseen. Real page, real Worker (PRICE_CHECK_MODE=enforce): no fee before the area; each area / method / governorate
+      // change updates the delivery AND the total; a real local order from a formerly refused area is accepted.
+      if (!process.env.E2E_CATALOG_FILE) await check(`ST-${tag}-amman-delivery`, `Amman delivery on ${tag}: no "0.00" before the area; a1 1.00 / a5 1.50 / a9 2.50 / Irbid 3.00 shown and added to the total; ${vp.mobile ? 'a2 FAST 2.00 + cash on delivery' : 'a6 standard 1.50 + CliQ'}: the order is ACCEPTED by the Worker (enforce), delivery and total saved as shown`, async () => {
+        await go('/checkout', { key: `m${tag}`, items: cartItems.slice(0, 1) });
+        await t.waitFor(`!!document.querySelector('input[placeholder="0791234567"]')`, 40_000, 'checkout form');
+        // the page's own figures, Arabic digits read as numbers
+        // "‏١٫٠٠ د.أ.‏" -> 1 (the first number only: the currency's own dots are not part of it)
+        const NUM = `const num = (s) => { const m = String(s || '').replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/٫/g, '.').match(/\\d+(?:\\.\\d+)?/); return m ? Number(m[0]) : -1; };`;
+        const fig = () => t.evaluate(`(() => { ${NUM} const s = document.querySelector('[data-testid=summary-shipping]'); const tot = document.querySelector('[data-testid=checkout-sticky-total]') || [...document.querySelectorAll('span,div')].find((e) => e.children.length === 0 && /^الإجمالي$/.test(e.textContent.trim()))?.parentElement?.lastElementChild; return { known: s?.dataset.known, ship: s?.dataset.known === 'yes' ? num(s.textContent) : null, shipText: s?.textContent.trim(), total: num(tot?.textContent) }; })()`);
+        const pickArea = async (needle) => {
+          // as a customer does: clear the field (it holds the previous area's name, which filters the list), then look
+          await t.evaluate(`(() => { ${SET_VAL} const i = document.querySelector('input[placeholder^="اكتب اسم منطقتك"]'); if (i.value) setVal(i, ''); i.focus(); i.dispatchEvent(new FocusEvent('focus', { bubbles: true })); return true; })()`);
+          await sleep(300);
+          const got = await t.evaluate(`(() => { const c = [...document.querySelectorAll('div.cursor-pointer')].find((x) => x.innerText.includes(${JSON.stringify(needle)})); if (!c) return null; c.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); return c.innerText.trim(); })()`);
+          must(got, `area "${needle}" not offered`);
+          await sleep(300);
+        };
+        const city = (slug) => t.evaluate(`(() => { ${SET_VAL} setVal([...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'zarqa')), ${JSON.stringify(slug)}); return true; })()`);
+        const sub = 1.5; // one notebook (cartItems[0]); no volume discount for one piece
+        const f0 = await fig();
+        must(f0.known === 'no' && f0.shipText.includes('يُحدَّد بعد اختيار المنطقة') && !/٠٫٠٠|0\.00/.test(f0.shipText), `before any governorate: "${f0.shipText}"`);
+        const phone = vp.mobile ? '0791230031' : '0791230032';
+        await t.evaluate(`(() => { ${SET_VAL}
+          setVal(document.querySelector('input[placeholder^="name@example.com"]'), 'amman-${tag}@example.com');
+          setVal(document.querySelector('input[placeholder="الاسم الأول والأخير"]'), 'زبون توصيل عمان');
+          setVal(document.querySelector('input[placeholder="0791234567"]'), '${phone}');
+          return true; })()`);
+        await city('amman'); await sleep(300);
+        const f1 = await fig();
+        must(f1.known === 'no' && !/٠٫٠٠|0\.00/.test(f1.shipText), `Amman without an area: "${f1.shipText}"`);
+        for (const [needle, fee] of [['النزهة', 1], ['وسط البلد', 1.5], ['الجبيهة', 2.5]]) {
+          await pickArea(needle);
+          const f = await fig();
+          must(f.known === 'yes' && Math.abs(f.ship - fee) < 1e-9, `${needle}: delivery ${f.ship} ("${f.shipText}"), expected ${fee}`);
+          if (vp.mobile) must(Math.abs(f.total - (sub + fee)) < 1e-9, `${needle}: total ${f.total}, expected ${sub + fee}`);
+        }
+        await city('irbid'); await sleep(300);
+        const fi = await fig();
+        must(fi.known === 'yes' && Math.abs(fi.ship - 3) < 1e-9, `Irbid: delivery ${fi.ship}`);
+        if (vp.mobile) must(Math.abs(fi.total - (sub + 3)) < 1e-9, `Irbid: total ${fi.total}`);
+        // the order: phone = a2 (was 2.00 on the page, refused) FAST; desktop = a6 (was 2.00, refused) standard
+        const [needle, fee, method, payment] = vp.mobile ? ['جبل الحسين', 2, 'fast', 'cod'] : ['تلاع العلي', 1.5, 'standard', 'cliq'];
+        await city('amman'); await sleep(300);
+        await pickArea(needle);
+        await t.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('input[placeholder^="اسم الشارع"]'), 'شارع التوصيل 7'); return true; })()`);
+        await t.evaluate(`${STICKY}.click(); true`);
+        await t.waitFor(`document.body.innerText.includes('توصيل عادي')`, 10_000, 'step 2');
+        must(await t.evaluate(`document.body.innerText.includes('توصيل سريع')`), 'no fast option in Amman');
+        if (method === 'fast') {
+          await t.evaluate(`(() => { const c = [...document.querySelectorAll('button,label,div[role=radio],div.cursor-pointer')].find((x) => x.innerText && x.innerText.trim().startsWith('توصيل سريع')); c?.click(); return !!c; })()`);
+          await sleep(500);
+        }
+        const f2 = await fig();
+        must(Math.abs(f2.ship - fee) < 1e-9, `${method}: delivery ${f2.ship}, expected ${fee}`);
+        await t.evaluate(`${STICKY}.click(); true`);
+        await t.waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('CliQ'))`, 10_000, 'step 3');
+        if (payment === 'cliq') {
+          await t.evaluate(`[...document.querySelectorAll('button')].find((b) => b.textContent.includes('CliQ')).click(); true`);
+          await t.waitFor(`!!document.querySelector('[data-testid=cliq-details]')`, 8_000, 'CliQ details');
+          await t.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('input[placeholder^="رقم مكون من أرقام"]'), 'REF5551234'); return true; })()`);
+        }
+        must(!(await t.evaluate(`document.body.innerText.includes('يوجد اختلاف في الأسعار')`)), 'the price-difference warning is shown');
+        await shot(t, `after-${tag}-amman-${method}-${payment}`);
+        await t.evaluate(`${AGREE} ${STICKY}.click(); true`);
+        const out = await t.waitFor(OUTCOME, 40_000, 'order outcome');
+        must(out === 'success', `order outcome "${out}" (refused by the Worker?)`);
+        const orderId = await t.evaluate(`decodeURIComponent(location.hash.split('/').pop() || '')`);
+        const o = await ctx.get(`orders/${orderId}`);
+        const L = await ctx.get(`orderLedger/${orderId}`);
+        must(o.addressMeta?.citySlug === 'amman' && o.shippingMethodId === method && o.paymentMethod === payment, `saved ${o.addressMeta?.citySlug}/${o.addressMeta?.ammanAreaId} ${o.shippingMethodId} ${o.paymentMethod}`);
+        must(Math.abs(o.shippingCost - fee) < 1e-9 && Math.abs(o.total - (sub + fee)) < 1e-9, `saved delivery ${o.shippingCost} total ${o.total}`);
+        must(L.priceMismatch === false && Math.abs(L.serverPricing.shipping - fee) < 1e-9 && Math.abs(L.serverPricing.total - o.total) < 1e-9, `Worker: mismatch ${L.priceMismatch}, shipping ${L.serverPricing?.shipping}, total ${L.serverPricing?.total}`);
+        if (payment === 'cliq') must(o.paymentDetails?.cliqReference === 'REF5551234', 'CliQ reference not saved');
+        await shot(t, `after-${tag}-amman-order-success`);
+        must((await t.evaluate(errs)).length === 0, `JS errors ${JSON.stringify(await t.evaluate(errs))}`);
+        return `order ${orderId} ${o.addressMeta.ammanAreaId} ${method} ${payment} delivery ${o.shippingCost}`;
+      });
+
       // ---------------------------------------------------------------- the REQUIRED agreement box (no pre-tick, no send without it)
       if (!process.env.E2E_CATALOG_FILE) await check(`ST-${tag}-agreement`, `agreement on ${tag}: ONE box only (the required agreement), UNticked; confirm without the required one -> NOTHING sent, a clear message, the box focused; the link is the real policies page (new tab); ticked -> the order goes through`, async () => {
         await go('/checkout', { key: `a${tag}`, items: cartItems.slice(0, 1) });
