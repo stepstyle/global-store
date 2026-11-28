@@ -311,6 +311,13 @@ export type ReviewDoc = {
 
   adminReply?: AdminReply | null;
 
+  /** true ONLY on reviews written by the order Worker for a delivered order containing this product ("شراء موثّق") */
+  verifiedPurchase?: boolean;
+  /** colour / size bought, from the order (shown with the badge) */
+  purchasedVariant?: string;
+  /** set by the Worker's moderation route (flag / hide with a reason / publish) */
+  moderation?: { flagged?: boolean; reason?: string; note?: string; at?: string; lastAction?: string } | null;
+
   // Firebase timestamps أو fallback محلي
   createdAt?: any;
   updatedAt?: any;

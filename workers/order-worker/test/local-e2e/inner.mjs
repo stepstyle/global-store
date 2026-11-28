@@ -23,6 +23,7 @@ import { runVisualScenarios } from './visual-scenarios.mjs';
 import { runPreviewWheelCheck } from './preview-wheel-check.mjs';
 import { runStoreScenarios, storeCatalogue } from './store-scenarios.mjs';
 import { runWheelScenarios, WHEEL_CAMPAIGN_ID } from './wheel-scenarios.mjs';
+import { runReviewScenarios } from './reviews-scenarios.mjs';
 import { resolve as resolvePath } from 'node:path';
 import { WORKER_ROOT } from './plan.mjs';
 import { assertLocalPlan, localOnlyFetch } from './guard.mjs';
@@ -314,7 +315,7 @@ const fs = new Firestore({ projectId: PROJECT_ID, firestoreAuth: 'emulator', url
 // delivery suite: always the rules planned for that rollout (firebase/firestore.rules.on-delivery)
 // E2E_RULES=on-delivery-final (any suite): the proposed final rules for the live site
 // E2E_RULES=on-delivery (any suite): the rules LIVE today — the window between the site deploy and the rules deploy
-const RULES_NAME = process.env.E2E_RULES === 'on-delivery-final' || (SUITE === 'wheel' && !process.env.E2E_RULES) ? 'on-delivery-final' : ['delivery', 'visual', 'preview', 'store'].includes(SUITE) ? 'on-delivery' : ['transition', 'final', 'on-delivery'].includes(process.env.E2E_RULES) ? process.env.E2E_RULES : 'compat';
+const RULES_NAME = process.env.E2E_RULES === 'on-delivery-final' || ((SUITE === 'wheel' || SUITE === 'reviews') && !process.env.E2E_RULES) ? 'on-delivery-final' : ['delivery', 'visual', 'preview', 'store'].includes(SUITE) ? 'on-delivery' : ['transition', 'final', 'on-delivery'].includes(process.env.E2E_RULES) ? process.env.E2E_RULES : 'compat';
 async function loadCompatRules() {
   const content = readFileSync(RULES_NAME === 'on-delivery-final' ? FILES.onDeliveryFinalRules : RULES_NAME === 'on-delivery' ? FILES.onDeliveryRules : RULES_NAME === 'final' ? FILES.finalRules : RULES_NAME === 'transition' ? FILES.transitionRules : FILES.compatRules, 'utf8');
   console.log(`[inner] emulator rules: firestore.rules.${RULES_NAME} (local test file)`);
@@ -639,6 +640,34 @@ async function runStoreSuite() {
     get: async (path) => { const d = await fs.get(path); return d.exists ? decodeFields(d.fields) : null; },
   });
 }
+// ---------------------------------------------------------------- verified-purchase reviews (final rules, synthetic data)
+async function runReviewsSuite() {
+  const { base, admin, ownerUid, put, reseedAll } = await startDeliveryStack('vite-reviews');
+  const reseedReviews = async () => { await reseedAll(); await seedCatalogue(put); };
+  await reseedReviews();
+  await launchChrome({ port: PORTS.cdp, tmpDir: TMP, track: (child) => children.push({ label: 'chrome', child }) });
+  const shotsDir = process.env.E2E_SHOTS_DIR || join(TMP, 'reviews');
+  const AUTH = `http://127.0.0.1:${PORTS.authEmulator}`;
+  console.log(`[inner] reviews suite: Worker STOCK_POLICY=on_delivery PRICE_CHECK_MODE=enforce, rules ${RULES_NAME}, Vite ${base}, headless Chrome, screenshots ${shotsDir}`);
+  return runReviewScenarios({
+    base, admin, ownerUid, shotsDir, W: URLS.order, turnstileToken: TURNSTILE_PASS_TOKEN,
+    openTab: () => openTab(PORTS.cdp),
+    reseed: reseedReviews,
+    get: async (path) => { const d = await fs.get(path); return d.exists ? decodeFields(d.fields) : null; },
+    idToken: (uid) => AUTH_SIGNER.idToken({ projectId: PROJECT_ID, uid }),
+    sinkCalls: async () => (await (await fetch(`${URLS.sink}/calls`, { headers: { 'x-sink-auth': T.read } })).json()).calls || [],
+    // a synthetic customer in the local Auth emulator only (verified e-mail, as the Login page requires)
+    newCustomer: async (name) => {
+      const email = `buyer-${randomBytes(4).toString('hex')}@example.invalid`;
+      const password = `e2e-${randomBytes(9).toString('hex')}`;
+      const su = await (await fetch(`${AUTH}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo-api-key`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password, returnSecureToken: true }) })).json();
+      if (!su.localId) throw new Error('customer signUp failed');
+      await fetch(`${AUTH}/identitytoolkit.googleapis.com/v1/projects/${PROJECT_ID}/accounts:update`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer owner' }, body: JSON.stringify({ localId: su.localId, emailVerified: true, displayName: name }) });
+      await put(`users/${su.localId}`, { id: su.localId, name, email, role: 'customer', orders: [], createdAt: new Date().toISOString() });
+      return { uid: su.localId, email, password };
+    },
+  });
+}
 // the preview's DEMO campaign: clearly fake prizes, local emulator only, never a real campaign / budget / coupon
 const DEMO_PRIZES = [
   { id: 'demo-disc-1', type: 'discount', label: 'خصم 1 د.أ', description: 'جائزة تجريبية — ليست حقيقية', icon: '💸', valueJod: 1, unitCostJod: 1, minOrderJod: 5, weight: 3, quantity: 100, costConfirmed: true },
@@ -828,7 +857,7 @@ try {
     ...(SUITE === 'delivery' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', SYNC_DIRECT_STATUS: 'true' } : {}),
     // visual check + manual preview: the owner's FINAL policy (orders accepted automatically, stock on delivery, Telegram
     // notifications only) — production settings except Turnstile (the local web app sends no token)
-    ...(SUITE === 'visual' || SUITE === 'preview' || SUITE === 'store' ? { STOCK_POLICY: 'on_delivery', APPROVAL_MODE: 'off', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log' } : {}),
+    ...(SUITE === 'visual' || SUITE === 'preview' || SUITE === 'store' || SUITE === 'reviews' ? { STOCK_POLICY: 'on_delivery', APPROVAL_MODE: 'off', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log' } : {}),
     // preview: the DEMO prize wheel (TEST mode, local demo campaign, a random per-run phone secret never written anywhere;
     // a generous guest-spin limit so a person can try it again and again)
     // the suites rewrite the campaign straight in the emulator between checks: no /wheel/public cache here (tested in test/unit)
@@ -885,6 +914,8 @@ try {
     results = await runVisualSuite();
   } else if (SUITE === 'store') {
     results = await runStoreSuite();
+  } else if (SUITE === 'reviews') {
+    results = await runReviewsSuite();
   } else if (SUITE === 'preview') {
     results = await runPreview();
   } else if (SUITE === 'wheel') {

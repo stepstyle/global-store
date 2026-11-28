@@ -97,10 +97,16 @@ test('create-order (retired): 410 in production, 403 SANDBOX_DISABLED elsewhere;
 test('reviews.ts: no silent local save when Firebase is active; no e-mail written into public reviews', () => {
   const src = readFileSync(new URL('../../src/services/reviews.ts', import.meta.url), 'utf8');
   const blocks = src.split('// Local Fallback').slice(0, -1);
-  const mutations = blocks.filter((b) => /Firebase (upsert|toggleLike|setStatus|setAdminReply|remove) failed/.test(b.slice(-400)));
-  assert.equal(mutations.length, 5, 'upsert, like, status, reply, remove');
+  // verified-purchase reviews: the browser no longer CREATES or edits a review (the order Worker does, rules refuse it)
+  assert.doesNotMatch(src, /upsertReview|setDoc\(/, 'no review written from the browser');
+  const mutations = blocks.filter((b) => /Firebase (toggleLike|setStatus|setAdminReply|remove) failed/.test(b.slice(-400)));
+  assert.equal(mutations.length, 4, 'like, status, reply, remove');
   for (const b of mutations) assert.match(b.slice(-400), /if \(isFirebaseInitialized && firebaseDb\) throw error;/);
   assert.doesNotMatch(src, /userEmail,/, 'userEmail never written');
-  const pd = readFileSync(new URL('../../src/pages/ProductDetails.tsx', import.meta.url), 'utf8');
-  assert.match(pd, /reviewFailed', 'فشل حفظ التقييم، جرب مرة أخرى'/, 'the customer is told it failed');
+  // the customer is told when publishing failed (the Worker's code, or a generic failure) — never a fake success
+  const form = readFileSync(new URL('../../src/components/reviews/ProductReviews.tsx', import.meta.url), 'utf8');
+  const page = readFileSync(new URL('../../src/pages/ReviewOrder.tsx', import.meta.url), 'utf8');
+  for (const f of [form, page]) assert.match(f, /if \('code' in r\) \{[^}]*reviewErrorAr\(r\.code\)/, 'failure shown to the customer');
+  const client = readFileSync(new URL('../../src/services/verifiedReviews.ts', import.meta.url), 'utf8');
+  assert.match(client, /default: return 'تعذّر حفظ التقييم الآن\. أعد المحاولة بعد قليل\.'/);
 });

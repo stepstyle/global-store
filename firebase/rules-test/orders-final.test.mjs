@@ -75,7 +75,8 @@ const CASES = [
     (c) => updateDoc(doc(c.as(MALLORY), 'products/p1'), { ratingAvg: 5, ratingCount: 999 })],
   ['the admin edits a product', { live: true, final: true },
     (c) => updateDoc(doc(c.as(ADMIN), 'products/p1'), { price: 3 })],
-  ['a customer posts a valid review (id = product_uid)', { live: true, final: true },
+  // verified-purchase reviews: a browser never writes a review any more (the Worker does, for a delivered order)
+  ['a customer posts a valid review (id = product_uid)', { live: true, final: false },
     (c) => setDoc(doc(c.as(MALLORY), `reviews/p1_${MALLORY}`), review('p1', MALLORY))],
   ['a customer posts reviews under random ids (unlimited reviews on one product)', { live: true, final: false },
     (c) => setDoc(doc(c.as(MALLORY), 'reviews/any-random-id-1'), review('p1', MALLORY))],
@@ -86,7 +87,7 @@ const CASES = [
     (c) => setDoc(doc(c.as(MALLORY), `reviews/p1_${MALLORY}`), review('p1', MALLORY, { rating: 50 }))],
   ['a new review that starts with 100 likes and an "admin" reply', { live: true, final: false },
     (c) => setDoc(doc(c.as(MALLORY), `reviews/p1_${MALLORY}`), review('p1', MALLORY, { likesCount: 100, adminReply: { text: 'رد رسمي' } }))],
-  ['Alice edits her own review (rating + comment)', { live: true, final: true },
+  ['Alice edits her own review (rating + comment)', { live: true, final: false },
     (c) => updateDoc(doc(c.as(ALICE), `reviews/p1_${ALICE}`), { rating: 4, comment: 'تعديل' })],
   ['Alice publishes her own hidden review / writes an admin reply', { live: true, final: false },
     (c) => updateDoc(doc(c.as(ALICE), `reviews/p1_${ALICE}`), { status: 'published', adminReply: { text: 'x' } })],
@@ -94,6 +95,38 @@ const CASES = [
     (c) => updateDoc(doc(c.as(MALLORY), `reviews/p1_${ALICE}`), { likesBy: { [MALLORY]: true }, likesCount: 1 })],
   ['Mallory inflates likes (likesCount 999 / adds someone else\'s like)', { live: true, final: false },
     (c) => updateDoc(doc(c.as(MALLORY), `reviews/p1_${ALICE}`), { likesBy: { [MALLORY]: true, [OWNER]: true }, likesCount: 999 })],
+  ['a signed-in customer forges a "verified purchase" review', { live: true, final: false },
+    (c) => setDoc(doc(c.as(MALLORY), 'reviews/vr_FORGED00000000000001'), review('p1', 'verified-buyer', { verifiedPurchase: true }))],
+  ['the admin creates a review from the browser', { live: true, final: false },
+    (c) => setDoc(doc(c.as(ADMIN), 'reviews/vr_ADMIN000000000000001'), review('p1', 'verified-buyer', { verifiedPurchase: true }))],
+  ['Alice turns her old review into a "verified purchase"', { live: true, final: false },
+    (c) => updateDoc(doc(c.as(ALICE), `reviews/p1_${ALICE}`), { verifiedPurchase: true })],
+  ['a guest lists the published reviews of a product (the store page query)', { live: true, final: true },
+    (c) => getDocs(query(collection(c.guest(), 'reviews'), where('productId', '==', 'p1'), where('status', '==', 'published')))],
+  ['a guest reads a published verified review', { live: true, final: true },
+    (c) => getDoc(doc(c.guest(), 'reviews/vr_VERIFIED0000000000001'))],
+  ['a guest lists reviews WITHOUT the published filter (would include hidden ones)', { live: true, final: false },
+    (c) => getDocs(query(collection(c.guest(), 'reviews'), where('productId', '==', 'p1')))],
+  ['a guest reads a hidden review (abusive / personal data)', { live: true, final: false },
+    (c) => getDoc(doc(c.guest(), 'reviews/vr_HIDDEN00000000000001'))],
+  ['the admin lists every review of a product, hidden ones included', { live: true, final: true },
+    (c) => getDocs(query(collection(c.as(ADMIN), 'reviews'), where('productId', '==', 'p1')))],
+  ['the admin replies to a verified review', { live: true, final: true },
+    (c) => updateDoc(doc(c.as(ADMIN), 'reviews/vr_VERIFIED0000000000001'), { adminReply: { text: 'شكرًا لك', adminId: ADMIN, adminName: 'Admin', atMs: 1 } })],
+  ['the admin changes the stars / comment of a verified review', { live: true, final: false },
+    (c) => updateDoc(doc(c.as(ADMIN), 'reviews/vr_VERIFIED0000000000001'), { rating: 5, comment: 'مُعدّل' })],
+  ['the admin hides a verified review directly (no reason: hiding goes through the Worker)', { live: true, final: false },
+    (c) => updateDoc(doc(c.as(ADMIN), 'reviews/vr_VERIFIED0000000000001'), { status: 'hidden' })],
+  ['the admin deletes a verified review (e.g. because it is negative)', { live: true, final: false },
+    (c) => deleteDoc(doc(c.as(ADMIN), 'reviews/vr_VERIFIED0000000000001'))],
+  ['the admin deletes an OLD unverified review', { live: true, final: true },
+    (c) => deleteDoc(doc(c.as(ADMIN), `reviews/p1_${ALICE}`))],
+  ['Mallory likes a verified review (only her own like)', { live: true, final: true },
+    (c) => updateDoc(doc(c.as(MALLORY), 'reviews/vr_VERIFIED0000000000001'), { likesBy: { [MALLORY]: true }, likesCount: 1 })],
+  ['a browser reads a review link hash / which order a review belongs to', { live: false, final: false },
+    async (c) => { await getDoc(doc(c.as(ADMIN), 'reviewInvites/ORD-ALICE001-AAAA')); return getDoc(doc(c.as(ADMIN), 'reviewKeys/ORD-ALICE001-AAAA__p1')); }],
+  ['a browser writes a review link / a review key', { live: false, final: false },
+    async (c) => { await setDoc(doc(c.as(ALICE), 'reviewInvites/ORD-ALICE001-AAAA'), { tokenHash: 'x' }); return setDoc(doc(c.as(ALICE), 'reviewKeys/ORD-ALICE001-AAAA__p1'), { reviewId: 'x' }); }],
   ['a user makes herself "admin" in users/{uid}.role', { live: true, final: false },
     (c) => setDoc(doc(c.as(MALLORY), `users/${MALLORY}`), { id: MALLORY, name: 'm', role: 'admin' })],
   ['a user creates / updates her own profile (customer)', { live: true, final: true },
@@ -133,6 +166,10 @@ async function seed(env) {
     await setDoc(doc(db, 'stockReservations/p1'), { reserved: 1 });
     await setDoc(doc(db, 'orderLedger/ORD-WORKER01-AAAA'), { decision: 'accepted' });
     await setDoc(doc(db, `reviews/p1_${ALICE}`), review('p1', ALICE, { status: 'hidden' }));
+    await setDoc(doc(db, 'reviews/vr_VERIFIED0000000000001'), review('p1', 'verified-buyer', { verifiedPurchase: true, rating: 2, comment: 'سيئ' }));
+    await setDoc(doc(db, 'reviews/vr_HIDDEN00000000000001'), review('p1', 'verified-buyer', { verifiedPurchase: true, status: 'hidden', comment: 'رقمي 0790000000' }));
+    await setDoc(doc(db, 'reviewInvites/ORD-ALICE001-AAAA'), { tokenHash: 'a'.repeat(64) });
+    await setDoc(doc(db, 'reviewKeys/ORD-ALICE001-AAAA__p1'), { reviewId: 'vr_VERIFIED0000000000001' });
     await setDoc(doc(db, `users/${ALICE}`), { id: ALICE, name: 'Alice', role: 'customer' });
   });
 }

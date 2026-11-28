@@ -181,12 +181,14 @@ test('C09 the logs keep the order number and outcome only (no uid, no key, no pe
 async function review(id, data) { await putDoc(`reviews/${id}`, { userName: 'x', comment: 'جيد جدا', likesCount: 0, ...data }); }
 const ratings = (pid, tok) => callWorker(env(), { method: 'POST', path: `/products/${encodeURIComponent(pid)}/ratings`, headers: tok ? { authorization: `Bearer ${tok}` } : {} });
 
-test('R01 ratings are computed from the PUBLISHED reviews only; only the 4 rating fields are written', async () => {
+test('R01 ratings are computed from the PUBLISHED, VERIFIED-purchase reviews only; only the 4 rating fields are written', async () => {
   const before = await getDecoded('products/p-simple');
-  await review('p-simple_a', { productId: 'p-simple', userId: 'a', rating: 5, status: 'published' });
-  await review('p-simple_b', { productId: 'p-simple', userId: 'b', rating: 4 });
-  await review('p-simple_c', { productId: 'p-simple', userId: 'c', rating: 1, status: 'hidden' });
-  await review('p-other_d', { productId: 'p-variants', userId: 'd', rating: 1, status: 'published' });
+  await review('p-simple_a', { productId: 'p-simple', userId: 'a', rating: 5, status: 'published', verifiedPurchase: true });
+  await review('p-simple_b', { productId: 'p-simple', userId: 'b', rating: 4, verifiedPurchase: true });
+  await review('p-simple_c', { productId: 'p-simple', userId: 'c', rating: 1, status: 'hidden', verifiedPurchase: true });
+  // an old review written straight from a browser (before verified purchases): stored, never counted
+  await review('p-simple_old', { productId: 'p-simple', userId: 'old', rating: 1, status: 'published' });
+  await review('p-other_d', { productId: 'p-variants', userId: 'd', rating: 1, status: 'published', verifiedPurchase: true });
   const r = await ratings('p-simple', await token(ALICE));
   assert.equal(r.status, 200, r.text);
   assert.deepEqual([r.body.avg, r.body.count, r.body.changed], [4.5, 2, true]);

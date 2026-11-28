@@ -276,6 +276,15 @@ const MyOrders: React.FC = () => {
                       </div>
                     </div>
 
+                    {/* a delivered order: review its products (the order Worker checks ownership + delivery) */}
+                    {String(order.status || '').toLowerCase() === 'delivered' && (
+                      <Link to={`/review/${encodeURIComponent(safeText(order.id))}`} className="shrink-0 w-full md:w-auto" data-testid="myorders-review">
+                        <span className="w-full md:w-auto flex items-center justify-center gap-2 rounded-xl bg-gold-500 hover:bg-gold-600 text-white font-extrabold px-6 py-3.5 transition-all">
+                          {tt('rateOrder', 'قيّم مشترياتك', 'Review your items')}
+                        </span>
+                      </Link>
+                    )}
+
                     {/* Track Button */}
                     <Link to={`/tracking?orderId=${encodeURIComponent(safeText(order.id))}`} className="shrink-0 w-full md:w-auto">
                       <button className="w-full md:w-auto flex items-center justify-center gap-2 rounded-xl shadow-md shadow-black/10 bg-black hover:bg-slate-800 text-white font-extrabold px-6 py-3.5 transition-all">

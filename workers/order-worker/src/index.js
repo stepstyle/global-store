@@ -10,6 +10,10 @@
 //   POST /wheel/guest/spin|state the spin WITHOUT an account (random ticket from the browser; one result per ticket)
 //   POST /wheel/guest/claim      the ticket's result becomes the signed-in account's welcome result (ID token)
 //   POST /products/:id/ratings   recompute a product's rating figures from its published reviews (ID token)
+//   POST /reviews/state|submit   verified-purchase reviews of a DELIVERED order (private link token or owner's ID token)
+//   POST /reviews/eligible       the signed-in customer's delivered orders of a product, not yet reviewed (ID token)
+//   POST /admin/orders/:id/review-link   private review link for a delivered order (admin ID token)
+//   POST /admin/reviews/:id/moderate     flag / hide with a reason / publish again (admin ID token)
 //   GET  /test                  Telegram test message      (x-worker-auth required)
 //   POST /notify-order          resend notifications        (x-worker-auth required)
 //   OPTIONS *                   CORS preflight (allow-listed origins only)
@@ -28,6 +32,7 @@ import { requireAdmin } from './admin.js';
 import { changeOrderStatus, syncDirectStatusChanges } from './fulfilment.js';
 import { claimOrder } from './claims.js';
 import { recomputeProductRating } from './ratings.js';
+import { reviewState, submitReview, eligibleOrders, createReviewLink, moderateReview } from './reviews.js';
 import { wheelState, wheelPublicCached, forgetWheelPublic, spinWheel, expireUnclaimedPrizes } from './wheel.js';
 import { adminWheelGet, adminWheelSave, adminWheelSpins } from './wheel-admin.js';
 import { guestSpin, guestState, claimGuest, releaseExpiredGuestHolds } from './wheel-guest.js';
@@ -37,6 +42,20 @@ const ADMIN_STATUS_PATH = /^\/admin\/orders\/([^/]+)\/status$/;
 const SUMMARY_PATH = /^\/orders\/([^/]+)\/summary$/;
 const CLAIM_PATH = /^\/orders\/([^/]+)\/claim$/;
 const RATINGS_PATH = /^\/products\/([^/]+)\/ratings$/;
+const REVIEW_LINK_PATH = /^\/admin\/orders\/([^/]+)\/review-link$/;
+const MODERATE_PATH = /^\/admin\/reviews\/([^/]+)\/moderate$/;
+
+/** an optional Firebase identity: a missing or invalid token is simply no identity (same answers as no token) */
+async function optionalUid(request, cfg) {
+  try {
+    const token = bearerToken(request.headers.get('authorization'));
+    if (token === undefined) return null;
+    return (await verifyFirebaseIdToken(token, { projectId: cfg.projectId, jwksUrl: cfg.authJwksUrl })).uid;
+  } catch (e) {
+    if (e instanceof AuthError) return null;
+    throw e;
+  }
+}
 
 /**
  * Server-side Turnstile check (the secret never leaves the Worker). false on: no token, invalid / reused token,
@@ -245,6 +264,56 @@ async function handle(request, env, ctx, cfg) {
     const who = await signedInUid(request, cfg);
     if (!who.ok) return reply({ ok: false, code: who.code }, 401);
     const r = await recomputeProductRating(fs, id);
+    return reply(r.body, r.status);
+  }
+
+  // ---------------- verified-purchase reviews (src/reviews.js) ----------------
+  if (url.pathname === '/reviews/state' || url.pathname === '/reviews/submit' || url.pathname === '/reviews/eligible') {
+    if (request.method !== 'POST') return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    const isSubmit = url.pathname === '/reviews/submit';
+    if (!(await allowRequest(env, cfg, isSubmit ? 'create' : 'status', ip))) return reply({ ok: false, code: 'RATE_LIMITED' }, 429);
+    const { body, error } = await readJsonBody(request, 8 * 1024);
+    if (error === 413) return reply({ ok: false, code: 'PAYLOAD_TOO_LARGE' }, 413);
+    if (error || !body || typeof body !== 'object') return reply({ ok: false, code: 'INVALID_JSON' }, 400);
+    if (url.pathname === '/reviews/eligible') {
+      const who = await signedInUid(request, cfg);
+      if (!who.ok) return reply({ ok: false, code: who.code }, 401);
+      const r = await eligibleOrders(fs, { uid: who.uid, productId: body.productId });
+      return reply(r.body, r.status);
+    }
+    // the private link's token, or (no token) the signed-in owner of the order
+    const token = typeof body.token === 'string' && body.token ? body.token : null;
+    const uid = token ? null : await optionalUid(request, cfg);
+    const args = { orderId: body.orderId, token, uid };
+    const r = isSubmit
+      ? await submitReview(fs, cfg, { ...args, productId: body.productId, rating: body.rating, comment: body.comment, name: body.name })
+      : await reviewState(fs, args);
+    return reply(r.body, r.status);
+  }
+  const rl = url.pathname.match(REVIEW_LINK_PATH);
+  const mo = rl ? null : url.pathname.match(MODERATE_PATH);
+  if (rl || mo) {
+    if (request.method !== 'POST') return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
+    if (!(await allowRequest(env, cfg, 'status', ip))) return reply({ ok: false, code: 'RATE_LIMITED' }, 429);
+    let id;
+    try {
+      id = decodeURIComponent((rl || mo)[1]);
+    } catch {
+      return reply({ ok: false, code: 'INVALID_ID' }, 400);
+    }
+    const who = await requireAdmin(request, fs, cfg);
+    if (!who.ok) return reply({ ok: false, code: who.code }, who.status);
+    const { body, error } = await readJsonBody(request, 4 * 1024);
+    if (error === 413) return reply({ ok: false, code: 'PAYLOAD_TOO_LARGE' }, 413);
+    const b = !error && body && typeof body === 'object' ? body : {};
+    if (rl) {
+      // the link points at the site the admin is using (an allow-listed origin), else the store's first origin
+      const reqOrigin = request.headers.get('origin') || '';
+      const origin = (cfg.allowedOrigins || []).includes(reqOrigin) ? reqOrigin : (cfg.allowedOrigins || [])[0] || '';
+      const r = await createReviewLink(fs, cfg, { orderId: id, adminUid: who.uid, rotate: b.rotate === true, origin });
+      return reply(r.body, r.status);
+    }
+    const r = await moderateReview(fs, { reviewId: id, action: b.action, reason: b.reason, note: b.note, adminUid: who.uid });
     return reply(r.body, r.status);
   }
 

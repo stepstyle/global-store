@@ -284,9 +284,10 @@ const ProductCard: React.FC<ProductCardProps> = ({
         <div className="flex items-center justify-between gap-2 mb-1.5">
           <span className="text-[11px] font-semibold text-gold-600 truncate" title={categoryLabel}>{categoryText}</span>
           {rating.count > 0 && (
-            <button type="button" onClick={onClickReviews} className="flex items-center gap-1 text-[11px] font-semibold text-ink-400 hover:text-ink-900" aria-label={L('عرض التقييمات', 'Open reviews')}>
+            <button type="button" onClick={onClickReviews} className="flex items-center gap-1 text-[11px] font-semibold text-ink-400 hover:text-ink-900" aria-label={L(`التقييم ${rating.avg.toFixed(1)} من 5 — ${rating.count} تقييم موثّق`, `Rated ${rating.avg.toFixed(1)} of 5 — ${rating.count} verified reviews`)} data-testid="card-rating">
               <Star size={12} className="text-gold-400" fill="currentColor" />
               <span className="tabular-nums">{rating.avg.toFixed(1)}</span>
+              <span className="tabular-nums text-ink-300">({rating.count})</span>
             </button>
           )}
         </div>

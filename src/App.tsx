@@ -34,6 +34,7 @@ const Offers = React.lazy(() => import('./pages/Offers'));
 const Cart = React.lazy(() => import('./pages/Cart'));
 const Wishlist = React.lazy(() => import('./pages/Wishlist'));
 const ProductDetails = React.lazy(() => import('./pages/ProductDetails'));
+const ReviewOrder = React.lazy(() => import('./pages/ReviewOrder'));
 const Login = React.lazy(() => import('./pages/Login'));
 const OrderTracking = React.lazy(() => import('./pages/OrderTracking'));
 const AdminDashboard = React.lazy(() => import('./pages/AdminDashboard'));
@@ -414,6 +415,8 @@ const App: React.FC = () => {
                 <Route path="/checkout" element={<Checkout />} />
                 <Route path="/order-success/:id" element={<OrderSuccess />} />
                 <Route path="/my-orders" element={<MyOrders />} />
+                <Route path="/review/:orderId" element={<ReviewOrder />} />
+                <Route path="/review/:orderId/:token" element={<ReviewOrder />} />
                 <Route path="/about" element={<InfoPage />} />
                 <Route path="/contact" element={<InfoPage />} />
                 <Route path="/privacy" element={<InfoPage />} />

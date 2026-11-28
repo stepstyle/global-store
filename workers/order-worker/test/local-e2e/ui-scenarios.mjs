@@ -136,12 +136,13 @@ async function openCheckoutSignedIn(tab, base, email) {
   await openCheckout(tab, base);
   await tab.waitFor(`document.querySelector('input[placeholder^="name@example.com"]')?.value === ${JSON.stringify(email)}`, 30_000, 'signed-in profile in checkout');
 }
-const REVIEW_FORM = `!!document.querySelector('textarea[placeholder^="اكتب رأيك"]')`;
+// verified-purchase reviews: the form appears only when the order Worker finds a delivered order of this product
+const REVIEW_FORM = `!!document.querySelector('[data-testid=review-form]')`;
 async function openReviews(tab, base, productId) {
   await tab.navigate(`${base}/?r=${Date.now()}#/product/${productId}`);
   await tab.waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.trim().startsWith('التقييمات'))`, 30_000, 'product page');
   await tab.evaluate(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim().startsWith('التقييمات')).click(); true`);
-  await tab.waitFor(`${REVIEW_FORM} || document.body.innerText.includes('نحن نهتم برأيك')`, 15_000, 'reviews tab');
+  await tab.waitFor(`${REVIEW_FORM} || !!document.querySelector('[data-testid=review-how]')`, 15_000, 'reviews tab');
 }
 const waitOutcome = (tab, ms = 40_000) => tab.waitFor(OUTCOME, ms, 'order outcome');
 const successStatus = (tab) =>
@@ -573,7 +574,7 @@ export function buildUiScenarios(ctx) {
       }],
 
       // ---------------- signed-in customer, end to end in the browser ----------------
-      ['U14', 'SIGNED-IN: real sign-in -> ID token -> order saved under the verified uid -> "My Orders" -> review allowed only after delivery', async (tab) => {
+      ['U14', 'SIGNED-IN: real sign-in -> ID token -> order saved under the verified uid -> "My Orders" -> verified review only after delivery, once', async (tab) => {
         await setUiMode('pass');
         await ctx.setUiAuthMode('resign');
         await ctx.resetAuth();
@@ -607,23 +608,24 @@ export function buildUiScenarios(ctx) {
         await ctx.setOrderStatus(orderId, 'delivered');
         await openReviews(tab, ctx.base, 'p-simple');
         await tab.waitFor(REVIEW_FORM, 20_000, 'review form after delivery');
-        // submit it: ONE review document per customer + product (id = product_uid), rating figures by the Worker
+        // submit it: written by the Worker, ONE review per product per order (private key reviewKeys/{order}__{product})
         const submitReview = async (text) => {
-          await tab.evaluate(`(() => { ${SET_VAL} const ta = document.querySelector('textarea[placeholder^="اكتب رأيك"]'); setVal(ta, ${JSON.stringify(text)}); return true; })()`);
-          await tab.evaluate(`document.querySelector('textarea[placeholder^="اكتب رأيك"]').parentElement.querySelector('.justify-end button').click(); true`);
+          await tab.evaluate(`document.querySelector('[data-testid=review-form] input[data-star="5"]').click(); true`);
+          await tab.evaluate(`(() => { ${SET_VAL} setVal(document.querySelector('#rv-comment'), ${JSON.stringify(text)}); return true; })()`);
+          await tab.evaluate(`document.querySelector('[data-testid=review-submit]').click(); true`);
         };
         await submitReview('دفتر ممتاز وورقه سميك');
-        await until(async () => !!(await ctx.get(`reviews/p-simple_${uid}`)), 20_000, 'review saved under product_uid');
-        const rv = await ctx.get(`reviews/p-simple_${uid}`);
-        assert.equal(rv.userId, uid);
+        await until(async () => !!(await ctx.get(`reviewKeys/${orderId}__p-simple`)), 20_000, 'review saved for THIS order');
+        const rv = await ctx.get(`reviews/${(await ctx.get(`reviewKeys/${orderId}__p-simple`)).reviewId}`);
+        assert.equal(rv.verifiedPurchase, true, 'verified purchase');
+        assert.notEqual(rv.userId, uid, 'the account id is not public');
         assert.equal(rv.rating, 5);
         await until(async () => (await ctx.get('products/p-simple'))?.ratingCount === 1, 20_000, 'rating figures computed by the Worker');
         assert.equal((await ctx.get('products/p-simple')).ratingAvg, 5);
-        // a second submission edits the same review (no second review, count stays 1)
+        // the same order cannot review the same product again: no form, still one review
         await openReviews(tab, ctx.base, 'p-simple');
-        await tab.waitFor(REVIEW_FORM, 20_000, 'review form again');
-        await submitReview('تعديل: ما زلت راضيًا عن الدفتر');
-        await until(async () => String((await ctx.get(`reviews/p-simple_${uid}`))?.comment || '').startsWith('تعديل'), 20_000, 'review edited');
+        await sleep(2_500);
+        assert.equal(await tab.evaluate(REVIEW_FORM), false, 'no second review of this product from this order');
         assert.equal((await ctx.get('products/p-simple')).ratingCount, 1, 'still one review');
       }],
       ['U19', 'INPUT LIMITS: over-long name blocked at step 1, over-long note blocked before sending (nothing sent, cart kept); a pending attempt keeps its number; fixed data -> SAME number, one order', async (tab) => {

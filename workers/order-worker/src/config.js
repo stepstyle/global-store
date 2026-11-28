@@ -317,6 +317,8 @@ export function loadConfig(env = {}) {
     wheelSecondOrderHours: Math.max(1, Math.min(2160, num(env.WHEEL_SECOND_ORDER_HOURS, 120))),
     // ...and its FIRST order (created in time) must be delivered within this many hours of its creation (7 days)
     wheelFirstDeliveryHours: Math.max(1, Math.min(2160, num(env.WHEEL_FIRST_DELIVERY_HOURS, 168))),
+    // verified-purchase reviews (src/reviews.js): how long a private review link sent to a customer stays valid
+    reviewLinkDays: Math.max(1, Math.min(365, num(env.REVIEW_LINK_DAYS, 90))),
     currency,
     autoApprovalMode,
     autoApproval: {

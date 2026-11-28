@@ -10,7 +10,9 @@ rules_version = '2';
 //   - update / delete: unchanged (Worker-managed orders: status and stock only through the Worker).
 // Old site tabs (main 505e7b1) also wrote the order from the browser; that write is ignored by their code and the order
 // is saved by Worker v1 — so these rules do not lose their orders. Their old success page loses the details read.
-// Everything else is byte-for-byte firestore.rules.on-delivery.
+// Everything else is byte-for-byte firestore.rules.on-delivery, EXCEPT (security): products admin-only (star figures by
+// the Worker), users cannot grant themselves a role, and reviews = VERIFIED PURCHASES ONLY (written by the order
+// Worker for a delivered order, docs/VERIFIED-REVIEWS.md; no browser create; hidden reviews readable by admins only).
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -98,42 +100,31 @@ service cloud.firestore {
       allow delete: if isOwner() && !(workerManaged() && stillReserved());
     }
 
-    // ✅ التقييمات: عامة للقراءة، بلا بريد إلكتروني. تقييم واحد لكل زبون لكل منتج (معرّف المستند = productId_uid)،
-    //    محتوى مُتحقق منه، والإعجاب يغيّر إعجاب صاحبه فقط. الإخفاء والرد والحذف للأدمن.
-    function reviewKeys() {
-      return ['productId', 'userId', 'userName', 'rating', 'comment', 'status',
-              'likesCount', 'likesBy', 'adminReply', 'createdAt', 'updatedAt'];
-    }
-    function validRating(v) {
-      return v is int && v >= 1 && v <= 5;
+    // ✅ التقييمات (شراء موثّق): يكتبها الـ Worker فقط بعد التحقق من طلب حقيقي مُسلَّم يحتوي المنتج (src/reviews.js)،
+    //    تقييم واحد لكل منتج في كل طلب. لا ينشئ أي متصفح تقييمًا (ولا الأدمن)، فلا يمكن انتحال «شراء موثّق».
+    //    - القراءة: التقييمات المنشورة للجميع؛ المخفية (محتوى مسيء / بيانات شخصية) للأدمن فقط.
+    //    - التقييم الموثّق: الأدمن يرد عليه فقط؛ الإبلاغ والإخفاء والإظهار عبر الـ Worker بسبب محدد. لا حذف له من
+    //      المتصفح: الرأي السلبي ليس سببًا لإزالته.
+    //    - التقييمات القديمة (قبل التحقق، كتبها متصفح): لا تُحتسب ولا تُعرض؛ يستطيع الأدمن إخفاءها أو حذفها.
+    //    - الإعجاب يغيّر إعجاب صاحبه فقط.
+    function verifiedReview() {
+      return resource.data.get('verifiedPurchase', false) == true;
     }
     match /reviews/{id} {
-      allow read: if true;
+      allow get: if resource.data.get('status', 'published') == 'published' || isAdmin();
+      // a visitor's query must ask for published reviews only (where status == 'published')
+      allow list: if resource.data.status == 'published' || isAdmin();
 
-      allow create: if signedIn()
-        && id == request.resource.data.productId + '_' + request.auth.uid
-        && request.resource.data.keys().hasOnly(reviewKeys())
-        && request.resource.data.userId == request.auth.uid
-        && isStr(request.resource.data.productId, 120)
-        && validRating(request.resource.data.rating)
-        && isStr(request.resource.data.get('comment', ''), 2000)
-        && isStr(request.resource.data.get('userName', ''), 80)
-        && request.resource.data.get('status', 'published') == 'published'
-        && request.resource.data.get('likesCount', 0) == 0
-        && request.resource.data.get('likesBy', {}) == {}
-        && request.resource.data.get('adminReply', null) == null;
+      allow create: if false;
 
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() && !verifiedReview();
 
-      allow update: if isAdmin()
-        || (signedIn()
-            && resource.data.userId == request.auth.uid
-            && changed().hasOnly(['rating', 'comment', 'userName', 'userEmail', 'updatedAt'])
-            // userEmail may only be REMOVED (old reviews), never written or changed
-            && (!('userEmail' in changed()) || !('userEmail' in request.resource.data))
-            && validRating(request.resource.data.rating)
-            && isStr(request.resource.data.get('comment', ''), 2000)
-            && isStr(request.resource.data.get('userName', ''), 80))
+      allow update: if (isAdmin() && !verifiedReview())
+        || (isAdmin() && verifiedReview()
+            && changed().hasOnly(['adminReply', 'updatedAt'])
+            && (request.resource.data.adminReply == null
+                || (request.resource.data.adminReply is map
+                    && isStr(request.resource.data.adminReply.get('text', ''), 1000))))
         || (signedIn()
             && changed().hasOnly(['likesBy', 'likesCount', 'updatedAt'])
             && request.resource.data.likesBy is map
@@ -160,5 +151,7 @@ service cloud.firestore {
 
     // stockReservations/{productId} and orderLedger/{orderId}: intentionally NO match — every browser read and
     // write is denied; only the order Worker (service account) reads and writes them.
+    // reviewInvites/{orderId} (hash of the private review link) and reviewKeys/{orderId}__{productId} (which order
+    // a review belongs to): also NO match — private to the Worker.
   }
 }

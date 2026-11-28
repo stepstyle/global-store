@@ -17,7 +17,17 @@ import {
 
 import { db as firebaseDb, isFirebaseInitialized, getFirebaseAuth } from './firebase';
 import { BACKEND_ENABLED } from '../config/deployEnv';
-import type { AppUser, ReviewDoc, ReviewInput, ReviewStatus } from '../types';
+import type { AppUser, ReviewDoc, ReviewStatus } from '../types';
+import type { Deps } from './verifiedReviews';
+
+/** the order Worker that writes verified reviews (same Worker as the dashboard's order actions) */
+export const reviewWorkerBase = (): string =>
+  BACKEND_ENABLED ? String(import.meta.env.VITE_ORDER_ADMIN_URL || import.meta.env.VITE_WORKER_URL || '').trim().replace(/\/+$/, '') : '';
+export const verifiedReviewDeps = (): Deps => ({
+  fetch: (...a: Parameters<typeof fetch>) => fetch(...a),
+  base: reviewWorkerBase(),
+  idToken: async () => (await getFirebaseAuth()?.currentUser?.getIdToken().catch(() => null)) ?? null,
+});
 
 // ----------------------
 // Constants & Types
@@ -68,17 +78,8 @@ const clampRating = (r: unknown): number => {
   return Math.max(1, Math.min(5, Math.round(n)));
 };
 
-/**
- * يتحقق مما إذا كان المستخدم قد اشترى المنتج واستلمه (أو قيد الشحن).
- */
-const requirePurchased = async (userId: string, productId: string): Promise<boolean> => {
-  try {
-    return await db.orders.hasPurchasedProduct(userId, productId, ['processing', 'shipped', 'delivered']);
-  } catch (error) {
-    console.error('Error verifying purchase status:', error);
-    return false;
-  }
-};
+// A review is WRITTEN only by the order Worker (services/verifiedReviews.ts -> POST /reviews/submit), after it checked
+// a delivered order that contains the product. The browser never writes one (the Firestore rules refuse it).
 
 const roundToOneDecimal = (n: number): number => Math.round(n * 10) / 10;
 
@@ -142,15 +143,18 @@ const syncProductAggregate = async (productId: string): Promise<void> => {
 // ----------------------
 // Public Service API
 // ----------------------
-export const reviewsApi = {
-  
-  // 🚨 اللمسة السحرية: تم إخراج الدالة هنا لكي يتمكن ProductDetails من الوصول إليها
-  requirePurchased,
+const createdMs = (r: any): number => {
+  const c = r?.createdAt;
+  if (c && typeof c.toMillis === 'function') return c.toMillis();
+  if (c && typeof c.seconds === 'number') return c.seconds * 1000;
+  return Number(r?.createdAtMs) || 0;
+};
 
+export const reviewsApi = {
   /**
    * 📥 جلب تقييمات المنتج
-   * - للعميل: يرى المنشور فقط (published).
-   * - للمدير: يرى الكل بما فيها المخفية.
+   * - للعميل: المنشور فقط (القواعد تشترط where status == 'published'؛ الترتيب هنا بلا فهرس مركّب).
+   * - للمدير: الكل بما فيها المخفية والقديمة غير الموثّقة.
    */
   async listByProduct(productId: string, viewer: AppUser | null): Promise<ReviewDoc[]> {
     const pid = sanitize(productId);
@@ -159,11 +163,12 @@ export const reviewsApi = {
     try {
       if (isFirebaseInitialized && firebaseDb) {
         const col = collection(firebaseDb, 'reviews');
-        const q = query(col, where('productId', '==', pid), orderBy('createdAt', 'desc'));
-        const snap = await getDocs(q);
-
-        const all = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as ReviewDoc[];
-        return isAdmin(viewer) ? all : all.filter((r) => (r.status || 'published') === 'published');
+        if (isAdmin(viewer)) {
+          const snap = await getDocs(query(col, where('productId', '==', pid), orderBy('createdAt', 'desc')));
+          return snap.docs.map((d) => ({ id: d.id, ...d.data() })) as ReviewDoc[];
+        }
+        const snap = await getDocs(query(col, where('productId', '==', pid), where('status', '==', 'published')));
+        return (snap.docs.map((d) => ({ id: d.id, ...d.data() })) as ReviewDoc[]).sort((a, b) => createdMs(b) - createdMs(a));
       }
     } catch (error) {
       console.error('Firebase read failed, falling back to local:', error);
@@ -177,131 +182,6 @@ export const reviewsApi = {
     return isAdmin(viewer) 
       ? allLocal 
       : allLocal.filter((r) => (r.status || 'published') === 'published');
-  },
-
-  /**
-   * 🔍 جلب تقييم مستخدم معين لمنتج (لمنع التكرار أو للتعديل)
-   */
-  async getMyReview(productId: string, userId: string): Promise<ReviewDoc | null> {
-    const pid = sanitize(productId);
-    const uid = sanitize(userId);
-    if (!pid || !uid) return null;
-
-    try {
-      if (isFirebaseInitialized && firebaseDb) {
-        const col = collection(firebaseDb, 'reviews');
-        const q = query(col, where('productId', '==', pid), where('userId', '==', uid));
-        const snap = await getDocs(q);
-        
-        if (!snap.empty) {
-          const d = snap.docs[0];
-          return { id: d.id, ...d.data() } as ReviewDoc;
-        }
-        return null;
-      }
-    } catch (error) {
-      console.warn('Firebase getMyReview failed, using local storage.', error);
-    }
-
-    return lsRead().find((r) => r.productId === pid && r.userId === uid) || null;
-  },
-
-  /**
-   * ✍️ إضافة أو تعديل التقييم (Upsert)
-   */
-  async upsertReview(input: ReviewInput): Promise<void> {
-    const pid = sanitize(input.productId);
-    const uid = sanitize(input.userId);
-    const userName = sanitize(input.userName) || 'User';
-    // privacy: reviews are PUBLIC — the reviewer's e-mail is never stored in them (input.userEmail is ignored)
-    const comment = sanitize(input.comment);
-    const rating = clampRating(input.rating);
-
-    if (!pid || !uid) throw new Error('بيانات المستخدم أو المنتج مفقودة.');
-    if (!comment || comment.length < 3) throw new Error('يرجى كتابة تعليق واضح (3 أحرف على الأقل).');
-
-    // ✅ شرط الشراء الأساسي (Enterprise standard)
-    const purchased = await requirePurchased(uid, pid);
-    if (!purchased) {
-      throw new Error('عذراً، لا يمكنك تقييم هذا المنتج إلا بعد شرائه واستلامه.');
-    }
-
-    try {
-      if (isFirebaseInitialized && firebaseDb) {
-        const col = collection(firebaseDb, 'reviews');
-        const q = query(col, where('productId', '==', pid), where('userId', '==', uid));
-        const snap = await getDocs(q);
-
-        if (snap.empty) {
-          // Insert new
-          await setDoc(doc(firebaseDb, 'reviews', `${pid}_${uid}`), {
-            productId: pid,
-            userId: uid,
-            userName,
-            rating,
-            comment,
-            status: 'published', // أو 'hidden' إذا أردت مراجعة الإدارة أولاً
-            likesCount: 0,
-            likesBy: {},
-            adminReply: null,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        } else {
-          // Update existing
-          const d = snap.docs[0];
-          await updateDoc(doc(firebaseDb, 'reviews', d.id), {
-            rating,
-            comment,
-            userName,
-            // removes the e-mail an OLD review may still carry (firestore.rules.final allows only its removal)
-            userEmail: deleteField(),
-            updatedAt: serverTimestamp(),
-          });
-        }
-
-        await syncProductAggregate(pid);
-        return;
-      }
-    } catch (error) {
-      console.error('Firebase upsert failed:', error);
-      // the review was NOT published: never pretend otherwise by saving it in this browser only — the caller shows
-      // "failed, try again". The local store is used only when Firebase is not configured at all (mock mode).
-      if (isFirebaseInitialized && firebaseDb) throw error;
-    }
-
-    // Local Fallback
-    const items = lsRead();
-    const idx = items.findIndex((r) => r.productId === pid && r.userId === uid);
-    const now = Date.now();
-
-    if (idx === -1) {
-      items.unshift({
-        id: makeLocalId(),
-        productId: pid,
-        userId: uid,
-        userName,
-        rating,
-        comment,
-        status: 'published',
-        likesCount: 0,
-        likesBy: {},
-        adminReply: null,
-        createdAtMs: now,
-        updatedAtMs: now,
-      } as LsReview);
-    } else {
-      items[idx] = {
-        ...items[idx],
-        rating,
-        comment,
-        userName,
-        updatedAtMs: now,
-      };
-    }
-
-    lsWrite(items);
-    await syncProductAggregate(pid);
   },
 
   /**

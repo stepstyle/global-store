@@ -18,6 +18,10 @@ import { reviewsApi } from '../services/reviews';
 import { saleInfo, formatJod } from '../services/priceDisplay';
 import { similarProducts } from '../services/recommendations';
 import { earlyProduct, samePlainData } from '../services/productEarly';
+import { isPublicVerified } from '../services/verifiedReviews';
+import { StarsRow } from '../components/reviews/ReviewParts';
+// the reviews tab (form, list, admin moderation) is loaded only when it is opened: nothing added to the first paint
+const ProductReviews = React.lazy(() => import('../components/reviews/ProductReviews'));
 
 const safeStr = (v: any) => String(v ?? '').trim();
 
@@ -283,15 +287,8 @@ const ProductDetails: React.FC = () => {
 
   const [reviews, setReviews] = useState<ReviewDoc[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
-  const [canReview, setCanReview] = useState<boolean>(false);
-  
-  const [myRating, setMyRating] = useState<number>(5);
-  const [myComment, setMyComment] = useState<string>('');
-  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
-  const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
 
   const tabsRef = useRef<HTMLDivElement | null>(null);
-  const reviewFormRef = useRef<HTMLDivElement | null>(null);
 
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
 
@@ -381,54 +378,25 @@ const ProductDetails: React.FC = () => {
     if (!id) return;
     setReviewsLoading(true);
     try {
-      const list = await reviewsApi.listByProduct(id, viewer);
-      setReviews(list);
-      if (isAdmin) {
-        const initial: Record<string, string> = {};
-        for (const r of list) {
-          const rid = String((r as any).id ?? '');
-          if (rid) initial[rid] = safeStr((r as any).adminReply?.text ?? '');
-        }
-        setReplyDraft(initial);
-      }
+      setReviews(await reviewsApi.listByProduct(id, viewer));
     } catch {
       console.error("Error fetching reviews");
     } finally {
       setReviewsLoading(false);
     }
-  }, [id, viewer, isAdmin, language]);
+  }, [id, viewer]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => { refreshReviews(); }, 250);
     return () => window.clearTimeout(timer);
   }, [refreshReviews]);
 
-  useEffect(() => {
-    const run = async () => {
-      if (!product?.id || !viewer?.id) {
-        setCanReview(false);
-        return;
-      }
-      try {
-        const hasPurchased = await reviewsApi.requirePurchased(viewer.id, product.id);
-        setCanReview(hasPurchased);
-      } catch (err) {
-        console.error("Index error or purchase check failed", err);
-        setCanReview(false);
-      }
-    };
-    run();
-  }, [viewer?.id, product?.id]);
-
-  const publishedReviews = useMemo(() => {
-    if (isAdmin) return reviews;
-    return reviews.filter((r) => ((r as any).status || 'published') === 'published');
-  }, [reviews, isAdmin]);
-
+  // the figures every visitor sees: published reviews of a VERIFIED purchase only (the admin sees the same numbers)
+  const publicReviews = useMemo(() => reviews.filter(isPublicVerified), [reviews]);
   const aggregate = useMemo(() => ({
-    avg: avgRating(publishedReviews),
-    count: publishedReviews.length
-  }), [publishedReviews]);
+    avg: avgRating(publicReviews),
+    count: publicReviews.length
+  }), [publicReviews]);
 
   const isLiked = useMemo(() => (product ? wishlist.has(product.id) : false), [wishlist, product]);
 
@@ -477,88 +445,8 @@ const ProductDetails: React.FC = () => {
     }
   }, [showToast, language]);
 
-  const handleSubmitReview = async () => {
-    if (!product || !viewer?.id) return;
-
-    if (!canReview) {
-      showToast(
-        tt('reviewAfterPurchase', 'عذراً، يجب شراء المنتج أولاً لتتمكن من التقييم', 'You can review only after purchase'),
-        'error'
-      );
-      return;
-    }
-
-    const c = safeStr(myComment);
-    if (c.length < 3) {
-      showToast(tt('commentTooShort', 'اكتب تعليقاً واضحاً (على الأقل 3 أحرف)', 'Write a clearer comment'), 'error');
-      return;
-    }
-
-    setIsSubmittingReview(true);
-    try {
-      await reviewsApi.upsertReview({
-        productId: product.id,
-        userId: viewer.id,
-        userName: viewer.name || 'User',
-        userEmail: viewer.email || '',
-        rating: myRating,
-        comment: c,
-      });
-      
-      showToast(tt('reviewPosted', 'تم نشر تقييمك بنجاح، شكراً لك!', 'Review posted successfully!'), 'success');
-      
-      setMyComment('');
-      setMyRating(5);
-      await refreshReviews();
-      setActiveTab('reviews');
-    } catch (err) {
-      console.error(err);
-      showToast(tt('reviewFailed', 'فشل حفظ التقييم، جرب مرة أخرى', 'Failed to save review'), 'error');
-    } finally {
-      setIsSubmittingReview(false);
-    }
-  };
-
-  const handleAdminToggleStatus = useCallback(async (r: ReviewDoc) => {
-    if (!isAdmin) return;
-    try {
-      const next = ((r as any).status || 'published') === 'published' ? 'hidden' : 'published';
-      await reviewsApi.setStatus((r as any).id, next);
-      showToast(tt('statusUpdated', 'تمت عملية التغيير', 'Status updated'), 'success');
-      await refreshReviews();
-    } catch { showToast('Error', 'error'); }
-  }, [isAdmin, refreshReviews, showToast, language]);
-
-  const handleAdminDelete = useCallback(async (r: ReviewDoc) => {
-    if (!isAdmin) return;
-    if (!window.confirm(tr('حذف التقييم؟', 'Delete review?'))) return;
-    try {
-      await reviewsApi.remove((r as any).id);
-      showToast(tt('deleted', 'تم الحذف', 'Deleted'), 'success');
-      await refreshReviews();
-    } catch { showToast('Error', 'error'); }
-  }, [isAdmin, refreshReviews, showToast, language]);
-
-  const handleAdminReply = useCallback(async (r: ReviewDoc) => {
-    if (!isAdmin || !viewer) return;
-    try {
-      const rid = String((r as any).id ?? '');
-      await reviewsApi.setAdminReply(rid, safeStr(replyDraft[rid] ?? ''), viewer);
-      showToast(tt('replySaved', 'تم حفظ الرد', 'Reply saved'), 'success');
-      await refreshReviews();
-    } catch { showToast('Error', 'error'); }
-  }, [isAdmin, viewer, replyDraft, refreshReviews, showToast, language]);
-
-  const handleTopStarClick = (rating: number) => {
-    if (!viewer?.id) return showToast(tt('loginToReview', 'سجّل دخول للتقييم', 'Login to review'), 'info');
-    
-    if (!canReview) {
-      setActiveTab('reviews');
-      setTimeout(() => scrollToTabs(), 50);
-      return showToast(tt('mustPurchaseFirst', 'عذراً، يجب شراء المنتج أولاً لتتمكن من إضافة تقييمك.', 'Please purchase the product to review'), 'info');
-    }
-
-    setMyRating(rating);
+  // the stars at the top open the reviews tab (writing a review: services/verifiedReviews.ts, checked by the Worker)
+  const handleTopStarClick = () => {
     setActiveTab('reviews');
     setTimeout(() => scrollToTabs(), 50);
   };
@@ -665,16 +553,14 @@ const ProductDetails: React.FC = () => {
                 </button>
               </div>
               <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black text-slate-900 leading-tight">{productTitle}</h1>
-              <div className="flex items-center gap-3 mt-4">
-                <div className="flex text-yellow-400">
-                  {[1, 2, 3, 4, 5].map((s) => (
-                    <Star key={s} size={18} fill={s <= Math.round(aggregate.avg) ? 'currentColor' : 'none'} onClick={() => handleTopStarClick(s)} className="cursor-pointer hover:scale-110 transition-transform" />
-                  ))}
-                </div>
-                <span className="font-bold text-slate-500 hover:text-slate-900 cursor-pointer" onClick={() => { setActiveTab('reviews'); setTimeout(() => scrollToTabs(), 50); }}>
-                  ({aggregate.count} {tt('reviews', 'تقييمات', 'Reviews')})
-                </span>
-              </div>
+              <button type="button" onClick={handleTopStarClick} className="flex items-center gap-2 mt-4 rounded-lg text-start hover:opacity-90" data-testid="product-rating-summary" aria-label={aggregate.count > 0 ? (isAR ? `التقييم ${aggregate.avg.toFixed(1)} من 5 — ${aggregate.count} تقييم موثّق` : `Rated ${aggregate.avg.toFixed(1)} of 5 — ${aggregate.count} verified reviews`) : (isAR ? 'التقييمات' : 'Reviews')}>
+                <StarsRow value={aggregate.avg} size={18} />
+                {aggregate.count > 0 ? (
+                  <span className="text-[14px] font-bold text-ink-700"><span className="tabular-nums">{aggregate.avg.toFixed(1)}</span> · {isAR ? `${aggregate.count} ${aggregate.count === 1 ? 'تقييم موثّق' : aggregate.count === 2 ? 'تقييمان موثّقان' : 'تقييمات موثّقة'}` : `${aggregate.count} verified`}</span>
+                ) : (
+                  <span className="text-[14px] font-semibold text-ink-500">{isAR ? 'لا تقييمات بعد' : 'No reviews yet'}</span>
+                )}
+              </button>
               
               <div className="mt-8">
 
@@ -790,122 +676,9 @@ const ProductDetails: React.FC = () => {
             {activeTab === 'desc' ? (
               <div className="max-w-4xl">{renderRichText(displayDesc)}</div>
             ) : (
-              <div className="space-y-8 max-w-4xl">
-                
-                {viewer?.id ? (
-                  canReview ? (
-                    <div ref={reviewFormRef} className="bg-slate-50 p-6 md:p-8 rounded-3xl border border-slate-100">
-                      <h3 className="text-xl font-extrabold mb-4 text-slate-900">{tt('addReview', 'أضف تقييمك', 'Add Review')}</h3>
-                      <div className="flex gap-2 mb-5 bg-white inline-flex p-3 rounded-2xl shadow-sm border border-slate-100">
-                        {[1, 2, 3, 4, 5].map((s) => (
-                          <Star key={s} size={28} onClick={() => setMyRating(s)} className={`cursor-pointer transition-all active:scale-90 ${s <= myRating ? 'text-yellow-400 fill-yellow-400 drop-shadow-sm' : 'text-slate-200'}`} />
-                        ))}
-                      </div>
-                      <textarea
-                        value={myComment}
-                        onChange={(e) => setMyComment(e.target.value)}
-                        placeholder={tt('reviewPlaceholder', 'اكتب رأيك بصراحة عن المنتج هنا...', 'Write your review...')}
-                        className="w-full min-h-[120px] p-5 rounded-2xl border border-slate-200 outline-none focus:ring-2 focus:ring-slate-900 resize-none text-[15px]"
-                      />
-                      <div className="mt-4 flex justify-end">
-                        <Button
-                          onClick={() => handleSubmitReview()} 
-                          disabled={isSubmittingReview}
-                          className="px-10 py-3 bg-slate-900 text-white hover:bg-yellow-400 hover:text-slate-900 font-extrabold rounded-xl transition-all shadow-xl active:scale-95"
-                        >
-                          {isSubmittingReview ? (
-                            <div className="flex items-center gap-2">
-                              <Loader2 className="animate-spin" size={18} />
-                              {isAR ? 'جاري الحفظ...' : 'Saving...'}
-                            </div>
-                          ) : (
-                            tt('saveReview', 'حفظ التقييم', 'Save Review')
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="bg-sky-50/50 p-8 md:p-10 rounded-3xl border border-sky-100 flex flex-col items-center text-center shadow-sm">
-                      <div className="flex gap-2 mb-5 opacity-60">
-                        {[1, 2, 3, 4, 5].map((s) => (
-                          <Star key={s} size={28} className="text-slate-300 drop-shadow-sm" />
-                        ))}
-                      </div>
-                      <h3 className="text-xl font-extrabold mb-3 text-slate-900">
-                        {tt('weValueYourOpinion', 'نحن نهتم برأيك!', 'We value your opinion!')}
-                      </h3>
-                      <p className="text-slate-500 max-w-md leading-relaxed text-[15px] font-medium">
-                        {tt(
-                          'mustPurchaseMsg', 
-                          'لضمان شفافية ومصداقية التقييمات في متجرنا، نتيح هذه الميزة فقط للعملاء الذين قاموا بتجربة المنتج فعلياً. نأمل أن نرى تقييمك قريباً بعد الشراء!', 
-                          'To ensure authenticity, reviews are restricted to customers who purchased this product. We hope to see your review soon!'
-                        )}
-                      </p>
-                    </div>
-                  )
-                ) : (
-                  <div className="bg-slate-50 p-8 md:p-10 rounded-3xl border border-slate-200 flex flex-col items-center text-center shadow-sm">
-                    <MessageSquare className="text-slate-300 mb-4" size={40} />
-                    <h3 className="text-xl font-extrabold mb-2 text-slate-900">
-                      {tt('joinToReview', 'شاركنا تجربتك', 'Share your experience')}
-                    </h3>
-                    <p className="text-slate-500 max-w-sm text-sm leading-relaxed">
-                      {tt('loginToReviewMsg', 'يرجى تسجيل الدخول أو إنشاء حساب لتتمكن من تقييم هذا المنتج وقراءة آراء العملاء بشكل أفضل.', 'Please log in or create an account to review this product.')}
-                    </p>
-                  </div>
-                )}
-
-                <div className="space-y-6 mt-8">
-                  {reviewsLoading ? (
-                    <div className="text-center py-10 text-slate-400 font-bold">Loading reviews...</div>
-                  ) : publishedReviews.length === 0 ? (
-                    <div className="text-center py-16 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
-                      <MessageSquare className="mx-auto text-slate-300 mb-3" size={40} />
-                      <div className="text-slate-500 font-bold">{tt('noReviews', 'لا توجد تقييمات بعد، كن أول من يقيّم المنتج!', 'No reviews yet.')}</div>
-                    </div>
-                  ) : (
-                    publishedReviews.map((r: any, idx) => (
-                      <div key={idx} className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm hover:shadow-md transition-shadow">
-                        <div className="flex justify-between items-start mb-3">
-                          <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 bg-slate-100 text-slate-700 rounded-full flex items-center justify-center font-black text-lg uppercase">{r.userName?.charAt(0) || 'U'}</div>
-                            <div>
-                              <div className="font-extrabold text-slate-900">{r.userName}</div>
-                              <div className="flex text-yellow-400 my-1">
-                                {[1, 2, 3, 4, 5].map((s) => (
-                                  <Star key={s} size={14} fill={s <= r.rating ? 'currentColor' : 'none'} className={s <= r.rating ? '' : 'text-slate-200'} />
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-xs font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-lg">{formatDate(r)}</span>
-                            {isAdmin && (
-                              <div className="flex gap-1 bg-slate-50 p-1 rounded-xl">
-                                <button onClick={() => handleAdminToggleStatus(r)} className={`p-1.5 rounded-lg transition-colors ${r.status === 'hidden' ? 'bg-slate-200 text-slate-600' : 'hover:bg-slate-200 text-slate-900'}`}>{r.status === 'hidden' ? <EyeOff size={16} /> : <Eye size={16} />}</button>
-                                <button onClick={() => handleAdminDelete(r)} className="p-1.5 hover:bg-red-100 text-red-500 rounded-lg transition-colors"><Trash2 size={16} /></button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <p className="text-slate-700 text-[15px] leading-relaxed mt-2 pl-14 rtl:pl-0 rtl:pr-14">{r.comment}</p>
-                        {r.adminReply?.text && (
-                          <div className="mt-4 ml-10 rtl:ml-0 rtl:mr-10 bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                            <div className="text-xs font-black text-slate-800 mb-1 flex items-center gap-1"><Shield size={12} /> {tt('adminReply', 'رد الإدارة:', 'Admin Reply:')}</div>
-                            <p className="text-slate-700 text-sm">{r.adminReply.text}</p>
-                          </div>
-                        )}
-                        {isAdmin && (
-                          <div className="mt-5 ml-10 rtl:ml-0 rtl:mr-10 bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                            <textarea value={replyDraft[r.id] ?? ''} onChange={(e) => setReplyDraft({ ...replyDraft, [r.id]: e.target.value })} placeholder="أضف أو عدل رد الإدارة هنا..." className="w-full p-3 text-sm bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-900 resize-none min-h-[80px]" />
-                            <div className="flex justify-end mt-2"><Button size="sm" onClick={() => handleAdminReply(r)} className="bg-slate-900 text-white hover:bg-yellow-400 hover:text-slate-900 rounded-lg px-6">حفظ الرد</Button></div>
-                          </div>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
+              <React.Suspense fallback={<div className="py-10 text-center text-ink-400 font-bold">{isAR ? 'جارٍ تحميل التقييمات…' : 'Loading reviews…'}</div>}>
+                <ProductReviews productId={product.id} viewer={viewer} isAdmin={isAdmin} reviews={reviews} loading={reviewsLoading} onChanged={refreshReviews} showToast={showToast as any} isAR={isAR} />
+              </React.Suspense>
             )}
           </div>
         </div>

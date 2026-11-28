@@ -6,6 +6,11 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
+import { stashReviewToken } from './services/reviewLink';
+
+// a private review link (#/review/<order>/<token>): the token leaves the address bar BEFORE anything renders or any
+// analytics (after consent) could read the URL; it is kept for this tab only
+try { stashReviewToken(window.location, window.sessionStorage, window.history); } catch { /* storage refused */ }
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

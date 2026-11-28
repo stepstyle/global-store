@@ -9,6 +9,9 @@ import { encodeFields, rawNumber } from './firestore.js';
 
 export const PRODUCT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
 export const REVIEWS_SCAN_LIMIT = 2000;
+/** the store's figures count ONLY reviews of a verified purchase (written by src/reviews.js for a delivered order);
+ *  older reviews written straight from a browser stay stored but are not counted */
+export const COUNT_VERIFIED_ONLY = true;
 
 /** 1..5 (rounded); a missing / non-numeric rating is IGNORED (null), never counted as a 1. */
 const clampRating = (v) => {
@@ -17,12 +20,14 @@ const clampRating = (v) => {
   return Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : null;
 };
 
-/** Published reviews only; rating rounded to one decimal; { avg: 0, count: 0 } when there is none. */
-export function aggregateRatings(reviews) {
+/** Published reviews only (with verifiedOnly: verified purchases only); rating rounded to one decimal;
+ *  { avg: 0, count: 0 } when there is none. */
+export function aggregateRatings(reviews, { verifiedOnly = false } = {}) {
   let sum = 0;
   let count = 0;
   for (const r of reviews) {
     if ((r.status ?? 'published') !== 'published') continue;
+    if (verifiedOnly && r.verifiedPurchase !== true) continue;
     const v = clampRating(r.rating);
     if (v === null) continue;
     sum += v;
@@ -44,11 +49,11 @@ export async function recomputeProductRating(fs, productId) {
   const docs = await fs.runQuery({
     from: [{ collectionId: 'reviews' }],
     where: { fieldFilter: { field: { fieldPath: 'productId' }, op: 'EQUAL', value: { stringValue: productId } } },
-    select: { fields: [{ fieldPath: 'rating' }, { fieldPath: 'status' }] },
+    select: { fields: [{ fieldPath: 'rating' }, { fieldPath: 'status' }, { fieldPath: 'verifiedPurchase' }] },
     limit: REVIEWS_SCAN_LIMIT,
   });
-  const reviews = docs.map((d) => ({ rating: num(d.fields?.rating), status: d.fields?.status?.stringValue }));
-  const { avg, count } = aggregateRatings(reviews);
+  const reviews = docs.map((d) => ({ rating: num(d.fields?.rating), status: d.fields?.status?.stringValue, verifiedPurchase: d.fields?.verifiedPurchase?.booleanValue === true }));
+  const { avg, count } = aggregateRatings(reviews, { verifiedOnly: COUNT_VERIFIED_ONLY });
   const f = product.fields || {};
   if (num(f.ratingAvg) === avg && num(f.ratingCount) === count && num(f.rating) === avg && num(f.reviews) === count) {
     return { status: 200, body: { ok: true, avg, count, changed: false } };

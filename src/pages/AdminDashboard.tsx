@@ -49,6 +49,8 @@ import { WHEEL_ENABLED } from '../services/wheel';
 
 // prize wheel settings tab: TEST builds only (VITE_WHEEL_MODE=test); not part of a production bundle's render tree
 const WheelAdmin = WHEEL_ENABLED ? React.lazy(() => import('../components/wheel/WheelAdmin')) : null;
+const AdminReviewsPanel = React.lazy(() => import('../components/reviews/AdminReviewsPanel'));
+import AdminReviewLink from '../components/reviews/AdminReviewLink';
 
 const PAGE_SIZE = 100;
 
@@ -209,7 +211,7 @@ const AdminDashboard: React.FC = () => {
     }
   }, [user, navigate, showToast]);
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'orders' | 'settings' | 'wheel'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'orders' | 'settings' | 'wheel' | 'reviews'>('overview');
   
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -890,6 +892,16 @@ const AdminDashboard: React.FC = () => {
             <Settings size={18} /> {t('settings')}
           </button>
 
+          <button
+            onClick={() => setActiveTab('reviews')}
+            data-testid="admin-tab-reviews"
+            className={`pb-4 px-2 font-bold transition-colors whitespace-nowrap flex items-center gap-2 ${
+              activeTab === 'reviews' ? 'text-secondary-DEFAULT border-b-2 border-secondary-DEFAULT' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <span aria-hidden="true">★</span> التقييمات
+          </button>
+
           {WheelAdmin && (
             <button
               onClick={() => setActiveTab('wheel')}
@@ -902,6 +914,12 @@ const AdminDashboard: React.FC = () => {
             </button>
           )}
         </div>
+
+        {activeTab === 'reviews' && (
+          <React.Suspense fallback={<p className="p-6 text-slate-500">…</p>}>
+            <AdminReviewsPanel products={products || []} />
+          </React.Suspense>
+        )}
 
         {WheelAdmin && activeTab === 'wheel' && (
           <React.Suspense fallback={<p className="p-6 text-slate-500">…</p>}>
@@ -1639,6 +1657,11 @@ const AdminDashboard: React.FC = () => {
               </div>
             </div>
 
+            {selectedOrderStatus === 'delivered' && (
+              <div className="px-5 pb-4">
+                <AdminReviewLink key={safeText(selectedOrder?.id)} orderId={safeText(selectedOrder?.id)} phone={safeText(selectedOrder?.address?.phone)} fullName={safeText(selectedOrder?.address?.fullName)} />
+              </div>
+            )}
             <div className="p-5 border-t border-slate-100 bg-white rounded-b-3xl">
               <div className="flex flex-wrap items-center gap-2">
                 {selectedOrderStatus === 'new' && (
