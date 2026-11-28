@@ -33,7 +33,7 @@ import { changeOrderStatus, syncDirectStatusChanges } from './fulfilment.js';
 import { claimOrder } from './claims.js';
 import { recomputeProductRating } from './ratings.js';
 import { reviewState, submitReview, eligibleOrders, createReviewLink, moderateReview } from './reviews.js';
-import { wheelState, wheelPublicCached, forgetWheelPublic, spinWheel, expireUnclaimedPrizes } from './wheel.js';
+import { wheelState, wheelPublic, spinWheel, expireUnclaimedPrizes } from './wheel.js';
 import { adminWheelGet, adminWheelSave, adminWheelSpins } from './wheel-admin.js';
 import { guestSpin, guestState, claimGuest, releaseExpiredGuestHolds } from './wheel-guest.js';
 
@@ -323,7 +323,7 @@ async function handle(request, env, ctx, cfg) {
     if (cfg.wheelMode === 'off') return reply({ ok: false, code: 'NOT_FOUND' }, 404);
     if (request.method !== 'GET') return reply({ ok: false, code: 'METHOD_NOT_ALLOWED' }, 405);
     if (!(await allowRequest(env, cfg, 'status', ip))) return reply({ ok: false, code: 'RATE_LIMITED' }, 429);
-    const r = await wheelPublicCached(env, fs, cfg);
+    const r = await wheelPublic(fs, cfg);
     return reply(r.body, r.status);
   }
   // admin: campaign settings + prize log (requireAdmin on EVERY call; 404 when the wheel is off)
@@ -343,7 +343,6 @@ async function handle(request, env, ctx, cfg) {
     if (error === 413) return reply({ ok: false, code: 'PAYLOAD_TOO_LARGE' }, 413);
     if (error || !body || typeof body !== 'object') return reply({ ok: false, code: 'INVALID_JSON' }, 400);
     const r = await adminWheelSave(fs, cfg, body, who.uid);
-    forgetWheelPublic(env); // visitors see the saved settings at once (this isolate; others within WHEEL_PUBLIC_CACHE_SECONDS)
     return reply(r.body, r.status);
   }
   // spin WITHOUT an account (owner's rule): the browser's random ticket names the stored result; the claim (signed in,

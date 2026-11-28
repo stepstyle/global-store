@@ -503,26 +503,9 @@ export async function wheelPublic(fs, cfg, { now = Date.now() } = {}) {
   const slots = open.ok ? displaySlots(campaign, await poolRemaining(fs, cfg.wheelCampaignId, campaign), now) : [];
   return {
     status: 200,
-    // campaignId + startsAt: the browser shows the popup by itself once per CAMPAIGN — they tell a new campaign from the
-    // previous one even when the prizes are the same (the id is already public: it is part of every spin id)
-    body: { ok: true, campaign: open.ok ? 'open' : open.code, slots, minOrderJod: campaign?.minOrderJod ?? null, prizeHoldMinutes: prizeHoldMs(cfg) / 60_000, terms: campaign?.terms ?? '', campaignId: cfg.wheelCampaignId, startsAt: Number.isFinite(campaign?.startsAt) ? new Date(campaign.startsAt).toISOString() : null },
+    body: { ok: true, campaign: open.ok ? 'open' : open.code, slots, minOrderJod: campaign?.minOrderJod ?? null, prizeHoldMinutes: prizeHoldMs(cfg) / 60_000, terms: campaign?.terms ?? '' },
   };
 }
-
-// ------------------------------------------------------------------ GET /wheel/public, kept briefly in memory
-// Keyed by the Worker's env object (one per isolate in production; a new one per call in the tests = never shared) and
-// the campaign id. Display only (see config wheelPublicCacheMs); never used by a spin, an order or the admin.
-const publicCache = new WeakMap();
-export async function wheelPublicCached(env, fs, cfg, { now = Date.now() } = {}) {
-  const ttl = cfg.wheelPublicCacheMs || 0;
-  const hit = ttl > 0 && env && typeof env === 'object' ? publicCache.get(env) : null;
-  if (hit && hit.cid === cfg.wheelCampaignId && now - hit.at < ttl) return { ...hit.r, cached: true };
-  const r = await wheelPublic(fs, cfg, { now });
-  if (ttl > 0 && r.status === 200 && env && typeof env === 'object') publicCache.set(env, { at: now, cid: cfg.wheelCampaignId, r });
-  return r;
-}
-/** an admin saved the campaign: the next visitor gets the new settings at once (this isolate) */
-export function forgetWheelPublic(env) { if (env && typeof env === 'object') publicCache.delete(env); }
 
 /** GET /wheel/state — what this account has: chances, stored results (labels + status), campaign open or not. */
 export async function wheelState(fs, cfg, uid, { now = Date.now() } = {}) {

@@ -860,11 +860,10 @@ try {
     ...(SUITE === 'visual' || SUITE === 'preview' || SUITE === 'store' || SUITE === 'reviews' ? { STOCK_POLICY: 'on_delivery', APPROVAL_MODE: 'off', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log' } : {}),
     // preview: the DEMO prize wheel (TEST mode, local demo campaign, a random per-run phone secret never written anywhere;
     // a generous guest-spin limit so a person can try it again and again)
-    // the suites rewrite the campaign straight in the emulator between checks: no /wheel/public cache here (tested in test/unit)
-    ...(PREVIEW_WHEEL ? { WHEEL_MODE: 'test', WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(32).toString('hex'), WHEEL_GUEST_PER_IP_DAY: '200', WHEEL_PUBLIC_CACHE_SECONDS: '0' } : {}),
+    ...(PREVIEW_WHEEL ? { WHEEL_MODE: 'test', WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(32).toString('hex'), WHEEL_GUEST_PER_IP_DAY: '200' } : {}),
     // prize wheel: TEST mode with a TEST campaign, a random per-run HMAC secret (never written anywhere), production
     // settings otherwise (except Turnstile: the local web app sends no token)
-    ...(SUITE === 'wheel' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', ORDER_SIGN_IN: 'google', WHEEL_MODE: E2E_WHEEL_MODE, WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(36).toString('base64url'), WHEEL_PUBLIC_CACHE_SECONDS: '0' } : {}),
+    ...(SUITE === 'wheel' ? { STOCK_POLICY: 'on_delivery', PRICE_CHECK_MODE: 'enforce', TURNSTILE_MODE: 'log', ORDER_SIGN_IN: 'google', WHEEL_MODE: E2E_WHEEL_MODE, WHEEL_CAMPAIGN: WHEEL_CAMPAIGN_ID, WHEEL_PHONE_SECRET: randomBytes(36).toString('base64url') } : {}),
     ...(SUITE === 'approval' || SUITE === 'auto' ? {
       APPROVAL_MODE: 'telegram', TELEGRAM_CHAT_ID: APPROVAL.chatId, TELEGRAM_ADMIN_USER_IDS: APPROVAL.adminIds.join(','),
       TELEGRAM_WEBHOOK_SECRET: T.webhook, PRICE_CHECK_MODE: 'enforce',
