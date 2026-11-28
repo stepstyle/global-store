@@ -53,7 +53,10 @@ test('every unsafe variant is a VIOLATION', async () => {
     'stock policy unset': FILLED.replace(/^STOCK_POLICY = "on_delivery"\r?\n/m, ''),
     'stock policy typo': FILLED.replace('STOCK_POLICY = "on_delivery"', 'STOCK_POLICY = "on-delivery"'),
     'telegram approval buttons': FILLED.replace('APPROVAL_MODE = "off"', 'APPROVAL_MODE = "telegram"'),
-    'leftover telegram admin ids': FILLED.replace('[vars]', '[vars]\nTELEGRAM_ADMIN_USER_IDS = "123456789"'),
+    'malformed telegram admin ids': FILLED.replace('[vars]', '[vars]\nTELEGRAM_ADMIN_USER_IDS = "@owner"'),
+    'telegram admin ids with a stray entry': FILLED.replace('[vars]', '[vars]\nTELEGRAM_ADMIN_USER_IDS = "123456789,abc"'),
+    'wheel phone secret in vars': FILLED.replace('[vars]', '[vars]\nWHEEL_PHONE_SECRET = "x"'),
+    'wheel mode typo': FILLED.replace('[vars]', '[vars]\nWHEEL_MODE = "on"\nWHEEL_CAMPAIGN = "opening-1"'),
     'chat id not numeric': FILLED.replace('TELEGRAM_CHAT_ID = "-1001234567890"', 'TELEGRAM_CHAT_ID = "@store_chat"'),
   };
   for (const [name, text] of Object.entries(bad)) {
@@ -133,5 +136,32 @@ test('production template: public endpoint + retry cron are built in; once fille
   assert.match(DRAFT, /^workers_dev = true\r?$/m);
   assert.match(DRAFT, /^crons = \["\*\/5 \* \* \* \*"\]\r?$/m);
   const r = await checkProductionConfig(FILLED);
-  assert.deepEqual(r, { violations: [], placeholders: [], deployable: true });
+  assert.deepEqual(r, { violations: [], placeholders: [], notes: [], deployable: true });
+});
+
+// the live Worker's shape (2026-11-28): the prize wheel on, and the owner's Telegram id left from the approval stage
+test('live shape: WHEEL_MODE=live + campaign (its phone secret is a SECRET) and inert leftover admin ids = deployable, with a NOTE', async () => {
+  const live = FILLED.replace('[vars]', '[vars]\nWHEEL_MODE = "live"\nWHEEL_CAMPAIGN = "opening-1"\nTELEGRAM_ADMIN_USER_IDS = "123456789"');
+  const r = await checkProductionConfig(live);
+  assert.deepEqual(r.violations, []);
+  assert.equal(r.deployable, true);
+  assert.equal(r.notes.length, 1);
+  assert.match(r.notes[0], /TELEGRAM_ADMIN_USER_IDS is set but inert/);
+  assert.deepEqual((await checkProductionConfig(FILLED)).notes, [], 'no leftover, nothing to note');
+});
+
+test('leftover admin ids are inert while APPROVAL_MODE is off: the Telegram webhook answers 404 and reads nothing', async () => {
+  const { handleTelegramWebhook } = await import('../../src/telegram.js');
+  globalThis.__DEPLOY_TARGET__ = 'production';
+  const cfg = loadConfig({
+    ENVIRONMENT: 'production', FIREBASE_PROJECT_ID: 'antastore1-82b50', FIRESTORE_AUTH: 'service-account', STOCK_POLICY: 'on_delivery',
+    APPROVAL_MODE: 'off', TELEGRAM_ADMIN_USER_IDS: '123456789', TELEGRAM_CHAT_ID: '-1001234567890', TELEGRAM_WEBHOOK_SECRET: 'w'.repeat(40),
+  });
+  assert.equal(cfg.approvalMode, 'off');
+  assert.ok(cfg.telegram.adminUserIds.has('123456789'), 'the id is parsed…');
+  const fs = new Proxy({}, { get() { throw new Error('Firestore must not be touched'); } });
+  const press = { update_id: 1, callback_query: { id: 'q', from: { id: 123456789 }, data: 'v1:acc:ORD-1', message: { chat: { id: -1001234567890 }, message_id: 1 } } };
+  const req = new Request('https://w.example/telegram/webhook', { method: 'POST', headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': 'w'.repeat(40) }, body: JSON.stringify(press) });
+  const res = await handleTelegramWebhook(req, cfg, fs);
+  assert.equal(res.status, 404, '…but a press by that very admin is refused before anything is read');
 });

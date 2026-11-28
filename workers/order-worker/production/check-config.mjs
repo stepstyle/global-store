@@ -3,6 +3,7 @@
 // Two kinds of findings:
 //   VIOLATION   — a rule broken by the file itself (staging/local value, test key, secret in [vars], weak mode …)
 //   PLACEHOLDER — a production value nobody filled in yet (REPLACE_WITH_…): deploy stays blocked
+//   NOTE        — allowed, but worth knowing (e.g. an inert leftover); never blocks
 // Plus a simulation: the Worker's own loadConfig() (production build) with the file's [vars] + FAKE secrets must pass.
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
@@ -16,7 +17,7 @@ export const LOCAL_TOML = resolve(HERE, '../wrangler.production.local.toml');
 export const DEFAULT_TOML = existsSync(LOCAL_TOML) ? LOCAL_TOML : TEMPLATE_TOML;
 export const PROD_PROJECT = 'antastore1-82b50';
 export const PROD_ORIGINS = ['https://dairsharaf.com', 'https://www.dairsharaf.com'];
-const SECRET_NAMES = ['FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY', 'TURNSTILE_SECRET', 'TELEGRAM_BOT_TOKEN', 'SENDGRID_API_KEY', 'WORKER_AUTH_TOKEN', 'STAGING_ACCESS_TOKEN', 'TELEGRAM_WEBHOOK_SECRET', 'AUTO_APPROVAL_HASH_SECRET'];
+const SECRET_NAMES = ['FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY', 'TURNSTILE_SECRET', 'TELEGRAM_BOT_TOKEN', 'SENDGRID_API_KEY', 'WORKER_AUTH_TOKEN', 'STAGING_ACCESS_TOKEN', 'TELEGRAM_WEBHOOK_SECRET', 'AUTO_APPROVAL_HASH_SECRET', 'WHEEL_PHONE_SECRET'];
 
 /** minimal TOML reading for this file's flat shape: top-level keys, [define], [vars] (strings only) */
 export function parseToml(text) {
@@ -39,6 +40,7 @@ export async function checkProductionConfig(text) {
   const vars = t.sections.vars || {};
   const v = [];
   const p = [];
+  const notes = [];
   const all = { ...t.top, ...vars, ...(t.sections.define || {}) };
   for (const [k, val] of Object.entries(all)) if (val.includes('REPLACE_WITH_')) p.push(k);
   // identity / target
@@ -72,7 +74,14 @@ export async function checkProductionConfig(text) {
   // Unset / on_creation would deduct at creation; the Telegram approval-button flow is not used in production.
   if (vars.STOCK_POLICY !== 'on_delivery') v.push(`STOCK_POLICY must be on_delivery (got ${vars.STOCK_POLICY === undefined ? 'unset' : JSON.stringify(vars.STOCK_POLICY)})`);
   if (vars.APPROVAL_MODE !== undefined && vars.APPROVAL_MODE !== 'off') v.push(`APPROVAL_MODE must be off or unset — Telegram only notifies (got ${JSON.stringify(vars.APPROVAL_MODE)})`);
-  if (vars.TELEGRAM_ADMIN_USER_IDS !== undefined) v.push('TELEGRAM_ADMIN_USER_IDS is not used any more (no approval buttons) — remove it');
+  // a leftover of the Telegram-approval stage (2026-11-21). With APPROVAL_MODE off it is INERT: POST /telegram/webhook
+  // answers 404 before reading anything (src/telegram.js), so no button can ever be honoured. Allowed (the live Worker has
+  // it), reported as a NOTE; a malformed list is still refused.
+  if (vars.TELEGRAM_ADMIN_USER_IDS !== undefined) {
+    const ids = String(vars.TELEGRAM_ADMIN_USER_IDS).split(',').map((s) => s.trim());
+    if (!ids.every((s) => /^[1-9]\d{0,19}$/.test(s))) v.push('TELEGRAM_ADMIN_USER_IDS must be comma-separated numeric Telegram user ids');
+    else notes.push('TELEGRAM_ADMIN_USER_IDS is set but inert (APPROVAL_MODE is off: the Telegram webhook answers 404); may be removed in a later config change');
+  }
   const chatId = String(vars.TELEGRAM_CHAT_ID || '');
   if (!chatId.includes('REPLACE_WITH_') && !/^-?\d{1,20}$/.test(chatId)) v.push('TELEGRAM_CHAT_ID must be the numeric id of the admin chat/group');
   if (/dairsharaf-staging|-staging\.[a-z0-9-]+\.workers\.dev|anta-notify-sink|127\.0\.0\.1|localhost|demo-|example\.invalid/i.test(blob)) v.push('staging / local / test value present');
@@ -87,13 +96,15 @@ export async function checkProductionConfig(text) {
     FIREBASE_CLIENT_EMAIL: `fake-sa@${PROD_PROJECT}.iam.gserviceaccount.com`,
     FIREBASE_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n',
     TURNSTILE_SECRET: '0x4AAAAAAAFAKEFAKEFAKEFAKE', TELEGRAM_BOT_TOKEN: 'fake', SENDGRID_API_KEY: 'fake', WORKER_AUTH_TOKEN: 'f'.repeat(32),
+    // the prize wheel's phone-key secret (a SECRET: wrangler secret put; checked for presence by 'wrangler secret list')
+    WHEEL_PHONE_SECRET: 'FAKE-wheel-phone-secret-0123456789abcdefghijklmnop',
   });
   const prev = globalThis.__DEPLOY_TARGET__;
   globalThis.__DEPLOY_TARGET__ = 'production';
   let sim;
   try { sim = loadConfig(env); } finally { if (prev === undefined) delete globalThis.__DEPLOY_TARGET__; else globalThis.__DEPLOY_TARGET__ = prev; }
   if (!sim.ok) v.push(...sim.errors.map((e) => `config.js (production build) refuses it: ${e}`));
-  return { violations: v, placeholders: p, deployable: v.length === 0 && p.length === 0 };
+  return { violations: v, placeholders: p, notes, deployable: v.length === 0 && p.length === 0 };
 }
 
 async function main() {
@@ -103,6 +114,7 @@ async function main() {
   const r = await checkProductionConfig(readFileSync(path, 'utf8'));
   for (const x of r.violations) console.log(`VIOLATION    ${x}`);
   for (const x of r.placeholders) console.log(`PLACEHOLDER  ${x} (fill in before deploying)`);
+  for (const x of r.notes) console.log(`NOTE         ${x}`);
   console.log(r.deployable ? 'OK: deployable shape (still needs the secrets + an approved deploy)' : `BLOCKED: ${r.violations.length} violation(s), ${r.placeholders.length} placeholder(s)`);
   process.exitCode = r.deployable ? 0 : 1;
 }
