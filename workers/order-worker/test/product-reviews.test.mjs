@@ -406,3 +406,76 @@ test('RV16 logs carry no token, no phone, no name', async () => {
   for (const s of [tok, '0791234567', 'سارة', 'تعليق خاص', 'Test Buyer']) assert.ok(!all.includes(s), `log has no ${s}`);
   assert.match(all, /review\.created/);
 });
+
+// ------------------------------------------------------------------ reviews never disturb orders / stock
+// A published review rewrites the product's star figures (its updateTime changes). Deliveries and Telegram
+// acceptances deduct stock with an updateTime precondition on the same product: they must re-read and succeed,
+// never fail, never deduct twice.
+const reservedQty = async (pid) => (await getDecoded(`stockReservations/${pid}`))?.product || 0;
+
+test('RV17 reviews published WHILE other orders of the same product are delivered: every delivery succeeds, stock exact', async () => {
+  const reviewed = [];
+  for (let i = 0; i < 3; i++) {
+    const id = await deliveredOrder({ items: [line('p-hundred', 1)] });
+    reviewed.push({ id, tok: await linkFor(id) });
+  }
+  assert.equal(await productStock('p-hundred'), 97);
+  const open = [];
+  for (let i = 0; i < 6; i++) open.push(await newOrder({ items: [line('p-hundred', 2)] }));
+  assert.equal(await reservedQty('p-hundred'), 12);
+  const ownerAuth = await bearer(OWNER);
+  const results = await Promise.all([
+    ...open.map((id) => callWorker(env(), { method: 'POST', path: `/admin/orders/${encodeURIComponent(id)}/status`, headers: { origin: ORIGIN, ...ownerAuth }, body: { status: 'delivered' } })),
+    ...reviewed.map((r, k) => submit(ok5(r.id, r.tok, 'p-hundred', { rating: k + 3 }))),
+  ]);
+  for (const r of results) assert.equal(r.status, 200, r.text);
+  assert.equal(await productStock('p-hundred'), 85, '97 - 6 x 2, each deducted once');
+  assert.equal(await reservedQty('p-hundred'), 0);
+  for (const id of open) assert.equal((await getDecoded(`orderLedger/${id}`)).inventory, 'deducted');
+  assert.deepEqual(await productRating('p-hundred'), { avg: 4, count: 3 });
+});
+
+test('RV18 Telegram acceptance (on_acceptance) of orders WHILE reviews are published: every order accepted once, stock exact', async () => {
+  const TG = { APPROVAL_MODE: 'telegram', STOCK_POLICY: 'on_acceptance', TELEGRAM_CHAT_ID: '-1001234567890', TELEGRAM_WEBHOOK_SECRET: 'whsec_' + 'A1b2C3d4'.repeat(5), TELEGRAM_ADMIN_USER_IDS: '111111111' };
+  const e = env(TG);
+  let upd = 1;
+  const press = (orderId) => callWorker(e, {
+    method: 'POST', path: '/telegram/webhook', headers: { 'x-telegram-bot-api-secret-token': TG.TELEGRAM_WEBHOOK_SECRET },
+    body: { update_id: upd++, callback_query: { id: `cq-${upd}`, from: { id: 111111111 }, message: { message_id: 1, chat: { id: -1001234567890 } }, data: `v1:acc:${orderId}` } },
+  });
+  let n = 0;
+  const make = async () => {
+    const o = checkoutOrder({ id: makeOrderId(), items: [line('p-hundred', 2)] });
+    o.address = { ...o.address, phone: `+96278${String(1000000 + ++n)}` };
+    const r = await callWorker(e, { method: 'POST', path: '/create-order', body: { order: o, turnstileToken: 'pass-token' } });
+    assert.equal(r.status, 200, r.text);
+    return o.id;
+  };
+  const reviewed = [];
+  for (let i = 0; i < 3; i++) {
+    const id = await make();
+    assert.equal((await press(id)).status, 200);
+    assert.equal((await getDecoded(`orderLedger/${id}`)).decision, 'accepted');
+    const d = await callWorker(e, { method: 'POST', path: `/admin/orders/${encodeURIComponent(id)}/status`, headers: { origin: ORIGIN, ...(await bearer(OWNER)) }, body: { status: 'delivered' } });
+    assert.equal(d.status, 200, d.text);
+    const l = await callWorker(e, { method: 'POST', path: `/admin/orders/${encodeURIComponent(id)}/review-link`, headers: { origin: ORIGIN, ...(await bearer(ADMIN)) }, body: {} });
+    assert.equal(l.status, 200, l.text);
+    reviewed.push({ id, tok: tokenOf(l.body.url) });
+  }
+  assert.equal(await productStock('p-hundred'), 94, 'deducted at acceptance');
+  const pending = [];
+  for (let i = 0; i < 5; i++) pending.push(await make());
+  const results = await Promise.all([
+    ...pending.map((id) => press(id)),
+    ...reviewed.map((r) => callWorker(e, { method: 'POST', path: '/reviews/submit', headers: { origin: ORIGIN }, body: ok5(r.id, r.tok, 'p-hundred') })),
+  ]);
+  for (const r of results) assert.equal(r.status, 200, r.text);
+  for (const id of pending) {
+    const L = await getDecoded(`orderLedger/${id}`);
+    assert.equal(L.decision, 'accepted', `${id} accepted`);
+    assert.equal(L.inventory, 'deducted');
+  }
+  assert.equal(await productStock('p-hundred'), 84, '94 - 5 x 2, each deducted once');
+  assert.equal(await reservedQty('p-hundred'), 0);
+  assert.equal((await productRating('p-hundred')).count, 3);
+});
